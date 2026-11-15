@@ -6,7 +6,7 @@
   import CloudIcon from './CloudIcon.svelte';
   import Icon from './Icon.svelte';
   import Tile from './Tile.svelte';
-  import { api, CANCELLED } from '../api';
+  import { api, CANCELLED, prepLabel, type Preparing } from '../api';
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
   import { focusFirst } from '../nav';
@@ -38,6 +38,7 @@
   let failed = $state<string | null>(null);
   let confirmRemove = $state(false);
   let installing = $state<number | null>(null);
+  let preparing = $state<Preparing | null>(null);
   let installError = $state<string | null>(null);
   let removing = $state(false);
   let cancelling = $state(false);
@@ -50,7 +51,10 @@
     installError = null;
     installing = 0;
     try {
-      await api.installGame(game.id, (p) => (installing = p));
+      await api.installGame(game.id, (p, prep) => {
+        installing = p;
+        preparing = prep ?? null;
+      });
       onchange({ ...game, install: 'installe' });
       feedback('downloaded');
       requestAnimationFrame(() => focusFirst());
@@ -62,6 +66,7 @@
       }
     } finally {
       installing = null;
+      preparing = null;
       cancelling = false;
     }
   }
@@ -149,7 +154,7 @@
         <button class="opt focusable" data-autofocus onclick={onplay}><Icon name="play" size={22} />Jouer</button>
       {:else}
         <button class="opt focusable" data-autofocus data-sound="none" aria-busy={installing !== null} onclick={install}>
-          <Icon name="download" size={22} />{installing !== null ? `Téléchargement… ${Math.round(installing * 100)} %` : installError ? 'Réessayer' : 'Installer'}
+          <Icon name="download" size={22} />{installing !== null ? (preparing ? prepLabel(preparing) : `Téléchargement… ${Math.round(installing * 100)} %`) : installError ? 'Réessayer' : 'Installer'}
         </button>
       {/if}
     </li>

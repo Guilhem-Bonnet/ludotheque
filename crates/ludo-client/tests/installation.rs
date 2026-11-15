@@ -480,3 +480,173 @@ fn desinstaller_refuse_un_chemin_a_un_composant() {
     assert!(matches!(uninstall(dev.path(), &[file("switch", 1, "dir")]), Err(InstallError::BadPath(_))));
     assert!(dev.path().join("switch/Jeu.nsp").exists());
 }
+
+// ---- Conversion côté serveur (NSZ → NSP) --------------------------------------------------
+
+/// Faux convertisseur : attend tant que `gate` (à côté des clés) existe, puis copie le fichier en
+/// ajoutant « DECOMP » sous l'extension convertie.
+const FAKE_NSZ: &str = r#"#!/bin/bash
+while [ $# -gt 0 ]; do case "$1" in --keys) K="$2"; shift 2;; -o) O="$2"; shift 2;; -D|--minimal-output) shift;; *) F="$1"; shift;; esac; done
+D=$(dirname "$K")
+echo "50% conversion"
+while [ -e "$D/gate" ]; do sleep 0.05; done
+b=$(basename "$F")
+{ cat "$F"; printf 'DECOMP'; } > "$O/${b%.*}.nsp"
+"#;
+
+struct ConvEnv {
+    url: String,
+    device: tempfile::TempDir,
+    gate: std::path::PathBuf,
+    _keep: tempfile::TempDir,
+}
+
+fn conv_env() -> ConvEnv {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    put(tmp.path(), "roms/switch/Jeu [0100152000022000][v0].nsz", &[9u8; 20_000]);
+    put(tmp.path(), "roms/switch/Autre [0100152000023000][v0].nsz", &[5u8; 10_000]);
+    put(tmp.path(), "keys/prod.keys", b"fausses cles de test");
+    let script = tmp.path().join("faux-nsz.sh");
+    fs::write(&script, FAKE_NSZ).unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    let store = Store::open(&tmp.path().join("data"), Box::new(SystemClock)).unwrap().with_roms(tmp.path().join("roms"));
+    store.rescan().unwrap();
+    let mut cfg = ludo_server::convert::ConvertConfig::new(tmp.path().join("cache"));
+    cfg.command = script.to_string_lossy().into_owned();
+    cfg.keys = Some(tmp.path().join("keys/prod.keys"));
+    let url = spawn_with_converter(store, cfg);
+    let gate = tmp.path().join("keys/gate");
+    ConvEnv { url, device: tempfile::tempdir().unwrap(), gate, _keep: tmp }
+}
+
+/// Jeu (et son fichier de base) dont le chemin contient `nom`.
+fn jeu(client: &Client, nom: &str) -> (String, GameFile) {
+    let games = client.games().unwrap();
+    let g = games.iter().find(|g| g.files.iter().any(|f| f.path.contains(nom))).unwrap();
+    (g.id.clone(), g.files[0].clone())
+}
+
+fn spawn_with_converter(store: Store, cfg: ludo_server::convert::ConvertConfig) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            let conv = ludo_server::convert::Converter::new(cfg).unwrap();
+            let router = ludo_server::router_with(Arc::new(store), Some(conv));
+            axum::serve(tokio::net::TcpListener::from_std(listener).unwrap(), router).await.unwrap();
+        });
+    });
+    format!("http://{addr}")
+}
+
+#[test]
+fn conversion_attendue_puis_installee_en_nsp() {
+    let e = conv_env();
+    fs::write(&e.gate, "").unwrap();
+    let client = Client::new(&e.url);
+    let (id, f) = jeu(&client, "Jeu [");
+    assert_eq!(f.format, "nsz");
+    // La conversion est retenue 600 ms, puis libérée.
+    let gate = e.gate.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(600));
+        let _ = fs::remove_file(gate);
+    });
+    let waits = Mutex::new(Vec::new());
+    let installer = Installer::new(&client, e.device.path())
+        .with_formats(vec!["nsp".into(), "xci".into()])
+        .with_retry_cap(Duration::from_millis(100))
+        .with_prepare(|p| waits.lock().unwrap().push(p.state.clone()));
+    let mut last = (0, 0);
+    let got = installer.install(&id, &f, &mut |d, t| last = (d, t)).unwrap();
+    assert_eq!(got, Installed::Downloaded);
+    assert!(!waits.lock().unwrap().is_empty(), "au moins une réponse 202 vue");
+    // Le fichier est posé sous son nom converti, avec la taille du fichier converti (pas celle du catalogue).
+    let nsp = e.device.path().join("switch/Jeu [0100152000022000][v0].nsp");
+    let data = fs::read(&nsp).unwrap();
+    assert_eq!(data.len(), 20_006);
+    assert!(data.ends_with(b"DECOMP"));
+    assert_ne!(f.size, data.len() as u64);
+    assert_eq!(last, (20_006, 20_006));
+    assert!(!e.device.path().join("switch/Jeu [0100152000022000][v0].nsz").exists());
+    // Deuxième installation : déjà présent, sans nouvelle attente.
+    assert_eq!(installer.install(&id, &f, &mut |_, _| {}).unwrap(), Installed::AlreadyPresent);
+    // Désinstallation : retire le fichier converti.
+    assert_eq!(uninstall(e.device.path(), &[f]).unwrap(), 1);
+    assert!(!nsp.exists());
+}
+
+#[test]
+fn format_accepte_tel_quel_sans_conversion() {
+    let e = conv_env();
+    let client = Client::new(&e.url);
+    let (id, f) = jeu(&client, "Jeu [");
+    let installer = Installer::new(&client, e.device.path()).with_formats(vec!["nsz".into(), "nsp".into()]);
+    assert_eq!(installer.install(&id, &f, &mut |_, _| {}).unwrap(), Installed::Downloaded);
+    assert_eq!(fs::metadata(e.device.path().join("switch/Jeu [0100152000022000][v0].nsz")).unwrap().len(), f.size);
+    assert!(!e.device.path().join("switch/Jeu [0100152000022000][v0].nsp").exists());
+}
+
+#[test]
+fn annulation_pendant_la_preparation() {
+    let e = conv_env();
+    fs::write(&e.gate, "").unwrap();
+    let client = Client::new(&e.url);
+    let (id, f) = jeu(&client, "Jeu [");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let c2 = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        c2.store(true, Ordering::SeqCst);
+    });
+    let installer = Installer::new(&client, e.device.path()).with_formats(vec!["nsp".into()]).with_retry_cap(Duration::from_millis(100)).with_cancel(cancel);
+    let t = Instant::now();
+    assert!(matches!(installer.install(&id, &f, &mut |_, _| {}), Err(InstallError::Cancelled)));
+    assert!(t.elapsed() < Duration::from_secs(5));
+    assert!(!e.device.path().join("switch/Jeu [0100152000022000][v0].nsp").exists());
+}
+
+#[test]
+fn preparation_sans_progres_abandonnee() {
+    let e = conv_env();
+    fs::write(&e.gate, "").unwrap();
+    let client = Client::new(&e.url);
+    let (id, f) = jeu(&client, "Jeu [");
+    let installer = Installer::new(&client, e.device.path()).with_formats(vec!["nsp".into()]).with_retry_cap(Duration::from_millis(100)).with_prepare_stall(Duration::from_millis(700));
+    assert!(matches!(installer.install(&id, &f, &mut |_, _| {}), Err(InstallError::Interrupted(_))));
+}
+
+#[test]
+fn chemin_converti() {
+    assert_eq!(ludo_client::install::converted_rel("switch/Jeu [01][v0].nsz").as_deref(), Some("switch/Jeu [01][v0].nsp"));
+    assert_eq!(ludo_client::install::converted_rel("switch/Jeu.xcz").as_deref(), Some("switch/Jeu.xci"));
+    assert_eq!(ludo_client::install::converted_rel("switch/Jeu.nsp"), None);
+}
+
+#[test]
+fn attente_en_file_sans_abandon() {
+    // A occupe le convertisseur ; B attend en file bien plus longtemps que le délai d'abandon
+    // (700 ms) : « en file » ne compte pas, B finit une fois A terminé.
+    let e = conv_env();
+    fs::write(&e.gate, "").unwrap();
+    let client = Client::new(&e.url);
+    let (id_a, fa) = jeu(&client, "Jeu [");
+    let (id_b, fb) = jeu(&client, "Autre [");
+    assert_eq!(client.download_as(&id_a, fa.id, 0, None, &["nsp".to_string()]).unwrap().status().as_u16(), 202);
+    let gate = e.gate.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(2000));
+        let _ = fs::remove_file(gate);
+    });
+    let etats = Mutex::new(Vec::new());
+    let installer = Installer::new(&client, e.device.path())
+        .with_formats(vec!["nsp".into()])
+        .with_retry_cap(Duration::from_millis(100))
+        .with_prepare_stall(Duration::from_millis(700))
+        .with_prepare(|p| etats.lock().unwrap().push(p.state.clone()));
+    assert_eq!(installer.install(&id_b, &fb, &mut |_, _| {}).unwrap(), Installed::Downloaded);
+    assert!(etats.lock().unwrap().iter().any(|s| s == "queued"));
+    assert!(e.device.path().join("switch/Autre [0100152000023000][v0].nsp").exists());
+}

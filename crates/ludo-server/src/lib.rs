@@ -16,11 +16,14 @@
 //!   un dossier (Wii U, Switch 2 extrait) est servi en tar non compressé généré à la volée
 //!   (`Content-Type: application/x-tar`, `X-Ludo-Archive: tar`, `X-Ludo-Total-Bytes` = somme des
 //!   fichiers) : pas de `Range` (réponse 200 complète, l'en-tête est ignoré), pas de `Content-Length`
+//!   `?formats=nsp,xci` : formats lus par l'émulateur ; un NSZ / XCZ non accepté est converti par le
+//!   serveur (cache `LUDO_CACHE`) : `202` + `Retry-After` + JSON tant que ce n'est pas prêt, `503` sans clés
 //! - `POST   /catalog/rescan`                         nouveau balayage du dossier des ROM
 //!
 //! Pas d'authentification : usage LAN seulement (conception 4.9).
 
 pub mod catalog;
+pub mod convert;
 pub mod store;
 
 use axum::body::{Body, Bytes};
@@ -28,7 +31,8 @@ use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
+use convert::{Converter, Outcome};
 use ludo_proto::{LeaseOutcome, LeaseRequest, Profile, PushOutcome, PushParams, SaveKey};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -71,6 +75,11 @@ async fn blocking<T: Send + 'static>(
 }
 
 pub fn router(store: Arc<Store>) -> Router {
+    router_with(store, None)
+}
+
+/// Routeur avec conversion NSZ → NSP / XCZ → XCI (`None` : conversion indisponible, 503).
+pub fn router_with(store: Arc<Store>, converter: Option<Arc<Converter>>) -> Router {
     Router::new()
         .route("/api/v1/health", get(|| async { "ok" }))
         .route("/api/v1/saves/{profile}/{game}", get(get_head).put(put_save))
@@ -85,6 +94,7 @@ pub fn router(store: Arc<Store>) -> Router {
         // Un profil tient en quelques centaines d'octets : limite propre à cette route (16 Kio).
         .route("/api/v1/profiles/{id}", put(put_profile).layer(DefaultBodyLimit::max(16 * 1024)))
         .layer(DefaultBodyLimit::max(MAX_SAVE_BYTES))
+        .layer(Extension(converter))
         .with_state(store)
 }
 
@@ -245,21 +255,74 @@ pub fn parse_range(header: Option<&str>, len: u64) -> RangeSpec {
 }
 
 /// Téléchargement d'un fichier de jeu, en flux (jamais chargé en mémoire), avec reprise (Range).
+///
+/// `?formats=nsp,xci` : formats que l'émulateur du client sait lire. Un NSZ / XCZ stocké que le
+/// client ne lit pas, alors qu'il lit le NSP / XCI équivalent, est converti (cache du serveur) :
+/// `202 Accepted` + `Retry-After` + [`ludo_proto::ConvertProgress`] tant que ce n'est pas prêt, puis
+/// le fichier converti comme n'importe quel fichier (`X-Ludo-Format` = format servi). Sans le
+/// paramètre, ou si le format stocké est accepté, le fichier est servi tel quel.
 async fn get_game_file(
     State(s): State<AppState>,
+    Extension(conv): Extension<Option<Arc<Converter>>>,
     Path((game, file_id)): Path<(String, u64)>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Response, StoreError> {
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
-    let (path, _) = blocking(move || s.file_location(&game, file_id)).await?;
+    let (path, gfile) = blocking(move || s.file_location(&game, file_id)).await?;
+    let accepted: Vec<String> = q.get("formats").map(|v| v.split(',').map(|f| f.trim().to_ascii_lowercase()).filter(|f| !f.is_empty()).collect()).unwrap_or_default();
+    let Some(target) = ludo_proto::conversion_target(&gfile.format, &accepted) else {
+        return serve_path(path, &headers, None, &[]).await;
+    };
+    let unavailable = || (StatusCode::SERVICE_UNAVAILABLE, "Conversion indisponible : clés manquantes").into_response();
+    let Some(conv) = conv else { return Ok(unavailable()) };
+    let (len, mtime) = {
+        let m = tokio::fs::metadata(&path).await.map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { StoreError::NotFound } else { StoreError::Io(e) })?;
+        (m.len(), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs()))
+    };
+    match conv.request(&path, len, mtime, target).await {
+        Outcome::Ready { file, len, key, format, guard } => {
+            // Validateur stable : identifiant de conversion et taille (la date du cache change à chaque accès).
+            let etag = format!("\"c{}-{len:x}\"", &key[..16]);
+            serve_open(tokio::fs::File::from_std(file), &headers, Some(etag), &[("x-ludo-format", format.to_string()), ("x-ludo-total-bytes", len.to_string())], Some(guard)).await
+        }
+        Outcome::Pending(p) => Ok(Response::builder()
+            .status(StatusCode::ACCEPTED)
+            .header(header::RETRY_AFTER, "5")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_vec(&p).unwrap_or_default()))
+            .map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())))?),
+        Outcome::Failed(msg) => Ok((StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()),
+        Outcome::Unavailable => Ok(unavailable()),
+    }
+}
+
+/// Sert un fichier ou un dossier (tar) du disque ; `etag` remplace le validateur taille + date,
+/// `extra` ajoute des en-têtes à la réponse.
+async fn serve_path(path: std::path::PathBuf, headers: &HeaderMap, etag: Option<String>, extra: &[(&'static str, String)]) -> Result<Response, StoreError> {
     // Un dossier est servi en tar à la volée (le `Range` est ignoré : réponse 200 complète).
     if tokio::fs::symlink_metadata(&path).await.is_ok_and(|m| m.is_dir()) {
         return tar_response(path).await;
     }
-    let mut file = tokio::fs::File::open(&path).await.map_err(|e| match e.kind() {
+    let file = tokio::fs::File::open(&path).await.map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => StoreError::NotFound,
         _ => StoreError::Io(e),
     })?;
+    serve_open(file, headers, etag, extra, None).await
+}
+
+/// Flux qui garde `_guard` (utilisation d'un fichier du cache) jusqu'à la fin de l'envoi.
+struct Guarded<S>(S, #[allow(dead_code)] Option<convert::UseGuard>);
+
+impl<S: futures_core::Stream + Unpin> futures_core::Stream for Guarded<S> {
+    type Item = S::Item;
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.0).poll_next(cx)
+    }
+}
+
+/// Sert un fichier déjà ouvert (donc à l'abri d'une éviction du cache entre-temps).
+async fn serve_open(mut file: tokio::fs::File, headers: &HeaderMap, etag: Option<String>, extra: &[(&'static str, String)], guard: Option<convert::UseGuard>) -> Result<Response, StoreError> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let meta = file.metadata().await?;
     if !meta.is_file() {
         return Err(StoreError::Forbidden("pas un fichier".into()));
@@ -267,7 +330,7 @@ async fn get_game_file(
     let len = meta.len();
     let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
     // Validateur faible : taille et date. Un `If-Range` différent annule la reprise (fichier remplacé).
-    let etag = format!("\"{len:x}-{mtime:x}\"");
+    let etag = etag.unwrap_or_else(|| format!("\"{len:x}-{mtime:x}\""));
     let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
     let wanted = match header(header::IF_RANGE) {
         Some(v) if v.trim() != etag => None,
@@ -277,9 +340,10 @@ async fn get_game_file(
         .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::ETAG, &etag);
+    let base = extra.iter().fold(base, |b, (k, v)| b.header(*k, v));
     let respond = |b: axum::http::response::Builder, body: Body| b.body(body).map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())));
     match parse_range(wanted, len) {
-        RangeSpec::Full => respond(base.status(StatusCode::OK).header(header::CONTENT_LENGTH, len), Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK))),
+        RangeSpec::Full => respond(base.status(StatusCode::OK).header(header::CONTENT_LENGTH, len), Body::from_stream(Guarded(tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK), guard))),
         RangeSpec::Part(start, end) => {
             file.seek(std::io::SeekFrom::Start(start)).await?;
             let n = end - start + 1;
@@ -287,7 +351,7 @@ async fn get_game_file(
                 base.status(StatusCode::PARTIAL_CONTENT)
                     .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"))
                     .header(header::CONTENT_LENGTH, n),
-                Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file.take(n), STREAM_CHUNK)),
+                Body::from_stream(Guarded(tokio_util::io::ReaderStream::with_capacity(file.take(n), STREAM_CHUNK), guard)),
             )
         }
         RangeSpec::Unsatisfiable => respond(

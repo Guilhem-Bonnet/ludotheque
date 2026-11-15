@@ -1,0 +1,26 @@
+# Dépendances de nsz, figées par version ET par hash (installées avec --require-hashes --no-deps).
+# Vérifiées pour Debian bookworm (Python 3.11, x86_64). Mise à jour : pip download ... puis recalculer les hashs.
+
+blessed==1.52.0 \
+    --hash=sha256:1936f421f3feb130035a4629e6477d1432e33b2674ab2b9841292c74d479eac2
+
+enlighten==1.14.1 \
+    --hash=sha256:5fbd0c959ca1644034c41bb0ace5db19c9852cf9d721b6103f5f130663c57be8
+
+jinxed==2.1.0 \
+    --hash=sha256:43b802d18b70e405d410fb66eb2837d1101e7e5ea922e666507bb43f34d11d09
+
+nsz==5.0.0 \
+    --hash=sha256:b3698cab8d7720aed056a0290017ff60a989d8343b7bb9c3c161ab137ec03965
+
+prefixed==0.9.0 \
+    --hash=sha256:3cdb74bfc4cf0aba28f3574662b13afdcac27c463dcbef320fe5d03f4c5fbca8
+
+pycryptodome==4.4.0 \
+    --hash=sha256:32c1a3d98c93d92c2f2a45d6cc9c79fb8d7552aca1bd9a764209a3309bf6a7b1
+
+wcwidth==0.9.4 \
+    --hash=sha256:b185c8b927b23af2721be1783499d1cfa5c028b098b0858951b4ae224477f1c2
+
+zstandard==0.25.0 \
+    --hash=sha256:9300d02ea7c6506f00e627e287e0492a5eb0371ec1670ae852fefffa6164b072
