@@ -21,15 +21,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return invoke<T>(cmd, args);
 }
 
-const tauriApi: LudoApi = {
-  device: () => invoke('device'),
-  profiles: () => invoke('profiles'),
-  recent: (profile) => invoke('recent', { profile }),
-  library: (profile) => invoke('library', { profile }),
-  history: (profile, game) => invoke('history', { profile, game }),
-  updates: () => invoke('updates'),
-  prepare: (profile, game) => invoke('prepare', { profile, game }),
-};
+
 
 // ——— Source de démonstration (données illustratives, mêmes que les maquettes) ———
 
@@ -110,6 +102,30 @@ const demoApi: LudoApi = {
       },
     };
   },
+};
+
+/**
+ * Dans Tauri : chaque commande Rust absente ou en échec retombe sur la démonstration, le temps que
+ * toutes les commandes soient branchées (seule `device` l'est pour l'instant).
+ */
+function viaTauri<K extends keyof LudoApi>(cmd: K, args: (...a: Parameters<LudoApi[K]>) => Record<string, unknown>): LudoApi[K] {
+  return (async (...a: Parameters<LudoApi[K]>) => {
+    try {
+      return await invoke(cmd, args(...a));
+    } catch {
+      return (demoApi[cmd] as (...x: unknown[]) => unknown)(...a);
+    }
+  }) as LudoApi[K];
+}
+
+const tauriApi: LudoApi = {
+  device: viaTauri('device', () => ({})),
+  profiles: viaTauri('profiles', () => ({})),
+  recent: viaTauri('recent', (profile) => ({ profile })),
+  library: viaTauri('library', (profile) => ({ profile })),
+  history: viaTauri('history', (profile, game) => ({ profile, game })),
+  updates: viaTauri('updates', () => ({})),
+  prepare: viaTauri('prepare', (profile, game) => ({ profile, game })),
 };
 
 export const api: LudoApi = inTauri ? tauriApi : demoApi;

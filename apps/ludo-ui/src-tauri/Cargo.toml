@@ -1,0 +1,19 @@
+[package]
+name = "ludo-ui"
+version = "0.1.0"
+description = "Ludothèque : interface (coque Tauri 2)"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "ludo_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4" }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.12.5" }
+ludo-client = { path = "../../../crates/ludo-client" }

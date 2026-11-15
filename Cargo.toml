@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ludo-proto", "crates/ludo-core", "crates/ludo-server", "crates/ludo-client"]
+members = ["crates/ludo-proto", "crates/ludo-core", "crates/ludo-server", "crates/ludo-client", "apps/ludo-ui/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
