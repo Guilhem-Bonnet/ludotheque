@@ -368,3 +368,20 @@ async fn profil_trop_gros_refuse() {
     let (_, b) = call(&a, get("/api/v1/profiles")).await;
     assert_eq!(b, b"[]");
 }
+
+#[tokio::test]
+async fn noms_invisibles_et_doublons_refuses() {
+    let a = app();
+    // Espace de largeur nulle, puis inversion du sens d'écriture : refusés.
+    for name in ["Cla\u{200B}ire", "\u{202E}eriaC"] {
+        let (s, _) = call(&a, put_profile_req("claire", profile_json("claire", name, "champi"))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{name:?}");
+    }
+    let (s, _) = call(&a, put_profile_req("claire", profile_json("claire", "Élodie", "champi"))).await;
+    assert_eq!(s, StatusCode::OK);
+    // Même nom pour un autre profil (casse et accent en majuscule) : refusé ; même profil : accepté.
+    let (s, _) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "élodie", "renard"))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(&a, put_profile_req("claire", profile_json("claire", "ÉLODIE", "champi"))).await;
+    assert_eq!(s, StatusCode::OK);
+}

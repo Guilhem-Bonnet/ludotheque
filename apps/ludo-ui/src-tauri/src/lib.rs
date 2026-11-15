@@ -12,7 +12,7 @@ use ludo_client::api::Client;
 use ludo_client::config::{self, Config};
 use ludo_client::engine::{Engine, SyncOutcome};
 use ludo_client::journal::Journal;
-use ludo_proto::{Profile, SaveKey};
+use ludo_proto::{LeaseOutcome, Profile, SaveKey};
 use serde::Serialize;
 use std::sync::Mutex;
 
@@ -188,6 +188,38 @@ async fn history(profile: String, game: String) -> Result<Vec<UiRevision>, Strin
     .await
 }
 
+/// Verrou « partie en cours » pour une opération de l'interface (restauration, synchronisation).
+///
+/// L'interface prend le verrou sous son propre identifiant (`<appareil>-ui`) : une partie lancée par
+/// `ludo`, même sur cet appareil, apparaît donc comme « ailleurs » et l'opération est refusée, au lieu
+/// de déplacer la tête du serveur pendant qu'on joue. Serveur injoignable : pas de verrou, l'opération
+/// suit son cours (la synchronisation passe hors ligne d'elle-même). Renvoie le verrou à rendre.
+struct UiLease<'a> {
+    client: &'a Client,
+    key: SaveKey,
+    device: String,
+}
+
+impl<'a> UiLease<'a> {
+    fn take(client: &'a Client, key: &SaveKey, appareil: &str) -> Result<Option<Self>, String> {
+        let device = format!("{appareil}-ui");
+        match client.acquire_lease(key, &device, false) {
+            Ok(LeaseOutcome::HeldElsewhere { lease }) => {
+                let holder = lease.device.strip_suffix("-ui").unwrap_or(&lease.device);
+                Err(format!("En cours sur {}", device_name(holder)))
+            }
+            Ok(LeaseOutcome::Granted { .. }) => Ok(Some(Self { client, key: key.clone(), device })),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+impl Drop for UiLease<'_> {
+    fn drop(&mut self) {
+        let _ = self.client.release_lease(&self.key, &self.device);
+    }
+}
+
 /// Restaure une version : elle devient la nouvelle tête sur le serveur (compare-and-swap contre
 /// la tête actuelle), puis remplace la sauvegarde locale si le jeu est configuré sur cet appareil.
 /// Conflit (la tête a bougé entre-temps) : erreur, rien n'est remplacé.
@@ -213,6 +245,7 @@ async fn restore(profile: String, game: String, rev: u64) -> Result<(), String> 
             playtime_s: 0,
         };
         let key = SaveKey { profile, game };
+        let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
         engine.restore(&key, prepared.as_ref().map(|p| p.layout.as_ref()), rev).map_err(|e| e.to_string())?;
         Ok(())
     })
@@ -245,6 +278,7 @@ fn sync_profile(cfg: &Config, profile: &str) -> Result<Vec<GameSync>, String> {
         let key = SaveKey { profile: profile.into(), game: id.clone() };
         let result = (|| {
             let prepared = config::prepare(cfg, &g.emulateur, profile, &g.title_id).map_err(|e| e.to_string())?;
+            let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
             // Aucune partie jouée ici : le temps de jeu cumulé reste celui du serveur.
             let playtime_s = client.head(&key).ok().flatten().map_or(0, |h| h.playtime_s);
             let mut engine = Engine {
