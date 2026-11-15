@@ -340,7 +340,8 @@ impl futures_core::Stream for ChannelStream {
 /// Entrée d'un dossier à archiver : chemin relatif (séparateur `/`) et nature.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TarEntry {
-    pub name: String,
+    /// Chemin relatif au dossier du jeu (peut ne pas être de l'UTF-8 : le scanner compte ces entrées aussi).
+    pub name: std::path::PathBuf,
     pub is_dir: bool,
 }
 
@@ -348,13 +349,12 @@ pub struct TarEntry {
 /// `root`). Les liens symboliques et tout ce qui n'est ni fichier ni dossier sont ignorés : le
 /// tar ne peut ni sortir de la racine ni suivre un lien. Renvoie aussi la somme des tailles.
 pub fn list_tar_entries(root: &std::path::Path) -> std::io::Result<(Vec<TarEntry>, u64)> {
-    fn walk(dir: &std::path::Path, prefix: &str, out: &mut Vec<TarEntry>, total: &mut u64) -> std::io::Result<()> {
+    fn walk(dir: &std::path::Path, prefix: &std::path::Path, out: &mut Vec<TarEntry>, total: &mut u64) -> std::io::Result<()> {
         let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
-            let Some(name) = e.file_name().to_str().map(String::from) else { continue };
             let ft = e.file_type()?;
-            let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+            let rel = prefix.join(e.file_name());
             if ft.is_dir() {
                 out.push(TarEntry { name: rel.clone(), is_dir: true });
                 walk(&e.path(), &rel, out, total)?;
@@ -366,7 +366,7 @@ pub fn list_tar_entries(root: &std::path::Path) -> std::io::Result<(Vec<TarEntry
         Ok(())
     }
     let (mut out, mut total) = (Vec::new(), 0);
-    walk(root, "", &mut out, &mut total)?;
+    walk(root, std::path::Path::new(""), &mut out, &mut total)?;
     Ok((out, total))
 }
 

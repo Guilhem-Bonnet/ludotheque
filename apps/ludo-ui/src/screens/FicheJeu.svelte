@@ -5,7 +5,7 @@
   import Icon from '../lib/components/Icon.svelte';
   import RestoreDialog from '../lib/components/RestoreDialog.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { api } from '../lib/api';
+  import { api, CANCELLED } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { play } from '../lib/play';
@@ -77,6 +77,7 @@
   let installError = $state<string | null>(null);
   let confirmRemove = $state(false);
   let removing = $state(false);
+  let cancelling = $state(false);
 
   const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -91,11 +92,21 @@
       content = content.map((c) => (c.role === 'maj' ? { ...c, installed: true } : c));
       feedback('downloaded');
     } catch (e) {
-      installError = message(e);
-      feedback('err');
+      // Annulation voulue : pas un échec, le fichier partiel est gardé pour reprendre.
+      if (message(e) !== CANCELLED) {
+        installError = message(e);
+        feedback('err');
+      }
     } finally {
       installing = null;
+      cancelling = false;
     }
+  }
+
+  function cancelInstall() {
+    if (installing === null || cancelling) return;
+    cancelling = true;
+    void api.cancelInstall(game.id);
   }
 
   /** Désinstaller : le premier appui arme la confirmation, le second supprime les fichiers du jeu (jamais les sauvegardes). */
@@ -139,7 +150,9 @@
           {#if installing !== null}<span class="fill" style:width="{installing * 100}%"></span>{/if}
           <span class="label">{installing !== null ? `Téléchargement… ${Math.round(installing * 100)} %` : installed ? 'Jouer' : installError ? 'Réessayer' : 'Installer'}</span>
         </button>
-        {#if installed}
+        {#if installing !== null}
+          <button class="secondary focusable" data-sound="none" disabled={cancelling} onclick={cancelInstall}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
+        {:else if installed}
           <button class="secondary focusable" class:armed={confirmRemove} data-sound="none" disabled={removing} onclick={uninstall} onblur={() => (confirmRemove = false)}>{removing ? 'Suppression…' : confirmRemove ? 'Confirmer : désinstaller' : 'Désinstaller'}</button>
         {/if}
       </div>

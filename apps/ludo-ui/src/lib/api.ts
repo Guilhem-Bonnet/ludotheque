@@ -20,6 +20,8 @@ export interface LudoApi {
   installContent(game: string, content: number, onprogress?: (p: number) => void): Promise<void>;
   /** Installe un jeu sur l'appareil (jeu de base et mises à jour) ; `onprogress` reçoit 0 à 1. Erreur : message en français. */
   installGame(game: string, onprogress?: (p: number) => void): Promise<void>;
+  /** Annule l'installation en cours d'un jeu (l'appel à `installGame` échoue alors avec « Installation annulée »). */
+  cancelInstall(game: string): Promise<void>;
   /** Désinstalle un jeu de l'appareil : fichiers du jeu seulement, jamais les sauvegardes. */
   uninstallGame(game: string): Promise<void>;
   /** Enregistre le profil (image, nom, préférences) sur le serveur. */
@@ -82,6 +84,10 @@ const GAMES: Game[] = [
   { id: 'switch-xc3', title: 'Xenoblade Chronicles 3', short: 'Xenoblade\nChronicles 3', console: 'switch', tile: '#3b3fd6', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#5ad1ff', to: '#3b3fd6', ink: '#1b1f6e' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
 ];
 
+/** Message de l'erreur d'une installation annulée (identique côté Rust). */
+export const CANCELLED = 'Installation annulée';
+const demoCancelled = new Set<string>();
+
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const demoApi: LudoApi = {
@@ -129,9 +135,17 @@ const demoApi: LudoApi = {
     for (let i = 1; i <= 20; i++) { await wait(90); onprogress?.(i / 20); }
   },
   async installGame(game, onprogress) {
-    for (let i = 1; i <= 24; i++) { await wait(90); onprogress?.(i / 24); }
+    demoCancelled.delete(game);
+    for (let i = 1; i <= 24; i++) {
+      await wait(90);
+      if (demoCancelled.delete(game)) throw new Error(CANCELLED);
+      onprogress?.(i / 24);
+    }
     const g = GAMES.find((x) => x.id === game);
     if (g) g.install = 'installe';
+  },
+  async cancelInstall(game) {
+    demoCancelled.add(game);
   },
   async uninstallGame(game) {
     await wait(300);
@@ -248,6 +262,14 @@ const tauriApi: LudoApi = {
     } catch (e) {
       if (!commandMissing(e)) throw new Error(String(e));
       await demoApi.installGame(game, onprogress);
+    }
+  },
+  cancelInstall: async (game) => {
+    try {
+      await invoke('cancelInstall', { game });
+    } catch (e) {
+      if (!commandMissing(e)) throw new Error(String(e));
+      await demoApi.cancelInstall(game);
     }
   },
   uninstallGame: async (game) => {

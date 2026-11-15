@@ -421,7 +421,26 @@ fn liste_tar_sans_liens_ni_evasion() {
         std::os::unix::fs::symlink(outside.path().join("x"), root.path().join("d/fichier-lien")).unwrap();
     }
     let (entries, total) = ludo_server::list_tar_entries(&root.path().join("d")).unwrap();
-    let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+    let names: Vec<_> = entries.iter().map(|e| e.name.to_str().unwrap()).collect();
     assert_eq!(names, vec!["a.bin", "sous", "sous/b.bin"]);
     assert_eq!(total, 12);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn taille_du_catalogue_egale_au_total_du_tar_meme_avec_noms_non_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let a = app();
+    let dir = a.roms.path().join("wiiu/Wind Waker HD/content");
+    std::fs::write(dir.join(std::ffi::OsStr::from_bytes(b"\xff\xfe.bin")), [5u8; 9]).unwrap();
+    std::os::unix::fs::symlink("a.bin", dir.join("lien")).unwrap();
+    a.store.rescan().unwrap();
+    let games = catalog(&a).await;
+    let wiiu = &find(&games, "wiiu-wind-waker-hd").files[0];
+    assert_eq!(wiiu.size, 109);
+    let uri = format!("/api/v1/games/wiiu-wind-waker-hd/files/{}", wiiu.id);
+    let (_, h, b) = call(&a, Request::get(uri).body(Body::empty()).unwrap()).await;
+    assert_eq!(h["x-ludo-total-bytes"], "109");
+    let total: usize = tar_entries(&b).iter().map(|(_, c)| c.len()).sum();
+    assert_eq!(total, 109);
 }

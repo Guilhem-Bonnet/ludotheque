@@ -16,8 +16,9 @@ use ludo_client::install::{self, Installer};
 use ludo_client::journal::{Entry, Journal};
 use ludo_proto::{CatalogGame, FileRole, GameArt, GameFile, LeaseOutcome, Profile, SaveKey, SaveSummary};
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Mutex;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
 #[derive(Debug, Serialize)]
@@ -602,30 +603,47 @@ pub struct Progression {
     total: u64,
 }
 
-/// Jeux dont une installation ou une désinstallation est en cours : une seule opération à la fois par jeu.
-static EN_COURS: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+/// Opérations en cours : jeu → drapeau d'annulation. Une seule opération à la fois par jeu.
+pub type Occupes = Mutex<BTreeMap<String, Arc<AtomicBool>>>;
+
+static EN_COURS: Occupes = Mutex::new(BTreeMap::new());
 
 /// Réservation d'un jeu ; rendue à la destruction (même en cas d'erreur ou de panique).
 #[derive(Debug)]
 pub struct JeuOccupe<'a> {
-    set: &'a Mutex<BTreeSet<String>>,
+    set: &'a Occupes,
     game: String,
+    /// Passe à `true` quand l'interface demande l'annulation (`cancelInstall`).
+    pub cancel: Arc<AtomicBool>,
 }
 
 impl<'a> JeuOccupe<'a> {
     /// Réserve le jeu, ou refuse si une opération y est déjà en cours.
-    pub fn prendre(set: &'a Mutex<BTreeSet<String>>, game: &str) -> Result<Self, String> {
+    pub fn prendre(set: &'a Occupes, game: &str) -> Result<Self, String> {
         let mut g = set.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !g.insert(game.to_string()) {
+        if g.contains_key(game) {
             return Err("Une installation de ce jeu est déjà en cours".into());
         }
-        Ok(Self { set, game: game.to_string() })
+        let cancel = Arc::new(AtomicBool::new(false));
+        g.insert(game.to_string(), cancel.clone());
+        Ok(Self { set, game: game.to_string(), cancel })
     }
 }
 
 impl Drop for JeuOccupe<'_> {
     fn drop(&mut self) {
         self.set.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&self.game);
+    }
+}
+
+/// Demande l'annulation de l'opération en cours sur ce jeu ; `false` si aucune.
+pub fn annuler(set: &Occupes, game: &str) -> bool {
+    match set.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(game) {
+        Some(flag) => {
+            flag.store(true, Ordering::SeqCst);
+            true
+        }
+        None => false,
     }
 }
 
@@ -662,10 +680,10 @@ fn find_game(client: &Client, id: &str) -> Result<CatalogGame, String> {
 }
 
 /// Installe les fichiers du plan l'un après l'autre en émettant la progression cumulée.
-fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &[GameFile]) -> Result<(), String> {
+fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &[GameFile], cancel: Arc<AtomicBool>) -> Result<(), String> {
     let roms = roms_dir(cfg)?;
     let client = Client::new(&cfg.serveur);
-    let installer = Installer { client: &client, roms: &roms };
+    let installer = Installer::new(&client, &roms).with_cancel(cancel);
     let total: u64 = plan.iter().map(|f| f.size).sum();
     let mut before = 0u64;
     for f in plan {
@@ -683,10 +701,10 @@ fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &
 #[tauri::command(rename = "installGame")]
 async fn install_game(app: tauri::AppHandle, game: String) -> Result<(), String> {
     blocking(move || {
-        let _busy = JeuOccupe::prendre(&EN_COURS, &game)?;
+        let busy = JeuOccupe::prendre(&EN_COURS, &game)?;
         let cfg = load_config()?;
         let g = find_game(&Client::new(&cfg.serveur), &game)?;
-        run_install(&app, &cfg, &g, &install_plan(&g, None)?)
+        run_install(&app, &cfg, &g, &install_plan(&g, None)?, busy.cancel.clone())
     })
     .await
 }
@@ -695,12 +713,19 @@ async fn install_game(app: tauri::AppHandle, game: String) -> Result<(), String>
 #[tauri::command(rename = "installContent")]
 async fn install_content(app: tauri::AppHandle, game: String, content: u64) -> Result<(), String> {
     blocking(move || {
-        let _busy = JeuOccupe::prendre(&EN_COURS, &game)?;
+        let busy = JeuOccupe::prendre(&EN_COURS, &game)?;
         let cfg = load_config()?;
         let g = find_game(&Client::new(&cfg.serveur), &game)?;
-        run_install(&app, &cfg, &g, &install_plan(&g, Some(content))?)
+        run_install(&app, &cfg, &g, &install_plan(&g, Some(content))?, busy.cancel.clone())
     })
     .await
+}
+
+/// Annule l'installation en cours d'un jeu (sans effet s'il n'y en a pas). Le téléchargement d'un
+/// fichier garde son `.part` pour reprendre ; l'extraction d'un dossier est supprimée.
+#[tauri::command(rename = "cancelInstall")]
+fn cancel_install(game: String) {
+    annuler(&EN_COURS, &game);
 }
 
 /// Désinstalle un jeu : supprime de l'appareil ses fichiers de ROM (base, mises à jour, DLC).
@@ -721,7 +746,7 @@ async fn uninstall_game(game: String) -> Result<(), String> {
 pub fn run() {
     rumble::init();
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game])
+        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install])
         .run(tauri::generate_context!())
         .expect("échec du démarrage de l'interface");
 }
@@ -945,11 +970,15 @@ mod tests {
 
     #[test]
     fn une_seule_operation_par_jeu() {
-        let set = Mutex::new(BTreeSet::new());
+        let set: Occupes = Mutex::new(BTreeMap::new());
         let a = JeuOccupe::prendre(&set, "switch-lm3").unwrap();
         assert!(JeuOccupe::prendre(&set, "switch-lm3").unwrap_err().contains("déjà en cours"));
         // Un autre jeu n'est pas bloqué.
         let _b = JeuOccupe::prendre(&set, "ds-x").unwrap();
+        // Annulation : lève le drapeau du jeu concerné seulement.
+        assert!(annuler(&set, "switch-lm3"));
+        assert!(a.cancel.load(Ordering::SeqCst) && !_b.cancel.load(Ordering::SeqCst));
+        assert!(!annuler(&set, "inconnu"));
         drop(a);
         assert!(JeuOccupe::prendre(&set, "switch-lm3").is_ok());
     }

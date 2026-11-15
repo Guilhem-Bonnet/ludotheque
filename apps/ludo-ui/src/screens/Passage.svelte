@@ -4,7 +4,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { api, isDemo } from '../lib/api';
+  import { api, CANCELLED, isDemo } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
@@ -39,7 +39,8 @@
     });
   }
 
-  async function runDemo() {
+  /** Déroulé des étapes (démonstration ou suite d'un téléchargement réel) ; les étapes faites sont sautées. */
+  async function runSteps() {
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
       if (s.state === 'fait') continue;
@@ -68,18 +69,31 @@
     }
   }
 
+  let downloading = $state(false);
+  let failed = $state(false);
+  let cancelling = $state(false);
+  let dlIndex = -1;
+  let dlLabel = '';
+
   /**
-   * Hors démonstration : le téléchargement est réel (progression envoyée par l'app). Les étapes
-   * suivantes (sauvegarde, lancement) restent à brancher avec le lancement des émulateurs ; en cas
-   * d'échec, l'étape reste visible avec le message d'erreur.
+   * Hors démonstration : le téléchargement est réel (progression envoyée par l'app). Renvoie `true`
+   * si tout est en place (ou s'il n'y avait rien à télécharger) ; en cas d'échec l'étape reste
+   * visible avec le message d'erreur et « Réessayer » est proposé ; annulé : retour à l'écran précédent.
    */
-  async function runReal() {
-    const i = steps.findIndex((s) => s.progress !== undefined && s.state !== 'fait');
-    if (i < 0) return;
-    const s = steps[i];
+  async function download(): Promise<boolean> {
+    if (dlIndex < 0) {
+      dlIndex = steps.findIndex((x) => x.progress !== undefined && x.state !== 'fait');
+      if (dlIndex >= 0) dlLabel = steps[dlIndex].label;
+    }
+    if (dlIndex < 0) return true;
+    const s = steps[dlIndex];
+    s.label = dlLabel;
     s.state = 'en_cours';
     s.progress = 0;
     s.detail = undefined;
+    failed = false;
+    cancelling = false;
+    downloading = true;
     try {
       await api.installGame(preparation.game.id, (p) => {
         s.progress = Math.round(p * 100);
@@ -89,13 +103,34 @@
       s.detail = preparation.game.size ?? undefined;
       s.state = 'fait';
       feedback('downloaded');
+      return true;
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (cancelling || msg === CANCELLED) {
+        router.back();
+        return false;
+      }
       s.label = 'Téléchargement impossible';
-      s.detail = e instanceof Error ? e.message : String(e);
-      s.progress = undefined;
+      s.detail = msg;
+      s.progress = 0;
       s.state = 'a_venir';
+      failed = true;
       feedback('err');
+      requestAnimationFrame(() => focusFirst());
+      return false;
+    } finally {
+      downloading = false;
     }
+  }
+
+  async function runReal() {
+    if (await download()) await runSteps();
+  }
+
+  function cancel() {
+    if (!downloading || cancelling) return;
+    cancelling = true;
+    void api.cancelInstall(preparation.game.id);
   }
 
   /** Vol de la tuile depuis l'accueil (FLIP), avec un léger arc vers le haut à mi-course. */
@@ -123,12 +158,15 @@
     flyIn();
     focusFirst();
     feedback('loading');
-    if (isDemo) void runDemo();
+    if (isDemo) void runSteps();
     else void runReal();
+    // B pendant le téléchargement : annuler (l'écran se déclare « modal » le temps du transfert).
+    window.addEventListener('ludo:modal-back', cancel);
+    return () => window.removeEventListener('ludo:modal-back', cancel);
   });
 </script>
 
-<div class="screen" class:launching>
+<div class="screen" class:launching data-modal={downloading ? "" : undefined}>
   <Ambiance art={preparation.game.art} x={14} />
   <main>
     <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero shine={launching} lifting={launching} /></div>
@@ -160,6 +198,11 @@
           </li>
         {/each}
       </ol>
+      {#if downloading}
+        <button class="act focusable" data-autofocus data-sound="none" disabled={cancelling} onclick={cancel}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
+      {:else if failed}
+        <button class="act focusable" data-autofocus onclick={() => void runReal()}>Réessayer</button>
+      {/if}
     </div>
   </main>
   <ButtonHints note="Sauvegardes conservées sur le serveur" hints={[{ key: 'B', label: 'Annuler' }]} />
@@ -196,6 +239,9 @@
   .bar { margin-left: 42px; height: 8px; border-radius: 4px; background: var(--raised); display: block; overflow: hidden; }
   .bar span { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 120ms linear; }
   .detail { margin-left: 42px; font-size: 14px; color: var(--ink-4); }
+  .act { all: unset; cursor: pointer; align-self: flex-start; margin-left: 42px; padding: 12px 24px; border-radius: 12px; font-size: 16px; font-weight: 600; background: var(--control); color: var(--ink); }
+  .act:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+  .act:disabled { cursor: default; opacity: 0.8; }
   .spin { animation: spin 900ms linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>

@@ -6,7 +6,7 @@
   import CloudIcon from './CloudIcon.svelte';
   import Icon from './Icon.svelte';
   import Tile from './Tile.svelte';
-  import { api } from '../api';
+  import { api, CANCELLED } from '../api';
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
   import { focusFirst } from '../nav';
@@ -40,6 +40,7 @@
   let installing = $state<number | null>(null);
   let installError = $state<string | null>(null);
   let removing = $state(false);
+  let cancelling = $state(false);
 
   const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -54,11 +55,21 @@
       feedback('downloaded');
       requestAnimationFrame(() => focusFirst());
     } catch (e) {
-      installError = message(e);
-      feedback('err');
+      // Annulation voulue : pas un échec, le fichier partiel est gardé pour reprendre.
+      if (message(e) !== CANCELLED) {
+        installError = message(e);
+        feedback('err');
+      }
     } finally {
       installing = null;
+      cancelling = false;
     }
+  }
+
+  function cancelInstall() {
+    if (installing === null || cancelling) return;
+    cancelling = true;
+    void api.cancelInstall(game.id);
   }
 
   async function syncGame() {
@@ -142,6 +153,9 @@
         </button>
       {/if}
     </li>
+    {#if installing !== null}
+      <li><button class="opt focusable" data-sound="none" disabled={cancelling} onclick={cancelInstall}><Icon name="trash" size={22} />{cancelling ? 'Annulation…' : 'Annuler le téléchargement'}</button></li>
+    {/if}
     <li><button class="opt focusable" onclick={ondetails}><Icon name="history" size={22} />Détails et sauvegardes</button></li>
     {#if installed}
       <li>
