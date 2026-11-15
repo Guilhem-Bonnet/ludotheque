@@ -83,7 +83,7 @@
     </section>
   </main>
   {#if restoring}
-    <RestoreDialog {game} rev={restoring} profile={router.profile!.id} ondone={restoreDone} />
+    <RestoreDialog {game} rev={restoring} profile={router.profile!.id} ondone={restoreDone} onfail={() => { restoring = null; requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus()); }} />
   {/if}
   <ButtonHints hints={restoring ? [] : [{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Retour' }]} />
 </div>

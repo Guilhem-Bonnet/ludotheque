@@ -86,6 +86,8 @@ const demoApi: LudoApi = {
   async restore(_p, _g, _r, onstep) {
     // Démo : téléchargement de la version (≈1,2 s), puis remplacement local (≈0,6 s).
     for (let i = 1; i <= 12; i++) { await wait(100); onstep?.(0, i / 12); }
+    // `?echec=restauration` : simule un conflit (la sauvegarde a changé ailleurs) pour voir l'écran d'échec.
+    if (new URLSearchParams(location.search).get('echec') === 'restauration') throw new Error('conflit');
     onstep?.(1, 0);
     await wait(600);
     onstep?.(2, 1);
@@ -136,14 +138,18 @@ const demoApi: LudoApi = {
 };
 
 /**
- * Dans Tauri : chaque commande Rust absente ou en échec retombe sur la démonstration, le temps que
- * toutes les commandes soient branchées (seule `device` l'est pour l'instant).
+ * Dans Tauri : une commande Rust absente retombe sur la démonstration, le temps que toutes les
+ * commandes soient branchées. Une commande présente qui échoue :
+ * - lecture (`fallback: true`) : retombe aussi sur la démonstration (serveur éteint, catalogue absent) ;
+ * - écriture (restauration, profil) : l'erreur remonte, pour ne jamais afficher un faux succès.
  */
-function viaTauri<K extends keyof LudoApi>(cmd: K, args: (...a: Parameters<LudoApi[K]>) => Record<string, unknown>): LudoApi[K] {
+function viaTauri<K extends keyof LudoApi>(cmd: K, args: (...a: Parameters<LudoApi[K]>) => Record<string, unknown>, fallback = true): LudoApi[K] {
   return (async (...a: Parameters<LudoApi[K]>) => {
     try {
       return await invoke(cmd, args(...a));
-    } catch {
+    } catch (e) {
+      const missing = /not found|unknown command|not allowed/i.test(String(e));
+      if (!missing && !fallback) throw new Error(String(e));
       return (demoApi[cmd] as (...x: unknown[]) => unknown)(...a);
     }
   }) as LudoApi[K];
@@ -157,10 +163,16 @@ const tauriApi: LudoApi = {
   history: viaTauri('history', (profile, game) => ({ profile, game })),
   updates: viaTauri('updates', () => ({})),
   sync: viaTauri('sync', (profile) => ({ profile })),
-  saveProfile: viaTauri('saveProfile', (profile) => ({ profile })),
+  saveProfile: viaTauri('saveProfile', (profile) => ({ profile }), false),
   ping: viaTauri('ping', () => ({})),
   restore: async (profile, game, rev, onstep) => {
-    try { await invoke('restore', { profile, game, rev }); onstep?.(2, 1); } catch { await demoApi.restore(profile, game, rev, onstep); }
+    try {
+      await invoke('restore', { profile, game, rev });
+      onstep?.(2, 1);
+    } catch (e) {
+      if (!/not found|unknown command|not allowed/i.test(String(e))) throw new Error(String(e));
+      await demoApi.restore(profile, game, rev, onstep);
+    }
   },
   prepare: viaTauri('prepare', (profile, game) => ({ profile, game })),
 };

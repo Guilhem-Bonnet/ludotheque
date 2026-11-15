@@ -11,9 +11,10 @@
 
   // Restauration d'une sauvegarde : fenêtre de chargement (on ne joue pas pendant qu'on remplace la
   // sauvegarde). Étapes cochées une à une, barre continue, sons de synchronisation, accord à la fin.
-  let { game, rev, profile, ondone }: { game: Game; rev: SaveRevision; profile: string; ondone: () => void } = $props();
+  let { game, rev, profile, ondone, onfail }: { game: Game; rev: SaveRevision; profile: string; ondone: () => void; onfail: () => void } = $props();
 
   let step = $state(0);
+  let failed = $state<string | null>(null);
   let progress = $state(0);
   const steps = ['Téléchargement de la version', 'Remplacement de la sauvegarde locale', 'Sauvegarde restaurée'];
 
@@ -26,9 +27,15 @@
         step = 2;
         feedback('saved');
         setTimeout(ondone, 900);
+      })
+      .catch((e) => {
+        // Échec (conflit : la sauvegarde a changé ailleurs entre-temps, ou serveur injoignable) : rien n'est remplacé.
+        failed = /conflit|conflict/i.test(String(e)) ? 'La sauvegarde a changé sur un autre appareil' : 'Serveur injoignable';
+        feedback('err');
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('.card .close')?.focus());
       });
     // B pendant la restauration : rien (l'opération doit aller au bout pour ne rien perdre).
-    const block = () => feedback('err');
+    const block = () => (failed ? onfail() : feedback('err'));
     window.addEventListener('ludo:modal-back', block);
     return () => window.removeEventListener('ludo:modal-back', block);
   });
@@ -46,6 +53,7 @@
       <li class:done={i < step || step === 2} class:now={i === step && step < 2}>
         <span class="mark">
           {#if i < step || step === 2}<span class="check"><Icon name="check" size={14} color="#0b0f14" /></span>
+          {:else if i === step && failed}<span class="xmark">!</span>
           {:else if i === step}<span class="spinner"></span>
           {:else}<span class="dot"></span>{/if}
         </span>
@@ -53,10 +61,15 @@
       </li>
     {/each}
   </ol>
-  <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress * 100)}>
+  <div class="bar" class:failbar={failed} role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress * 100)}>
     <span style:width="{progress * 100}%"></span>
   </div>
-  <p class="note">{step === 2 ? 'Version actuelle sur tous les appareils' : "L'ancienne version reste dans l'historique"}</p>
+  {#if failed}
+    <p class="fail">Restauration impossible · {failed}. Aucune sauvegarde remplacée.</p>
+    <button class="close focusable" onclick={onfail}>Fermer</button>
+  {:else}
+    <p class="note">{step === 2 ? 'Version actuelle sur tous les appareils' : "L'ancienne version reste dans l'historique"}</p>
+  {/if}
 </div>
 
 <style>
@@ -78,6 +91,11 @@
   .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.18); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
   .bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; margin-top: 6px; }
   .bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 160ms linear; }
+  .xmark { width: 22px; height: 22px; border-radius: 50%; background: #ff6b6b; color: #0b0f14; font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
+  .failbar span { background: #ff6b6b; }
+  .fail { margin: 0; font-size: 14px; color: #ff9b9b; }
+  .close { all: unset; cursor: pointer; align-self: flex-end; padding: 10px 18px; border-radius: 10px; background: var(--raised); font-size: 15px; }
+  .close.focusable:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   .note { margin: 0; font-size: 13px; color: var(--ink-4); }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes pop { from { transform: scale(0.5); } to { transform: none; } }
