@@ -42,6 +42,8 @@ pub enum StoreError {
     Catalog(String),
     #[error("dossier des ROM non configuré (variable LUDO_ROMS)")]
     NoRoms,
+    #[error("dossier des ROM indisponible : {0}")]
+    RomsUnavailable(String),
     #[error("introuvable")]
     NotFound,
     #[error("chemin refusé : {0}")]
@@ -521,9 +523,20 @@ impl Store {
     /// restent stables tant que le chemin ne change pas.
     pub fn rescan(&self) -> Result<RescanReport, StoreError> {
         let root = self.roms.as_ref().ok_or(StoreError::NoRoms)?;
-        let scanned = catalog::scan(root)?;
+        let catalog::ScanResult { games: scanned, ignored } = catalog::scan(root)?;
         let mut db = self.db.lock().expect("verrou base");
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Un balayage vide ne remplace jamais un catalogue existant : partage des ROM non monté,
+        // disque débranché… On garde l'ancien catalogue (et les identifiants de fichiers, pour la reprise).
+        if scanned.is_empty() {
+            let existing: i64 = tx.query_row("SELECT COUNT(*) FROM games", [], |r| r.get(0))?;
+            if existing > 0 {
+                return Err(StoreError::RomsUnavailable(format!(
+                    "aucun jeu trouvé dans {} ; catalogue actuel ({existing} jeux) conservé",
+                    root.display()
+                )));
+            }
+        }
         let ids: Vec<&str> = scanned.iter().map(|g| g.id.as_str()).collect();
         let paths: std::collections::HashSet<&str> = scanned.iter().flat_map(|g| g.files.iter().map(|f| f.path.as_str())).collect();
         let old_games: Vec<String> = tx.prepare("SELECT id FROM games")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
@@ -555,7 +568,7 @@ impl Store {
             }
         }
         tx.commit()?;
-        Ok(RescanReport { games: scanned.len(), files })
+        Ok(RescanReport { games: scanned.len(), files, ignored })
     }
 
     /// Catalogue des jeux, triés par titre, avec leurs fichiers.

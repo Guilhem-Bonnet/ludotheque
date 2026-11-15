@@ -8,6 +8,7 @@
   const spec = $derived.by(() => {
     if (game.sync === 'conflit') return { icon: 'conflict', color: 'var(--conflict)', bg: '#33284a', label: 'Conflit de sauvegarde' } as const;
     if (game.sync === 'envoi_en_attente') return { icon: 'cloud-pending', color: 'var(--pending)', bg: '#3b3020', label: 'Envoi en attente' } as const;
+    if (game.sync === 'a_recuperer') return { icon: 'cloud-download', color: 'var(--sync)', bg: '#1c3546', label: 'Sauvegarde à récupérer' } as const;
     if (game.sync === 'synchronisation') return { icon: 'cloud-sync', color: 'var(--sync)', bg: '#1c3546', label: 'Synchronisation…' } as const;
     if (game.install === 'mise_a_jour') return { icon: 'update', color: 'var(--update)', bg: '#1c3546', label: 'Mise à jour disponible' } as const;
     if (game.install === 'telechargement') return { icon: 'download', color: 'var(--accent-ink)', bg: 'var(--accent-soft)', label: 'Téléchargement…' } as const;

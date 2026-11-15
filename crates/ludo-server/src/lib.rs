@@ -34,6 +34,9 @@ use store::{Store, StoreError};
 /// Taille maximale d'une archive de sauvegarde (certaines sauvegardes Switch pèsent des centaines de Mo).
 pub const MAX_SAVE_BYTES: usize = 1024 * 1024 * 1024;
 
+/// Taille des blocs lus pour envoyer une ROM (les ROM pèsent jusqu'à 15 Go ; 4 Kio par défaut limiterait le débit).
+const STREAM_CHUNK: usize = 256 * 1024;
+
 impl IntoResponse for StoreError {
     fn into_response(self) -> Response {
         let status = match self {
@@ -44,7 +47,7 @@ impl IntoResponse for StoreError {
             StoreError::NotFound => StatusCode::NOT_FOUND,
             StoreError::Forbidden(_) => StatusCode::FORBIDDEN,
             StoreError::IsDirectory => StatusCode::UNPROCESSABLE_ENTITY,
-            StoreError::NoRoms => StatusCode::SERVICE_UNAVAILABLE,
+            StoreError::NoRoms | StoreError::RomsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         if status.is_server_error() {
@@ -189,30 +192,46 @@ pub enum RangeSpec {
 /// Lit un en-tête `Range: bytes=a-b | a- | -n` pour un fichier de `len` octets. Un intervalle
 /// multiple ou d'une autre unité est ignoré (réponse complète, ce que HTTP autorise).
 pub fn parse_range(header: Option<&str>, len: u64) -> RangeSpec {
-    let Some(spec) = header.and_then(|h| h.trim().strip_prefix("bytes=")) else {
+    let Some(h) = header.map(str::trim) else { return RangeSpec::Full };
+    let Some(spec) = h.get(..6).filter(|p| p.eq_ignore_ascii_case("bytes=")).map(|_| &h[6..]) else {
         return RangeSpec::Full;
+    };
+    // Nombres : chiffres seulement (pas de « +5 ») ; un nombre qui déborde rend la plage insatisfiable.
+    let num = |x: &str| -> Option<Result<u64, ()>> {
+        if x.is_empty() {
+            None
+        } else if x.bytes().all(|c| c.is_ascii_digit()) {
+            Some(x.parse::<u64>().map_err(|_| ()))
+        } else {
+            Some(Err(()))
+        }
     };
     if spec.contains(',') {
         return RangeSpec::Full;
     }
     let Some((a, b)) = spec.split_once('-') else { return RangeSpec::Full };
     let (a, b) = (a.trim(), b.trim());
-    match (a.parse::<u64>(), b.parse::<u64>()) {
-        (Ok(start), Ok(end)) if start <= end => {
+    match (num(a), num(b)) {
+        // Débordement ou suffixe nul (« bytes=-0 ») : insatisfiable (RFC 9110, 14.1.2).
+        (Some(Ok(_)), Some(Err(()))) | (None, Some(Err(()))) | (Some(Err(())), _) => {
+            if a.bytes().chain(b.bytes()).all(|c| c.is_ascii_digit()) { RangeSpec::Unsatisfiable } else { RangeSpec::Full }
+        }
+        (None, Some(Ok(0))) => RangeSpec::Unsatisfiable,
+        (Some(Ok(start)), Some(Ok(end))) if start <= end => {
             if start >= len {
                 RangeSpec::Unsatisfiable
             } else {
                 RangeSpec::Part(start, end.min(len - 1))
             }
         }
-        (Ok(start), Err(_)) if b.is_empty() => {
+        (Some(Ok(start)), None) => {
             if start >= len {
                 RangeSpec::Unsatisfiable
             } else {
                 RangeSpec::Part(start, len - 1)
             }
         }
-        (Err(_), Ok(n)) if a.is_empty() && n > 0 => {
+        (None, Some(Ok(n))) => {
             if len == 0 {
                 RangeSpec::Unsatisfiable
             } else {
@@ -254,7 +273,7 @@ async fn get_game_file(
         .header(header::ETAG, &etag);
     let respond = |b: axum::http::response::Builder, body: Body| b.body(body).map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())));
     match parse_range(wanted, len) {
-        RangeSpec::Full => respond(base.status(StatusCode::OK).header(header::CONTENT_LENGTH, len), Body::from_stream(tokio_util::io::ReaderStream::new(file))),
+        RangeSpec::Full => respond(base.status(StatusCode::OK).header(header::CONTENT_LENGTH, len), Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK))),
         RangeSpec::Part(start, end) => {
             file.seek(std::io::SeekFrom::Start(start)).await?;
             let n = end - start + 1;
@@ -262,7 +281,7 @@ async fn get_game_file(
                 base.status(StatusCode::PARTIAL_CONTENT)
                     .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"))
                     .header(header::CONTENT_LENGTH, n),
-                Body::from_stream(tokio_util::io::ReaderStream::new(file.take(n))),
+                Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file.take(n), STREAM_CHUNK)),
             )
         }
         RangeSpec::Unsatisfiable => respond(

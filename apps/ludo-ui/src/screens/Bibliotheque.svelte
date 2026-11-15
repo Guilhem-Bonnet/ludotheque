@@ -83,6 +83,7 @@
   function stateOf(g: Game): [string, string] {
     if (g.sync === 'conflit') return ['Conflit de sauvegarde', 'var(--conflict)'];
     if (g.sync === 'envoi_en_attente') return ['Envoi en attente', 'var(--pending)'];
+    if (g.sync === 'a_recuperer') return ['Sauvegarde à récupérer', 'var(--sync)'];
     if (g.install === 'mise_a_jour') return ['Mise à jour disponible', 'var(--update)'];
     if (g.install === 'telechargement') return [`Téléchargement… ${g.progress ?? 0} %`, 'var(--accent-ink)'];
     if (g.install === 'non_installe') return ['Non installé', 'var(--ink-4)'];

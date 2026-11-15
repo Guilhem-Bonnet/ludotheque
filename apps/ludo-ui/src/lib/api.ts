@@ -48,7 +48,7 @@ const GAMES: Game[] = [
   { id: 'wiiu-wwhd', title: 'The Legend of Zelda: The Wind Waker HD', short: 'Wind\nWaker HD', console: 'wiiu', tile: '#1257d6', tileInk: '#ffffff', art: { motif: 'vagues', from: '#3fd0ff', to: '#1257d6' }, emulator: 'Cemu', install: 'non_installe', sync: 'aucune' },
   { id: 'gc-tp', title: 'The Legend of Zelda: Twilight Princess', short: 'Twilight\nPrincess', console: 'gc', tile: '#3b2a8a', tileInk: '#ffffff', art: { motif: 'lune', from: '#ff9a3c', to: '#3b2a8a', ink: '#1e1450' }, emulator: 'Dolphin', install: 'non_installe', sync: 'aucune' },
   { id: 'switch-botw', title: 'The Legend of Zelda: Breath of the Wild', short: 'Breath of\nthe Wild', console: 'switch', tile: '#1a8f8a', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#7fe3c4', to: '#1a8f8a', ink: '#0b4a44' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'conflit', playtime: '41 h 12' },
-  { id: 'switch-epee', title: 'Pokémon Épée', short: 'Pokémon\nÉpée', console: 'switch', tile: '#3a2bd6', tileInk: '#ffffff', art: { motif: 'cristal', from: '#a98bff', to: '#3a2bd6' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
+  { id: 'switch-epee', title: 'Pokémon Épée', short: 'Pokémon\nÉpée', console: 'switch', tile: '#3a2bd6', tileInk: '#ffffff', art: { motif: 'cristal', from: '#a98bff', to: '#3a2bd6' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_recuperer' },
   { id: 'switch-letsgo', title: "Pokémon : Let's Go, Pikachu", short: "Let's Go\nPikachu", console: 'switch', tile: '#ff9f1c', tileInk: '#3a2400', art: { motif: 'eclair', from: '#ffe14d', to: '#ff9f1c' }, emulator: 'Ryujinx 1.3.3', install: 'non_installe', sync: 'aucune' },
   { id: 'switch-xc3', title: 'Xenoblade Chronicles 3', short: 'Xenoblade\nChronicles 3', console: 'switch', tile: '#3b3fd6', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#5ad1ff', to: '#3b3fd6', ink: '#1b1f6e' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
 ];
@@ -169,7 +169,8 @@ const tauriApi: LudoApi = {
   library: viaTauri('library', (profile) => ({ profile })),
   history: viaTauri('history', (profile, game) => ({ profile, game })),
   updates: viaTauri('updates', () => ({})),
-  sync: viaTauri('sync', (profile) => ({ profile })),
+  // Écriture (envoi des sauvegardes) : une erreur remonte, jamais un faux « à jour » de démonstration.
+  sync: viaTauri('sync', (profile) => ({ profile }), false),
   saveProfile: async (profile) => {
     // Premier enregistrement sur un serveur sans profils : on enregistre aussi les autres profils
     // affichés, sinon « Qui joue ? » ne montrerait plus que celui-ci au prochain démarrage.

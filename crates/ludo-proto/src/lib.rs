@@ -229,8 +229,11 @@ pub struct SaveSummary {
 }
 
 /// Résultat d'un nouveau balayage du dossier des ROM.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RescanReport {
     pub games: usize,
     pub files: usize,
+    /// Jeux et fichiers écartés, avec la raison (affichés plus tard dans les Réglages).
+    #[serde(default)]
+    pub ignored: Vec<String>,
 }

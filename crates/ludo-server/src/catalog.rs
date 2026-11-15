@@ -254,10 +254,15 @@ fn collect_addons(dir: &Path, rel_dir: &str, console: &'static str, out: &mut Ve
 }
 
 /// Parcourt les dossiers de consoles : jeux de base d'un côté, mises à jour et DLC de l'autre.
-fn collect(root: &Path) -> (Vec<Candidate>, Vec<Candidate>) {
+fn collect(root: &Path) -> Result<(Vec<Candidate>, Vec<Candidate>), StoreError> {
     let (mut bases, mut addons) = (Vec::new(), Vec::new());
     for &console in CONSOLES {
-        let Ok(rd) = std::fs::read_dir(root.join(console)) else { continue };
+        // Dossier de console absent : normal. Présent mais illisible : erreur (jamais « zéro jeu »).
+        let rd = match std::fs::read_dir(root.join(console)) {
+            Ok(rd) => rd,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(StoreError::RomsUnavailable(format!("{console} : {e}"))),
+        };
         let mut entries: Vec<_> = rd.filter_map(Result::ok).collect();
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
@@ -299,7 +304,7 @@ fn collect(root: &Path) -> (Vec<Candidate>, Vec<Candidate>) {
             }
         }
     }
-    (bases, addons)
+    Ok((bases, addons))
 }
 
 fn load_catalog(root: &Path) -> Result<Vec<CatalogEntry>, StoreError> {
@@ -403,14 +408,24 @@ fn draft_unlisted(id: String, c: &Candidate) -> Draft {
 }
 
 /// Balaye la racine des ROM et renvoie les jeux reconnus, triés par identifiant.
-pub fn scan(root: &Path) -> Result<Vec<ScannedGame>, StoreError> {
+/// Résultat d'un balayage : jeux reconnus et éléments écartés (avec la raison).
+pub struct ScanResult {
+    pub games: Vec<ScannedGame>,
+    pub ignored: Vec<String>,
+}
+
+pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
+    // Racine absente ou illisible (partage non monté) : erreur, jamais un catalogue vide.
+    std::fs::read_dir(root).map_err(|e| StoreError::RomsUnavailable(format!("{} : {e}", root.display())))?;
     let entries = load_catalog(root)?;
-    let (bases, addons) = collect(root);
+    let (bases, addons) = collect(root)?;
+    let mut ignored = Vec::new();
     let mut drafts: BTreeMap<String, Draft> = BTreeMap::new();
     let by_entry: BTreeMap<String, &CatalogEntry> = entries.iter().map(|e| (entry_path(root, e), e)).collect();
     for (path, e) in &by_entry {
         if !bases.iter().any(|b| &b.file.path == path) {
             tracing::warn!(id = %e.id, entry = %e.entry, "catalogue.toml : fichier d'entrée absent du disque, jeu ignoré");
+            ignored.push(format!("{} : fichier d'entrée introuvable ({})", e.id, e.entry));
         }
     }
 
@@ -435,7 +450,7 @@ pub fn scan(root: &Path) -> Result<Vec<ScannedGame>, StoreError> {
         d.game.files.push(c.file);
     }
 
-    // Mises à jour et DLC : par identifiant de titre (MAJ = base | 0x800, DLC = base + 0x1000), sinon par nom.
+    // Mises à jour et DLC : par identifiant de titre (MAJ = base | 0x800, DLC = (base & !0xFFF) + 0x1000 + n), sinon par nom.
     for a in addons {
         let target = drafts
             .values()
@@ -455,7 +470,10 @@ pub fn scan(root: &Path) -> Result<Vec<ScannedGame>, StoreError> {
                 let role = if a.stem.to_lowercase().contains("dlc") { FileRole::Dlc } else { FileRole::Maj };
                 drafts
                     .values()
-                    .filter(|d| d.game.console == a.console && !d.name.is_empty() && n.starts_with(&d.name))
+                    // Par nom seulement si l'un des deux identifiants de titre manque : deux identifiants
+                    // connus et différents désignent deux jeux différents (« Mario » ≠ « Mario Kart »).
+                    .filter(|d| d.game.console == a.console && !(d.tid.is_some() && a.tid.is_some()))
+                    .filter(|d| !d.name.is_empty() && n.starts_with(&d.name))
                     .max_by_key(|d| d.name.len())
                     .map(|d| (d.game.id.clone(), role))
             });
@@ -465,17 +483,21 @@ pub fn scan(root: &Path) -> Result<Vec<ScannedGame>, StoreError> {
                     d.game.files.push(ScannedFile { role, ..a.file });
                 }
             }
-            None => tracing::warn!(path = %a.file.path, "mise à jour ou DLC sans jeu correspondant, ignoré"),
+            None => {
+                tracing::warn!(path = %a.file.path, "mise à jour ou DLC sans jeu correspondant, ignoré");
+                ignored.push(format!("{} : mise à jour ou DLC sans jeu correspondant", a.file.path));
+            }
         }
     }
 
-    Ok(drafts
+    let games = drafts
         .into_values()
         .map(|mut d| {
             d.game.files.sort_by(|a, b| (a.role.as_str(), &a.path).cmp(&(b.role.as_str(), &b.path)));
             d.game
         })
-        .collect())
+        .collect();
+    Ok(ScanResult { games, ignored })
 }
 
 #[cfg(test)]

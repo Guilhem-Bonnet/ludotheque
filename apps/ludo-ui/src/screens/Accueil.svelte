@@ -89,12 +89,22 @@
     syncing = true;
     feedback('syncStart');
     const tick = setInterval(() => playSound('syncTick'), 900);
-    const lib = await api.sync(router.profile!.id).finally(() => clearInterval(tick));
+    let lib: Game[];
+    try {
+      lib = await api.sync(router.profile!.id);
+    } catch {
+      // Serveur injoignable ou configuration illisible : rien n'a changé, aucun faux « à jour ».
+      syncing = false;
+      feedback('err');
+      return;
+    } finally {
+      clearInterval(tick);
+    }
     const byId = new Map(lib.map((g) => [g.id, g]));
     all = lib;
-    games = games.map((g) => ({ ...g, sync: byId.get(g.id)?.sync ?? g.sync }));
+    games = games.map((g) => ({ ...g, sync: byId.get(g.id)?.sync ?? g.sync, syncError: byId.get(g.id)?.syncError }));
     syncing = false;
-    feedback(lib.some((g) => g.sync === 'conflit') ? 'conflict' : 'saved');
+    feedback(lib.some((g) => g.syncError) ? 'err' : lib.some((g) => g.sync === 'conflit') ? 'conflict' : 'saved');
   }
 
   /** Mise en scène du lancement : la tuile se soulève, les autres s'estompent, puis l'écran change. */

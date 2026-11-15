@@ -325,6 +325,9 @@ pub struct UiGame {
     last: Option<UiLast>,
     #[serde(skip_serializing_if = "Option::is_none")]
     size: Option<String>,
+    /// Échec de la dernière synchronisation manuelle de ce jeu (« En cours sur Steam Deck »…).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sync_error: Option<String>,
 }
 
 /// Taille lisible, virgule décimale et unités françaises : « 6,8 Go », « 65,8 Mo ».
@@ -371,12 +374,15 @@ pub fn install_state(files: &[GameFile], exists: &dyn Fn(&str) -> bool) -> &'sta
     }
 }
 
-/// État de synchronisation d'après le journal local de l'appareil.
-pub fn sync_state(entry: Option<&Entry>) -> &'static str {
+/// État de synchronisation d'après le journal local de l'appareil et la présence d'une sauvegarde
+/// sur le serveur : une sauvegarde sur le serveur jamais récupérée ici est « à récupérer » (elle se
+/// télécharge d'elle-même au lancement).
+pub fn sync_state(entry: Option<&Entry>, on_server: bool) -> &'static str {
     match entry {
         Some(e) if e.conflict => "conflit",
         Some(e) if e.pending_upload => "envoi_en_attente",
         Some(_) => "a_jour",
+        None if on_server => "a_recuperer",
         None => "aucune",
     }
 }
@@ -423,7 +429,8 @@ pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
                 art: g.art.clone(),
                 emulator: emulator_label((env.emulator)(&g.id).as_deref(), &g.console),
                 install: install_state(&g.files, env.exists),
-                sync: sync_state((env.journal)(&g.id).as_ref()),
+                sync: sync_state((env.journal)(&g.id).as_ref(), save.is_some()),
+                sync_error: None,
                 playtime: save.map(|s| playtime_label(s.playtime_s)),
                 last: save.map(|s| UiLast {
                     device: device_name(&s.device),
@@ -499,13 +506,22 @@ async fn recent(profile: String) -> Result<Vec<UiGame>, String> {
 async fn sync(profile: String) -> Result<Vec<UiGame>, String> {
     blocking(move || {
         let cfg = load_config()?;
+        let mut failures = std::collections::HashMap::new();
         for (id, result) in sync_profile(&cfg, &profile)? {
             match result {
                 Ok(o) => eprintln!("sync {id} : {}", sync_label(&o)),
-                Err(e) => eprintln!("sync {id} : échec : {e}"),
+                Err(e) => {
+                    eprintln!("sync {id} : échec : {e}");
+                    failures.insert(id, e);
+                }
             }
         }
-        Ok(fetch_library(&cfg, &profile)?.0)
+        // Les échecs par jeu remontent à l'interface (« Synchronisation incomplète »).
+        let mut games = fetch_library(&cfg, &profile)?.0;
+        for g in &mut games {
+            g.sync_error = failures.remove(&g.id);
+        }
+        Ok(games)
     })
     .await
 }
@@ -626,10 +642,11 @@ mod tests {
         assert_eq!(install_state(&[], &|_| true), "non_installe");
 
         let entry = |conflict, pending_upload| Entry { base_rev: 1, base_hash: None, pending_upload, conflict };
-        assert_eq!(sync_state(Some(&entry(true, true))), "conflit");
-        assert_eq!(sync_state(Some(&entry(false, true))), "envoi_en_attente");
-        assert_eq!(sync_state(Some(&entry(false, false))), "a_jour");
-        assert_eq!(sync_state(None), "aucune");
+        assert_eq!(sync_state(Some(&entry(true, true)), true), "conflit");
+        assert_eq!(sync_state(Some(&entry(false, true)), true), "envoi_en_attente");
+        assert_eq!(sync_state(Some(&entry(false, false)), true), "a_jour");
+        assert_eq!(sync_state(None, true), "a_recuperer");
+        assert_eq!(sync_state(None, false), "aucune");
     }
 
     #[test]

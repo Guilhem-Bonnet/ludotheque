@@ -4,7 +4,7 @@
     | 'cloud-ok' | 'cloud-pending' | 'cloud-sync' | 'cloud-off' | 'conflict'
     | 'update' | 'download' | 'grid' | 'people' | 'settings' | 'battery'
     | 'deck' | 'pc' | 'thor' | 'tv' | 'check-circle' | 'spinner' | 'circle'
-    | 'play' | 'history' | 'trash' | 'pencil' | 'check' | 'volume' | 'rumble' | 'pin';
+    | 'cloud-download' | 'play' | 'history' | 'trash' | 'pencil' | 'check' | 'volume' | 'rumble' | 'pin';
 
   let { name, size = 24, color = 'currentColor', label }: { name: IconName; size?: number; color?: string; label?: string } = $props();
   const stroke = $derived(['cloud-ok', 'cloud-pending', 'conflict', 'check-circle', 'spinner'].includes(name) ? 2.1 : 1.8);
@@ -27,6 +27,8 @@
     <path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.5 4.25 4.25 0 0 0 7 18z" /><path d="m9.5 13.5 2 2 3.5-3.5" />
   {:else if name === 'cloud-pending'}
     <path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.5 4.25 4.25 0 0 0 7 18z" stroke-dasharray="2.5 2.5" /><path d="M12 16v-5m-2.2 2.2L12 11l2.2 2.2" />
+  {:else if name === 'cloud-download'}
+    <path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.5 4.25 4.25 0 0 0 7 18z" /><path d="M12 10.5v5m-2.2-2.2L12 15.5l2.2-2.2" />
   {:else if name === 'cloud-sync'}
     <path d="M7 18h10a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.1 9.5 4.25 4.25 0 0 0 7 18z" /><path d="M9.5 13a2.5 2.5 0 0 1 4.3-1.7M14.5 13a2.5 2.5 0 0 1-4.3 1.7" />
   {:else if name === 'cloud-off'}

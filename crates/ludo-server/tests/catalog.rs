@@ -287,6 +287,48 @@ fn intervalles_http() {
     assert_eq!(parse_range(Some("items=0-1"), 10), Full);
     assert_eq!(parse_range(Some("bytes=4-2"), 10), Full);
     assert_eq!(parse_range(Some("bytes=0-0"), 0), Unsatisfiable);
+    // Corrections de revue : suffixe nul et débordement insatisfiables, préfixe sans casse, « +5 » refusé.
+    assert_eq!(parse_range(Some("bytes=-0"), 10), Unsatisfiable);
+    assert_eq!(parse_range(Some("bytes=99999999999999999999-"), 10), Unsatisfiable);
+    assert_eq!(parse_range(Some("BYTES=1-2"), 10), Part(1, 2));
+    assert_eq!(parse_range(Some("bytes=+5-"), 10), Full);
+}
+
+#[tokio::test]
+async fn partage_non_monte_ou_vide_ne_vide_pas_le_catalogue() {
+    let a = app();
+    let first = a.store.rescan().unwrap();
+    assert!(first.games > 0);
+    // Les éléments écartés sont listés avec leur raison.
+    assert!(first.ignored.iter().any(|m| m.starts_with("gc-fantome")), "{:?}", first.ignored);
+    assert!(first.ignored.iter().any(|m| m.contains("Orphelin.nsp")), "{:?}", first.ignored);
+    let before = catalog(&a).await.len();
+    let root = a.roms.path().to_path_buf();
+    let aside = root.with_extension("demonte");
+    // Partage non monté : la racine n'existe plus.
+    std::fs::rename(&root, &aside).unwrap();
+    let (s, _, _) = call(&a, Request::post("/api/v1/catalog/rescan").body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(catalog(&a).await.len(), before);
+    // Point de montage vide : aucun jeu trouvé, l'ancien catalogue est gardé.
+    std::fs::create_dir(&root).unwrap();
+    let (s, _, _) = call(&a, Request::post("/api/v1/catalog/rescan").body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(catalog(&a).await.len(), before);
+    std::fs::remove_dir(&root).unwrap();
+    std::fs::rename(&aside, &root).unwrap();
+    assert_eq!(a.store.rescan().unwrap().games, first.games);
+}
+
+#[tokio::test]
+async fn dlc_d_un_autre_jeu_pas_rattache_par_le_nom() {
+    // « Mario » est le début de « Mario Kart » : avec deux identifiants de titre connus et différents,
+    // le DLC ne doit pas être rattaché par le nom.
+    let a = app();
+    put(a.roms.path(), "switch/Mario [0100000000010000][v0].nsp", &[1; 10]);
+    put(a.roms.path(), "switch/MAJ-DLC/Mario Kart 9 [0100AAAAAAAA1001][v0].nsp", &[2; 10]);
+    let r = a.store.rescan().unwrap();
+    assert!(r.ignored.iter().any(|m| m.contains("Mario Kart 9")), "{:?}", r.ignored);
 }
 
 #[tokio::test]
