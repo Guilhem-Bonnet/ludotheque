@@ -149,7 +149,7 @@ fn take_lease<'a>(client: &'a Client, key: &'a SaveKey, device: &str) -> Result<
 }
 
 /// Pose `stop` à la destruction : le fil de renouvellement s'arrête même si la partie panique.
-struct StopOnDrop<'a>(&'a AtomicBool);
+pub struct StopOnDrop<'a>(pub &'a AtomicBool);
 
 impl Drop for StopOnDrop<'_> {
     fn drop(&mut self) {
@@ -172,7 +172,7 @@ pub fn holder_device(id: &str) -> &str {
 /// Le verrou expire au bout de 120 s : il est renouvelé tant que la partie dure.
 const HEARTBEAT: Duration = Duration::from_secs(40);
 
-fn heartbeat(client: &Client, key: &SaveKey, device: &str, stop: &AtomicBool) {
+pub fn heartbeat(client: &Client, key: &SaveKey, device: &str, stop: &AtomicBool) {
     let mut last = Instant::now();
     while !stop.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(250));
@@ -185,8 +185,15 @@ fn heartbeat(client: &Client, key: &SaveKey, device: &str, stop: &AtomicBool) {
 
 /// Temps de jeu cumulé de la tête du serveur : `Some(0)` s'il n'y a pas encore de tête, `None` si
 /// le serveur est injoignable (valeur inconnue, à ne jamais confondre avec 0).
-fn head_playtime(client: &Client, key: &SaveKey) -> Option<u64> {
+pub fn head_playtime(client: &Client, key: &SaveKey) -> Option<u64> {
     client.head(key).ok().map(|h| h.map_or(0, |h| h.playtime_s))
+}
+
+/// Temps de jeu à envoyer après une partie : le plus grand cumul connu (avant la partie, ou relu
+/// juste avant l'envoi) plus la durée jouée. Jamais moins que la tête connue ; cumul inconnu des
+/// deux côtés (hors ligne) : la durée seule, l'envoi restant en attente.
+pub fn playtime_after(before: Option<u64>, head_now: Option<u64>, elapsed_s: u64) -> u64 {
+    before.max(head_now).unwrap_or(0).saturating_add(elapsed_s)
 }
 
 /// ROM de base présente sur l'appareil : le fichier du catalogue, ou sa version convertie par le
@@ -456,6 +463,23 @@ pub fn send(env: &Env, key: &SaveKey, playtime_s: u64) -> Result<Settled, Launch
         SyncOutcome::Conflict { server } => Settled::Conflict(conflict_info(env, &client, key, server, true)),
         o => Settled::Done(o),
     })
+}
+
+#[cfg(test)]
+mod tests_temps_de_jeu {
+    use super::playtime_after;
+
+    #[test]
+    fn jamais_moins_que_le_cumul_connu() {
+        // Partie commencée hors ligne (cumul inconnu), serveur revenu : tête relue + durée.
+        assert_eq!(playtime_after(None, Some(180_000), 2_400), 182_400);
+        // Cumul connu avant, tête avancée ailleurs pendant la partie : la plus grande valeur.
+        assert_eq!(playtime_after(Some(100), Some(500), 60), 560);
+        assert_eq!(playtime_after(Some(500), Some(100), 60), 560);
+        // Hors ligne avant et après : la durée seule (l'envoi reste en attente).
+        assert_eq!(playtime_after(None, None, 60), 60);
+        assert_eq!(playtime_after(Some(u64::MAX), None, 10), u64::MAX);
+    }
 }
 
 #[cfg(test)]
