@@ -4,7 +4,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { api, CANCELLED, isDemo } from '../lib/api';
+  import { api, CANCELLED, isDemo, prepLabel } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
@@ -195,9 +195,12 @@
       } else {
         steps = initial.map((x) => ({ ...x }));
         await finish(
-          await api.launchGame(preparation.profile, preparation.game.id, onStep, (p) => {
+          await api.launchGame(preparation.profile, preparation.game.id, onStep, (p, prep) => {
             const s = steps[1];
-            if (s.progress !== undefined) s.progress = Math.round(p * 100);
+            if (s.progress === undefined) return;
+            // Le serveur convertit d'abord le fichier (NSZ → NSP) : l'étape le dit, la barre suit le convertisseur.
+            s.label = prep ? prepLabel(prep) : dlLabel;
+            s.progress = prep ? (prep.percent ?? 0) : Math.round(p * 100);
           }),
         );
       }

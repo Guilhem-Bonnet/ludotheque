@@ -188,7 +188,18 @@ impl Client {
     /// `Range`). Statuts rendus tels quels : 200 (fichier entier, ou tar d'un dossier), 206 (reprise)
     /// et 416 (reprise impossible) ; tout autre statut est une erreur.
     pub fn download(&self, game: &str, file_id: u64, from: u64, if_range: Option<&str>) -> Result<ureq::http::Response<ureq::Body>, ApiError> {
-        let mut req = self.download_agent.get(self.url(&format!("games/{game}/files/{file_id}")));
+        self.download_as(game, file_id, from, if_range, &[])
+    }
+
+    /// Comme [`Client::download`], en indiquant les formats que l'émulateur sait lire (`?formats=`) :
+    /// le serveur convertit alors un NSZ / XCZ en NSP / XCI si besoin. Un 202 (conversion en cours,
+    /// corps = [`ludo_proto::ConvertProgress`], `Retry-After` en secondes) est rendu tel quel.
+    pub fn download_as(&self, game: &str, file_id: u64, from: u64, if_range: Option<&str>, formats: &[String]) -> Result<ureq::http::Response<ureq::Body>, ApiError> {
+        let mut url = self.url(&format!("games/{game}/files/{file_id}"));
+        if !formats.is_empty() {
+            url.push_str(&format!("?formats={}", formats.join(",")));
+        }
+        let mut req = self.download_agent.get(url);
         if from > 0 {
             req = req.header("Range", format!("bytes={from}-"));
             // Validateur de la reprise : si le fichier a changé, le serveur renvoie tout (200).
@@ -198,7 +209,7 @@ impl Client {
         }
         let mut r = req.call()?;
         match r.status().as_u16() {
-            200 | 206 | 416 => Ok(r),
+            200 | 202 | 206 | 416 => Ok(r),
             s => Err(Self::fail(s, &mut r)),
         }
     }

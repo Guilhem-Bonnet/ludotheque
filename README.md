@@ -14,6 +14,10 @@ Conception complète : `Terraform-HouseServer/docs/ludotheque-conception.md`.
 
 `fiches/` : une fiche TOML par émulateur (lancement, sauvegardes, profils, chemins par appareil).
 
+## Conversion NSZ → NSP (Eden)
+
+Eden ne lit pas les Switch compressés. Le client envoie les formats de son émulateur (`?formats=nsp,xci`) ; si le fichier stocké est un NSZ / XCZ non accepté, le serveur le décompresse avec `nsz -D` dans un cache à plafond (éviction LRU) et répond `202` + `Retry-After` en attendant. Variables : `LUDO_SWITCH_KEYS` (prod.keys, secret monté), `LUDO_CACHE` (volume non sauvegardé), `LUDO_CACHE_MAX_GB` (80), `LUDO_CONVERT_CMD` (`nsz`). Sans clés : `503 Conversion indisponible : clés manquantes`. L'image embarque nsz 5.0.0 (Python, Debian slim).
+
 ## Développement
 
 Les artefacts de compilation vont dans `~/.cache/cargo-target/ludotheque` (`.cargo/config.toml`), jamais sur `/mnt/Travail`.
