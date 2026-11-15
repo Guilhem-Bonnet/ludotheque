@@ -14,6 +14,8 @@ export interface LudoApi {
   sync(profile: string): Promise<Game[]>;
   /** Restaure une version de sauvegarde : elle devient la version actuelle (nouvelle révision). `onstep` suit l'avancement. */
   restore(profile: string, game: string, rev: number, onstep?: (step: number, progress: number) => void): Promise<void>;
+  /** Temps de réponse du serveur en ms (test de connexion des Réglages) ; erreur si injoignable. */
+  ping(): Promise<number>;
   /** Enregistre le profil (image, nom, préférences) sur le serveur. */
   saveProfile(profile: Profile): Promise<Profile>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
@@ -88,6 +90,10 @@ const demoApi: LudoApi = {
     await wait(600);
     onstep?.(2, 1);
   },
+  async ping() {
+    await wait(700);
+    return 12;
+  },
   async saveProfile(profile) {
     await wait(120);
     const i = PROFILES.findIndex((p) => p.id === profile.id);
@@ -152,6 +158,7 @@ const tauriApi: LudoApi = {
   updates: viaTauri('updates', () => ({})),
   sync: viaTauri('sync', (profile) => ({ profile })),
   saveProfile: viaTauri('saveProfile', (profile) => ({ profile })),
+  ping: viaTauri('ping', () => ({})),
   restore: async (profile, game, rev, onstep) => {
     try { await invoke('restore', { profile, game, rev }); onstep?.(2, 1); } catch { await demoApi.restore(profile, game, rev, onstep); }
   },

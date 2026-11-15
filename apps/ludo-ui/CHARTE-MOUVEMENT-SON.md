@@ -84,3 +84,11 @@ Maquette : https://claude.ai/artifact/NSBRvReHdaGeZR1KapYfxh. Les couleurs terne
 | Options d'un jeu (X sur une tuile) | Panneau à droite : Jouer ou Installer, Détails et sauvegardes, Synchroniser ce jeu, Émulateur (Switch : Ryujinx ou Eden), Désinstaller (demande confirmation). Le focus reste dans le panneau, B le referme et rend le focus à la tuile | Le panneau glisse de 60 px en 320 ms, fond flouté ; l'option en focus se décale de 4 px ; synchronisation avec les sons `syncStart` et `syncTick` |
 | Profil (pastille du profil dans l'en-tête) | Image de profil (6 personnages ; la couleur suit), nom (saisie, Entrée pour valider, Échap pour annuler), Sons, Vibrations, Changer de joueur. Enregistrement immédiat, « Enregistré » s'affiche | Nouvelle image : le grand avatar arrive avec un rebond, l'accent et l'ambiance passent en fondu ; son `arrive` ; interrupteurs avec rebond |
 | Restauration d'une sauvegarde (fiche) | Fenêtre de chargement : Téléchargement de la version, Remplacement de la sauvegarde locale, Sauvegarde restaurée ; barre continue ; B est bloqué pendant l'opération | Coches avec rebond ; sons `syncStart`, puis `syncTick` toutes les 0,9 s, puis `saved` à la fin |
+
+## Réglages et Options de la Bibliothèque (16/11)
+
+| Écran | Contenu | Mouvement, son |
+|---|---|---|
+| Réglages (raccourci de l'accueil) | Son (volume 0 à 10), Serveur (adresse, Tester la connexion), Synchronisation (au démarrage, à la fin de chaque partie), Appareil (nom, espace libre), À propos. Enregistrés sur l'appareil | Volume : gauche / droite règlent (attribut `data-adjust`), aperçu sonore `move` à chaque cran, `err` en butée ; test de connexion avec `CloudIcon` (arc qui tourne autour du nuage), `syncStart`, `syncTick`, puis `saved` ou `err` |
+| Bibliothèque | X sur une tuile ouvre le même menu Options qu'à l'accueil | Identique à l'accueil |
+| Chargements nuage | `CloudIcon.svelte` partout : le nuage reste immobile et respire, l'arc tourne autour ; jamais le nuage entier qui tourne | — |
