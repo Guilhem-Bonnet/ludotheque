@@ -43,6 +43,15 @@ export interface LastSession {
 
 export type InstallState = 'installe' | 'non_installe' | 'telechargement' | 'mise_a_jour';
 
+/** Mise à jour ou DLC d'un jeu (vue « Contenu additionnel »). */
+export interface GameContent {
+  id: number;
+  role: 'maj' | 'dlc';
+  name: string;
+  size: string;
+  installed: boolean;
+}
+
 export interface Game {
   id: string;
   title: string;
@@ -60,6 +69,7 @@ export interface Game {
   last?: LastSession;
   /** Échec de la dernière synchronisation manuelle de ce jeu (« En cours sur Steam Deck »…). */
   syncError?: string;
+  content?: GameContent[];
   version?: string;
   size?: string;
 }

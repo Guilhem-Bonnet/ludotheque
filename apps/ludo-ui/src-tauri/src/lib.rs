@@ -328,6 +328,65 @@ pub struct UiGame {
     /// Échec de la dernière synchronisation manuelle de ce jeu (« En cours sur Steam Deck »…).
     #[serde(skip_serializing_if = "Option::is_none")]
     sync_error: Option<String>,
+    /// Mises à jour et DLC du jeu (vue « Contenu additionnel » de la fiche).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    content: Vec<UiContent>,
+}
+
+/// Une mise à jour ou un DLC tel que la fiche l'affiche (`GameContent` de `types.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiContent {
+    id: u64,
+    role: &'static str,
+    name: String,
+    size: String,
+    installed: bool,
+}
+
+/// Nom affiché d'une mise à jour ou d'un DLC : nom du fichier sans crochets ni parenthèses
+/// (identifiants, versions, régions), sans le titre du jeu au début.
+pub fn content_name(path: &str, role: FileRole, game_title: &str, index: usize) -> String {
+    if role == FileRole::Maj {
+        return if index == 0 { "Mise à jour".into() } else { format!("Mise à jour {}", index + 1) };
+    }
+    let stem = path.rsplit('/').next().unwrap_or(path);
+    let stem = stem.rsplit_once('.').map_or(stem, |(a, _)| a);
+    let (mut out, mut depth) = (String::new(), 0u32);
+    for c in stem.chars() {
+        match c {
+            '[' | '(' => depth += 1,
+            ']' | ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(if c == '_' { ' ' } else { c }),
+            _ => {}
+        }
+    }
+    let name = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    let simple = |x: &str| x.to_lowercase().replace(['\'', '’', ':'], "");
+    let rest = if simple(&name).starts_with(&simple(game_title)) {
+        name.chars().skip(game_title.chars().filter(|c| !"'’:".contains(*c)).count()).collect::<String>()
+    } else {
+        name.clone()
+    };
+    let rest = rest.trim_matches(|c: char| "-–. :".contains(c)).to_string();
+    if rest.is_empty() { "Contenu téléchargeable".into() } else { rest }
+}
+
+/// Mises à jour puis DLC d'un jeu, avec leur présence sur l'appareil.
+pub fn build_content(g: &CatalogGame, exists: &dyn Fn(&str) -> bool) -> Vec<UiContent> {
+    let mut out = Vec::new();
+    for role in [FileRole::Maj, FileRole::Dlc] {
+        for (i, f) in g.files.iter().filter(|f| f.role == role).enumerate() {
+            out.push(UiContent {
+                id: f.id,
+                role: if role == FileRole::Maj { "maj" } else { "dlc" },
+                name: content_name(&f.path, role, &g.title, i),
+                size: size_label(f.size),
+                installed: exists(&f.path),
+            });
+        }
+    }
+    out
 }
 
 /// Taille lisible, virgule décimale et unités françaises : « 6,8 Go », « 65,8 Mo ».
@@ -431,6 +490,7 @@ pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
                 install: install_state(&g.files, env.exists),
                 sync: sync_state((env.journal)(&g.id).as_ref(), save.is_some()),
                 sync_error: None,
+                content: build_content(g, env.exists),
                 playtime: save.map(|s| playtime_label(s.playtime_s)),
                 last: save.map(|s| UiLast {
                     device: device_name(&s.device),
@@ -647,6 +707,9 @@ mod tests {
         assert_eq!(sync_state(Some(&entry(false, false)), true), "a_jour");
         assert_eq!(sync_state(None, true), "a_recuperer");
         assert_eq!(sync_state(None, false), "aucune");
+        assert_eq!(content_name("switch/MAJ-DLC/Luigis Mansion 3 [0100DCA0064A6800][v1].nsp", FileRole::Maj, "Luigi's Mansion 3", 0), "Mise à jour");
+        assert_eq!(content_name("switch/MAJ-DLC/Luigis Mansion 3 - Pack multijoueur 1 [0100DCA0064A7001][v2].nsp", FileRole::Dlc, "Luigi's Mansion 3", 0), "Pack multijoueur 1");
+        assert_eq!(content_name("switch/MAJ-DLC/Luigis Mansion 3 [0100DCA0064A7002].nsp", FileRole::Dlc, "Luigi's Mansion 3", 1), "Contenu téléchargeable");
     }
 
     #[test]
@@ -690,6 +753,7 @@ mod tests {
                 "id": "switch-lm3", "title": "Luigi's Mansion 3", "short": "Luigi's\nMansion 3", "console": "switch",
                 "tile": "#0a5a78", "tileInk": "#ffffff",
                 "art": { "motif": "manoir", "from": "#22e08f", "to": "#0a5a78" },
+                "content": [{ "id": 2, "role": "dlc", "name": "d", "size": "800,0 Mo", "installed": false }],
                 "emulator": "Eden", "install": "installe", "sync": "envoi_en_attente",
                 "playtime": "12 h 40",
                 "last": { "device": "Steam Deck", "deviceKind": "deck", "when": "Aujourd'hui 20:15" },
