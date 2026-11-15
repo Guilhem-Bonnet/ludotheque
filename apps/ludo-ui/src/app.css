@@ -97,7 +97,8 @@ button { font: inherit; color: inherit; }
 
 /* Entrée commune : monte de 12 px en se posant (utilisée en cascade de 40 ms). */
 @keyframes rise-in { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
-.rise { animation: rise-in var(--t-slow) var(--ease-land) both; animation-delay: calc(var(--i, 0) * 40ms); }
+/* Cascade d'entrée retirée le 15/11 (doublon avec la transition d'écran, jugée pas assez douce). */
+.rise { animation: none; }
 
 /* Coche qui se dessine (états réussis). */
 @keyframes draw { from { stroke-dashoffset: var(--len, 24); } to { stroke-dashoffset: 0; } }
@@ -107,17 +108,9 @@ button { font: inherit; color: inherit; }
 @keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
 .pop { animation: pop 320ms var(--ease-pop); }
 
-/* Transitions d'écran (View Transitions) : aller = vers la gauche, retour = vers la droite. */
-@keyframes screen-in { from { opacity: 0; transform: translateX(var(--from, 28px)); } }
-@keyframes screen-out { to { opacity: 0; transform: translateX(var(--to, -18px)); } }
-::view-transition-old(root) { animation: screen-out 200ms var(--ease-exit) both; }
-::view-transition-new(root) { animation: screen-in 320ms var(--ease-land) both; }
-:root[data-dir='back'] { --from: -28px; --to: 18px; }
-::view-transition-group(hero-tile) { animation-duration: 420ms; animation-timing-function: var(--ease-land); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; transition-duration: 1ms !important; }
-  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }

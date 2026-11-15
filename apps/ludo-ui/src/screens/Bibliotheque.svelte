@@ -18,7 +18,7 @@
   let games = $state<Game[]>([]);
   let tab = $state(0);
   let filter = $state<'tous' | 'installes' | 'non_installes'>('tous');
-  let slide = $state<'left' | 'right'>('right');
+  let slide = $state<'left' | 'right' | 'none'>('none');
 
   onMount(() => {
     api.library(router.profile!.id).then((g) => {

@@ -1,8 +1,10 @@
 //! Coque Tauri de l'interface Ludothèque : expose au front les commandes du client `ludo`.
 //!
-//! Commandes branchées : `device`. Les autres (`profiles`, `recent`, `library`, `history`,
+//! Commandes branchées : `device`, `rumble` (vibrations natives). Les autres (`profiles`, `recent`, `library`, `history`,
 //! `updates`, `prepare`) arriveront avec le catalogue du serveur ; d'ici là, le front utilise sa
 //! source de démonstration pour chaque commande absente.
+
+pub mod rumble;
 
 use ludo_client::api::Client;
 use ludo_client::config::Config;
@@ -61,8 +63,9 @@ async fn device() -> Result<DeviceInfo, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    rumble::init();
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![device])
+        .invoke_handler(tauri::generate_handler![device, rumble::rumble])
         .run(tauri::generate_context!())
         .expect("échec du démarrage de l'interface");
 }

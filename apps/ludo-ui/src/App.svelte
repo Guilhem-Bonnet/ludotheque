@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, isDemo } from './lib/api';
-  import { installNav } from './lib/nav';
+  import { focusFirst, installNav } from './lib/nav';
+  import { reducedMotion } from './lib/motion';
   import { router } from './lib/router.svelte';
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
@@ -13,6 +14,24 @@
   import QuiJoue from './screens/QuiJoue.svelte';
 
   let device = $state<DeviceInfo | null>(null);
+
+  // Transition d'écran : un seul mouvement, doux. L'ancien écran s'efface (160 ms, accélère en partant) ;
+  // le nouveau arrive juste après en fondu, en montant de 8 px et en se posant (420 ms, décélération
+  // exponentielle). Pas de glissement latéral ni de cascade en même temps : un seul geste à suivre.
+  const easeOutExpo = (t: number) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t));
+  function screenIn(_node: Element) {
+    if (reducedMotion()) return { duration: 0 };
+    return {
+      delay: 110,
+      duration: 420,
+      easing: easeOutExpo,
+      css: (t: number) => `opacity: ${t}; transform: translateY(${(1 - t) * 8}px) scale(${0.994 + 0.006 * t});`,
+    };
+  }
+  function screenOut(_node: Element) {
+    if (reducedMotion()) return { duration: 0 };
+    return { duration: 160, easing: (t: number) => t * t, css: (t: number) => `opacity: ${t};` };
+  }
   // Le fondu d'accent n'est activé qu'après le premier affichage (sinon l'accent part du bleu par défaut).
   let accentAnim = $state(false);
 
@@ -79,6 +98,7 @@
   {/if}
   {#if device}
     {#key router.screen}
+      <div class="screen-layer" in:screenIn out:screenOut onintroend={focusFirst}>
       {#if router.screen.name === 'qui-joue'}
         <QuiJoue {device} />
       {:else if router.screen.name === 'accueil' && router.profile}
@@ -94,6 +114,7 @@
       {:else if router.screen.name === 'conflit'}
         <Conflit conflict={router.screen.conflict} />
       {/if}
+      </div>
     {/key}
   {/if}
 </div>
@@ -112,6 +133,7 @@
     background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 9%, transparent), transparent);
     animation: drift 16s var(--ease-calm) infinite alternate;
   }
+  .screen-layer { position: absolute; inset: 0; }
   .demo-hint {
     position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 5; margin: 0;
     font-size: 11px; color: var(--ink-4); background: rgba(21, 23, 28, 0.85); padding: 4px 10px; border-radius: 999px; white-space: nowrap;

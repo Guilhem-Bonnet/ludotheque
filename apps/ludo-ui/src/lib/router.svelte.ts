@@ -1,9 +1,7 @@
 // État de navigation entre écrans, avec historique pour le bouton B.
-// Chaque changement d'écran passe par une View Transition (aller vers la gauche, retour vers la droite).
+// Le changement d'écran est un fondu doux unique, joué par App.svelte (voir screenIn / screenOut).
 
-import { tick } from 'svelte';
 import { feedback } from './feedback';
-import { withTransition } from './motion';
 import type { Conflict, Game, Preparation, Profile } from './types';
 
 export type Screen =
@@ -22,11 +20,12 @@ class Router {
   heroGame = $state<string | null>(null);
   private stack: Screen[] = [];
 
+  /** Sens du dernier changement d'écran (la transition d'App en tient compte). */
+  dir = $state<'forward' | 'back'>('forward');
+
   private show(next: Screen, dir: 'forward' | 'back') {
-    withTransition(dir, async () => {
-      this.screen = next;
-      await tick();
-    });
+    this.dir = dir;
+    this.screen = next;
   }
 
   go(next: Screen) {

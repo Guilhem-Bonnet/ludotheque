@@ -17,6 +17,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tauri = { version = "2.12.5", features = [] }
 ludo-client = { path = "../../../crates/ludo-client" }
+gilrs = "0.11"
 
 [features]
 # Interface intégrée au binaire (sans elle, Tauri charge le serveur de développement localhost:5173).
