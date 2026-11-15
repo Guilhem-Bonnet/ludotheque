@@ -10,7 +10,8 @@
 export type SoundName =
   | 'move' | 'ok' | 'back' | 'tab' | 'err'
   | 'saved' | 'conflict' | 'arrive' | 'launch'
-  | 'loading' | 'downloaded' | 'updated';
+  | 'loading' | 'downloaded' | 'updated'
+  | 'syncStart' | 'syncTick';
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
@@ -96,6 +97,10 @@ const SOUNDS: Record<SoundName, () => void> = {
   // Nouveaux (à affiner avec Guilhem) : même famille, toujours en montée douce.
   loading: () => { tone({ n: 64, a: 0.03, d: 0.35, g: 0.08, lp: 1100, wet: 0.25 }); tone({ n: 69, t: 0.16, a: 0.03, d: 0.4, g: 0.07, lp: 1200, wet: 0.3 }); },
   downloaded: () => { [64, 69, 76].forEach((n, k) => tone({ n, t: k * 0.085, a: 0.015, d: k === 2 ? 0.8 : 0.4, g: 0.12, lp: 1700, wet: 0.25 })); },
+  // Synchronisation manuelle : départ en deux notes qui montent, puis une goutte très douce
+  // toutes les 0,9 s tant que ça charge (toujours la même note : ni montée ni descente, juste « ça vit »).
+  syncStart: () => { tone({ n: 67, a: 0.02, d: 0.22, g: 0.09, lp: 1400, wet: 0.2 }); tone({ n: 74, t: 0.09, a: 0.02, d: 0.32, g: 0.075, lp: 1500, wet: 0.28 }); },
+  syncTick: () => tone({ n: 79, a: 0.02, d: 0.16, g: 0.032, lp: 1500, wet: 0.35 }),
   updated: () => { [69, 72, 76].forEach((n, k) => tone({ n, t: k * 0.085, a: 0.015, d: k === 2 ? 0.8 : 0.4, g: 0.11, lp: 1700, wet: 0.25 })); },
 };
 

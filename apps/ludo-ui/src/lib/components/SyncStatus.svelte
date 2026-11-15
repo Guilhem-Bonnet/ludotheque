@@ -29,7 +29,13 @@
 
 <button class="cloud focusable {spec.key}" aria-label="{spec.label} · Synchroniser" aria-live="polite" data-sound="tab" {onclick} {onfocus} {onblur}>
   {#key spec.key}
-    <span class="ico"><Icon name={spec.icon} size={20} color={spec.color} /></span>
+    <span class="ico">
+      <Icon name={spec.icon} size={20} color={spec.color} />
+      {#if spec.key === 'sync'}
+        <!-- Chargement : un arc qui tourne autour du nuage immobile. -->
+        <svg class="orbit" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke={spec.color} stroke-width="2" stroke-linecap="round" stroke-dasharray="22 66"></circle></svg>
+      {/if}
+    </span>
   {/key}
   <span class="label">{spec.label}</span>
 </button>
@@ -41,7 +47,10 @@
     background: rgba(255, 255, 255, 0.1); font-size: 15px; color: var(--ink); white-space: nowrap;
     transition: background-color var(--t-std) ease-out, transform var(--t-quick) var(--ease-pop), box-shadow var(--t-std) var(--ease-land);
   }
-  .ico { display: inline-flex; }
+  .ico { display: inline-flex; position: relative; }
+  .orbit { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; opacity: 0.9; }
+  .sync .ico :global(svg:not(.orbit)) { opacity: 0.85; }
+  .cloud.sync { gap: 13px; padding-left: 15px; }
   .conflit { background: color-mix(in srgb, var(--conflict) 22%, transparent); }
   .attente { background: color-mix(in srgb, var(--pending) 18%, transparent); }
   /* Focus : la pastille se soulève, l'anneau d'accent se pose. */
@@ -50,8 +59,9 @@
     /* Changement d'état : le nouveau nuage arrive avec un petit rebond. */
     .ico { animation: arrive 320ms var(--ease-pop) both; }
     @keyframes arrive { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
-    /* En cours : les flèches tournent doucement. En attente : le nuage respire. */
-    .cloud.sync .ico { animation: arrive 320ms var(--ease-pop) both, spin 1.6s linear 320ms infinite; }
+    /* En cours : l'arc tourne autour du nuage, qui respire à peine. En attente : le nuage respire. */
+    .orbit { animation: spin 1.1s cubic-bezier(.5, .15, .5, .85) infinite; }
+    .cloud.sync .ico :global(svg:not(.orbit)) { animation: breathe 1.8s var(--ease-calm) infinite; }
     .attente .ico { animation: arrive 320ms var(--ease-pop) both, breathe 2.4s var(--ease-calm) 320ms infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }

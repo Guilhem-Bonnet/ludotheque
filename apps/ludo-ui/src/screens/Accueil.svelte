@@ -3,6 +3,7 @@
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { feedback } from '../lib/feedback';
+  import { play as playSound } from '../lib/sound';
   import { reducedMotion } from '../lib/motion';
   import Ambiance from '../lib/components/Ambiance.svelte';
   import Avatar from '../lib/components/Avatar.svelte';
@@ -62,7 +63,9 @@
     if (syncing) return;
     if (offline) { feedback('err'); return; }
     syncing = true;
-    const lib = await api.sync(router.profile!.id);
+    feedback('syncStart');
+    const tick = setInterval(() => playSound('syncTick'), 900);
+    const lib = await api.sync(router.profile!.id).finally(() => clearInterval(tick));
     const byId = new Map(lib.map((g) => [g.id, g]));
     all = lib;
     games = games.map((g) => ({ ...g, sync: byId.get(g.id)?.sync ?? g.sync }));

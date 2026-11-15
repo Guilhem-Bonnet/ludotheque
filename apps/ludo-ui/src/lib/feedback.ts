@@ -22,6 +22,7 @@ const RUMBLE: Partial<Record<SoundName, Rumble[]>> = {
   ],
   downloaded: [{ duration: 60, weak: 0.34, strong: 0.1 }],
   updated: [{ duration: 60, weak: 0.34, strong: 0.1 }],
+  syncStart: [{ duration: 30, weak: 0.3, strong: 0 }],
 };
 
 type Actuator = { playEffect?: (type: string, p: Record<string, number>) => Promise<unknown> };
