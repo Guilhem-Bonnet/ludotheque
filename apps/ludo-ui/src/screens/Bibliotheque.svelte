@@ -2,6 +2,8 @@
   import { onMount, untrack } from 'svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Tile from '../lib/components/Tile.svelte';
+  import OptionsMenu from '../lib/components/OptionsMenu.svelte';
+  import { play } from '../lib/play';
   import { api } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
@@ -19,6 +21,20 @@
   let tab = $state(0);
   let filter = $state<'tous' | 'installes' | 'non_installes'>('tous');
   let slide = $state<'left' | 'right' | 'none'>('none');
+
+  /* Menu Options (X) du jeu en focus, comme à l'accueil. */
+  let focusedId = $state<string | null>(null);
+  let options = $state<Game | null>(null);
+  function closeOptions() {
+    const id = options?.id;
+    options = null;
+    feedback('back');
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-game="${id}"] .tile`)?.focus({ preventScroll: true }));
+  }
+  function changeGame(g: Game) {
+    games = games.map((x) => (x.id === g.id ? g : x));
+    options = g;
+  }
 
   // Indicateur d'onglet qui glisse d'un onglet à l'autre (continuité), au lieu d'un fond qui saute.
   let tabEls = $state<HTMLElement[]>([]);
@@ -42,8 +58,15 @@
       feedback('tab');
       focusFirst();
     };
+    const onAction = (ev: Event) => {
+      if ((ev as CustomEvent).detail !== 'x' || options) return;
+      const onTile = (document.activeElement as HTMLElement | null)?.classList.contains('tile');
+      const g = games.find((x) => x.id === focusedId);
+      if (onTile && g) { feedback('ok'); options = g; }
+    };
     window.addEventListener('ludo:tab', onTab);
-    return () => window.removeEventListener('ludo:tab', onTab);
+    window.addEventListener('ludo:action', onAction);
+    return () => { window.removeEventListener('ludo:tab', onTab); window.removeEventListener('ludo:action', onAction); };
   });
 
   const shown = $derived(
@@ -100,8 +123,8 @@
     {/if}
     {#each shown as g, i (g.id)}
       {@const st = stateOf(g)}
-      <div class="cell" style:--i={Math.min(i, 8)}>
-        <Tile game={g} size={168} autofocus={i === 0} onclick={() => router.go({ name: 'fiche', game: g })} />
+      <div class="cell" style:--i={Math.min(i, 8)} data-game={g.id}>
+        <Tile game={g} size={168} autofocus={i === 0} onfocus={() => (focusedId = g.id)} onclick={() => router.go({ name: 'fiche', game: g })} />
         <span class="t">{g.title}</span>
         <span class="s" style:color={st[1]}>{st[0]}</span>
       </div>
@@ -109,11 +132,17 @@
   </main>
   {/key}
 
-  <ButtonHints hints={[{ key: 'A', label: 'Ouvrir' }, { key: 'X', label: 'Installer' }, { key: 'B', label: 'Retour' }]} />
+  {#if options}
+    <OptionsMenu game={options} profile={router.profile!.id} onclose={closeOptions}
+      onplay={() => { const g = options!; options = null; void play(g); }}
+      ondetails={() => { const g = options!; options = null; router.go({ name: 'fiche', game: g }); }}
+      onchange={changeGame} />
+  {/if}
+  <ButtonHints hints={options ? [{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Fermer' }] : [{ key: 'A', label: 'Ouvrir' }, { key: 'X', label: 'Options' }, { key: 'B', label: 'Retour' }]} />
 </div>
 
 <style>
-  .screen { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+  .screen { height: 100%; display: flex; flex-direction: column; overflow: hidden; position: relative; }
   header { padding: 28px 48px 0; display: flex; flex-direction: column; gap: 22px; }
   .line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }

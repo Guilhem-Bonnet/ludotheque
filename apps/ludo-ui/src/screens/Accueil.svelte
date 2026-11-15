@@ -180,7 +180,7 @@
     <button class="shortcut focusable" onclick={() => router.go({ name: 'qui-joue' })}>
       <span class="round"><Icon name="people" size={26} /></span>Profils
     </button>
-    <button class="shortcut focusable" disabled>
+    <button class="shortcut focusable" onclick={() => router.go({ name: 'reglages' })}>
       <span class="round"><Icon name="settings" size={26} /></span>Réglages
     </button>
   </nav>

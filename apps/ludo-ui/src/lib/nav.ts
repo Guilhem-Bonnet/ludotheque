@@ -57,6 +57,11 @@ export function move(dir: Dir) {
     all[0]?.focus();
     return;
   }
+  // Réglage horizontal (volume…) : gauche / droite ajustent la valeur au lieu de déplacer le focus.
+  if ((dir === 'left' || dir === 'right') && active.hasAttribute('data-adjust')) {
+    active.dispatchEvent(new CustomEvent('adjust', { detail: dir === 'right' ? 1 : -1 }));
+    return;
+  }
   const from = active.getBoundingClientRect();
   const next = neighbour(from, all.filter((el) => el !== active).map((el) => ({ el, r: el.getBoundingClientRect() })), dir);
   if (next) {

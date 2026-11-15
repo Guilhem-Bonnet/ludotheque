@@ -12,7 +12,8 @@ export type Screen =
   | { name: 'mises-a-jour' }
   | { name: 'passage'; preparation: Preparation }
   | { name: 'conflit'; conflict: Conflict }
-  | { name: 'profil' };
+  | { name: 'profil' }
+  | { name: 'reglages' };
 
 class Router {
   screen = $state<Screen>({ name: 'accueil' });

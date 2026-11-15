@@ -3,6 +3,7 @@
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import ConsoleChip from './ConsoleChip.svelte';
+  import CloudIcon from './CloudIcon.svelte';
   import Icon from './Icon.svelte';
   import Tile from './Tile.svelte';
   import { api } from '../api';
@@ -89,7 +90,7 @@
     {#if installed}
       <li>
         <button class="opt focusable" data-sound="none" onclick={syncGame} aria-busy={syncing}>
-          <span class="ico" class:spin={syncing}><Icon name={synced ? 'cloud-ok' : 'cloud-sync'} size={22} color={synced ? 'var(--ok)' : undefined} /></span>
+          <CloudIcon name={synced ? 'cloud-ok' : 'cloud-sync'} busy={syncing} color={synced ? 'var(--ok)' : undefined} />
           {syncing ? 'Synchronisation…' : synced ? 'Sauvegarde à jour' : 'Synchroniser ce jeu'}
         </button>
       </li>
@@ -127,10 +128,5 @@
   .value::after { content: ' ›'; }
   .danger { color: #ff9b9b; }
   .danger.armed { background: rgba(255, 90, 90, 0.16); }
-  .ico { display: inline-flex; }
   .note { margin: auto 0 0; font-size: 13px; color: var(--ink-4); }
-  @media (prefers-reduced-motion: no-preference) {
-    .spin { animation: spin 1.4s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  }
 </style>

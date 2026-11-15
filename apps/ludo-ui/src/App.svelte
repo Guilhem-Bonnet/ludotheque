@@ -12,6 +12,7 @@
   import MisesAJour from './screens/MisesAJour.svelte';
   import Passage from './screens/Passage.svelte';
   import Profil from './screens/Profil.svelte';
+  import Reglages from './screens/Reglages.svelte';
   import QuiJoue from './screens/QuiJoue.svelte';
 
   let device = $state<DeviceInfo | null>(null);
@@ -57,6 +58,7 @@
     if (ecran === 'bibliotheque') router.go({ name: 'bibliotheque' });
     else if (ecran === 'maj') router.go({ name: 'mises-a-jour' });
 else if (ecran === 'profil') router.go({ name: 'profil' });
+else if (ecran === 'reglages') router.go({ name: 'reglages' });
     else if (ecran === 'fiche') router.go({ name: 'fiche', game: byId('switch-lm3') });
     else if (ecran === 'passage' || ecran === 'conflit') {
       const r = await api.prepare(router.profile.id, ecran === 'conflit' ? 'switch-botw' : 'nds-diamant');
@@ -126,6 +128,8 @@ else if (ecran === 'profil') router.go({ name: 'profil' });
         <Conflit conflict={router.screen.conflict} />
       {:else if router.screen.name === 'profil' && router.profile}
         <Profil {device} />
+      {:else if router.screen.name === 'reglages'}
+        <Reglages {device} />
       {/if}
       </div>
     {/key}

@@ -24,11 +24,21 @@
   let input: HTMLInputElement | undefined = $state();
   let saved = $state<string | null>(null);
 
+  let failed = $state<string | null>(null);
   async function save(next: Profile, what: string) {
+    const before = router.profile!;
     router.profile = next;
-    saved = what;
-    await api.saveProfile(next);
-    setTimeout(() => saved === what && (saved = null), 1600);
+    failed = null;
+    try {
+      await api.saveProfile(next);
+      saved = what;
+      setTimeout(() => saved === what && (saved = null), 1600);
+    } catch {
+      // Refusé ou serveur injoignable : on revient à l'état enregistré, sans faux « Enregistré ».
+      router.profile = before;
+      failed = what;
+      feedback('err');
+    }
   }
 
   function pick(kind: AvatarKind) {
@@ -82,7 +92,7 @@
 
     <section class="settings">
       <div class="group">
-        <h2>Image de profil {#if saved === 'avatar'}<span class="ok"><Icon name="check" size={16} color="var(--ok)" />Enregistré</span>{/if}</h2>
+        <h2>Image de profil {#if saved === 'avatar'}<span class="ok"><Icon name="check" size={16} color="var(--ok)" />Enregistré</span>{:else if failed === 'avatar'}<span class="ko">Non enregistré</span>{/if}</h2>
         <div class="avatars">
           {#each AVATARS as a (a.kind)}
             <button class="av focusable" class:chosen={a.kind === p.avatarKind} style:--c={a.accent} aria-label={a.label} aria-pressed={a.kind === p.avatarKind}
@@ -95,7 +105,7 @@
       </div>
 
       <div class="group">
-        <h2>Nom {#if saved === 'nom'}<span class="ok"><Icon name="check" size={16} color="var(--ok)" />Enregistré</span>{/if}</h2>
+        <h2>Nom {#if saved === 'nom'}<span class="ok"><Icon name="check" size={16} color="var(--ok)" />Enregistré</span>{:else if failed === 'nom'}<span class="ko">Non enregistré</span>{/if}</h2>
         {#if editing}
           <div class="field editing">
             <input bind:this={input} bind:value={draft} maxlength="16" aria-label="Nom du profil" onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') { editing = false; requestAnimationFrame(() => document.querySelector<HTMLElement>('.field')?.focus()); } }} onblur={() => editing && commit()} />
@@ -135,6 +145,7 @@
   h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255, 255, 255, 0.7); display: flex; align-items: center; gap: 12px; }
   .ok { display: inline-flex; align-items: center; gap: 4px; text-transform: none; letter-spacing: 0; color: var(--ok); font-weight: 500; animation: fadein 200ms ease-out; }
   @keyframes fadein { from { opacity: 0; } }
+  .ko { text-transform: none; letter-spacing: 0; color: #ff9b9b; font-weight: 500; }
 
   .avatars { display: flex; gap: 16px; padding: 6px 0; }
   .av { all: unset; cursor: pointer; position: relative; border-radius: 50%; transition: transform var(--t-std) var(--ease-pop); }
