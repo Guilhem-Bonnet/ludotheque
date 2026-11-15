@@ -1,0 +1,68 @@
+@import '@fontsource-variable/rubik';
+
+/* Ludothèque — jetons de la direction « accueil façon console » (maquettes validées le 15/11). */
+:root {
+  --ground: #15171c;
+  --surface: #1f222a;
+  --raised: #2a2e38;
+  --line: #262a33;
+  --control: #262a33;
+  --hint: #3a3f4b;
+
+  --ink: #eef0f4;
+  --ink-2: #c9cdd6;
+  --ink-3: #a7adbb;
+  --ink-4: #8a91a0;
+
+  --ok: #5fd39a;
+  --sync: #4cc3ff;
+  --pending: #f2b84b;
+  --conflict: #c58cff;
+  --offline: #8a91a0;
+  --update: #8ad8ff;
+
+  /* Accent du profil actif (redéfini en ligne sur la racine de l'app) */
+  --accent: #4cc3ff;
+  --accent-soft: #1c3546;
+  --accent-ink: #8ad8ff;
+
+  --radius-tile: 16px;
+  --radius-card: 14px;
+  --radius-control: 10px;
+
+  --font: 'Rubik Variable', system-ui, sans-serif;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app { height: 100%; margin: 0; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+::selection { background: var(--accent); color: var(--ground); }
+
+button { font: inherit; color: inherit; }
+
+/* Focus manette : anneau d'accent décollé du fond, jamais l'anneau du navigateur. */
+:focus { outline: none; }
+.focusable.focusable:focus {
+  box-shadow: 0 0 0 3px var(--ground), 0 0 0 6px var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .focusable { transition: transform 160ms cubic-bezier(.16, 1, .3, 1), box-shadow 120ms ease-out; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--hint); border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }

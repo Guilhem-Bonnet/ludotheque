@@ -1,0 +1,100 @@
+// Modèle de données de l'interface. Côté Tauri, ces objets viennent du client Rust `ludo-client`.
+
+export type Console = 'switch' | 'switch2' | '3ds' | 'ds' | 'wiiu' | 'gc';
+
+/** Les cinq états de synchronisation (conception 10.4), plus l'absence de sauvegarde. */
+export type SyncState = 'a_jour' | 'synchronisation' | 'envoi_en_attente' | 'conflit' | 'hors_ligne' | 'aucune';
+
+export type DeviceKind = 'pc' | 'deck' | 'thor' | 'tv';
+
+export interface Profile {
+  id: string;
+  name: string;
+  /** URL de l'avatar choisi ; absent = initiale sur la couleur du profil. */
+  avatar?: string;
+  accent: string;
+  accentSoft: string;
+  accentInk: string;
+  /** Texte secondaire sous l'avatar (« Dernière partie : … », « En cours sur Steam Deck »). */
+  status?: string;
+  busyElsewhere?: boolean;
+}
+
+export interface LastSession {
+  device: string;
+  deviceKind: DeviceKind;
+  /** Date lisible (« Aujourd'hui 20:15 »). */
+  when: string;
+}
+
+export type InstallState = 'installe' | 'non_installe' | 'telechargement' | 'mise_a_jour';
+
+export interface Game {
+  id: string;
+  title: string;
+  /** Titre court pour la tuile (retours à la ligne autorisés avec \n). */
+  short: string;
+  console: Console;
+  tile: string;
+  tileInk: string;
+  emulator: string;
+  install: InstallState;
+  progress?: number;
+  sync: SyncState;
+  playtime?: string;
+  last?: LastSession;
+  version?: string;
+  size?: string;
+}
+
+export interface SaveRevision {
+  rev: number;
+  device: string;
+  deviceKind: DeviceKind;
+  when: string;
+  playtime: string;
+  current?: boolean;
+  discarded?: boolean;
+}
+
+export interface ConflictSide {
+  device: string;
+  deviceKind: DeviceKind;
+  when: string;
+  playtime: string;
+  delta: string;
+  /** Vrai seulement si mesurable (temps de jeu supérieur). */
+  ahead?: boolean;
+}
+
+export interface Conflict {
+  game: Game;
+  profile: string;
+  local: ConflictSide;
+  server: ConflictSide;
+}
+
+export interface UpdateItem {
+  id: string;
+  group: 'jeux' | 'nouveaux' | 'emulateurs';
+  title: string;
+  detail: string;
+  console?: Console;
+  tile?: string;
+  action: 'Mettre à jour' | 'Installer';
+}
+
+export interface DeviceInfo {
+  name: string;
+  kind: DeviceKind;
+  /** Profil mémorisé (appareil personnel) ; absent = appareil partagé → « Qui joue ? ». */
+  defaultProfile?: string;
+  server: 'connecte' | 'hors_ligne';
+  freeSpace: string;
+}
+
+export interface Preparation {
+  game: Game;
+  profile: string;
+  steps: { label: string; state: 'fait' | 'en_cours' | 'a_venir'; detail?: string; progress?: number }[];
+}
