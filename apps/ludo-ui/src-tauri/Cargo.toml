@@ -10,10 +10,15 @@ name = "ludo_ui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.4" }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tauri = { version = "2.12.5" }
+tauri = { version = "2.12.5", features = [] }
 ludo-client = { path = "../../../crates/ludo-client" }
+
+[features]
+# Interface intégrée au binaire (sans elle, Tauri charge le serveur de développement localhost:5173).
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
