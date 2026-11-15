@@ -15,6 +15,12 @@ pub enum EngineError {
     Api(ApiError),
     #[error("journal : {0}")]
     Journal(#[from] std::io::Error),
+    /// La révision demandée n'existe pas sur le serveur.
+    #[error("version introuvable : révision {0}")]
+    UnknownRevision(u64),
+    /// La tête a bougé pendant la restauration : rien n'a été remplacé.
+    #[error("sauvegarde modifiée entre-temps sur {} (révision {}) : restauration annulée", .0.device, .0.rev)]
+    RestoreConflict(SaveRevision),
 }
 
 /// Résultat d'une synchronisation, tel que l'interface l'affiche.
@@ -154,5 +160,50 @@ impl Engine<'_> {
             // Rien à garder d'un côté : une synchronisation normale suffit.
             _ => self.sync(key, layout),
         }
+    }
+
+    /// Restaure une version de l'historique : son contenu devient une **nouvelle** tête
+    /// (compare-and-swap contre la tête actuelle), puis remplace la sauvegarde locale si un
+    /// adaptateur est fourni.
+    ///
+    /// Une copie locale qui n'est pas sur le serveur (modifiée depuis la base) est d'abord
+    /// archivée comme version écartée : rien n'est perdu. Sans adaptateur (jeu non configuré sur
+    /// cet appareil), seul le serveur change ; la prochaine synchronisation récupérera la version.
+    pub fn restore(&mut self, key: &SaveKey, layout: Option<&dyn SaveLayout>, rev: u64) -> Result<SaveRevision, EngineError> {
+        let history = self.client.history(key).map_err(EngineError::Api)?;
+        let target = history.iter().find(|r| r.rev == rev).cloned().ok_or(EngineError::UnknownRevision(rev))?;
+        let head_rev = history.iter().find(|r| !r.discarded).map_or(0, |h| h.rev);
+        let data = self.client.blob(key, rev).map_err(EngineError::Api)?;
+
+        let entry = self.journal.get(key);
+        let local = match layout {
+            Some(l) => l.export()?,
+            None => None,
+        };
+        if let Some(snap) = &local {
+            if Some(&snap.hash) != entry.base_hash.as_ref() && snap.hash != target.hash {
+                self.client.push(key, &self.params(entry.base_rev, true), &snap.archive).map_err(EngineError::Api)?;
+            }
+        }
+
+        // La version restaurée garde son émulateur et son temps de jeu ; l'appareil est celui-ci.
+        let params = PushParams {
+            base_rev: head_rev,
+            device: self.device.clone(),
+            emulator: target.emulator.clone(),
+            playtime_s: target.playtime_s,
+            discarded: false,
+        };
+        let revision = match self.client.push(key, &params, &data).map_err(EngineError::Api)? {
+            PushOutcome::Accepted { revision } | PushOutcome::Unchanged { revision } => revision,
+            PushOutcome::Conflict { head } => return Err(EngineError::RestoreConflict(head)),
+        };
+
+        if let Some(l) = layout {
+            l.import(&data)?;
+            let hash = l.export()?.map(|s| s.hash);
+            self.journal.set(key, Entry { base_rev: revision.rev, base_hash: hash, pending_upload: false, conflict: false })?;
+        }
+        Ok(revision)
     }
 }

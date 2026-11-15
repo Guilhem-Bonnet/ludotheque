@@ -1,6 +1,6 @@
 //! Client HTTP synchrone du serveur de la ludothèque.
 
-use ludo_proto::{LeaseOutcome, LeaseRequest, PushOutcome, PushParams, SaveKey, SaveRevision};
+use ludo_proto::{LeaseOutcome, LeaseRequest, Profile, PushOutcome, PushParams, SaveKey, SaveRevision};
 use std::time::Duration;
 use ureq::Agent;
 
@@ -124,6 +124,25 @@ impl Client {
             .call()?;
         match r.status().as_u16() {
             204 | 200 => Ok(()),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
+    /// Profils du foyer, dans l'ordre de leur création.
+    pub fn profiles(&self) -> Result<Vec<Profile>, ApiError> {
+        let mut r = self.agent.get(self.url("profiles")).call()?;
+        match r.status().as_u16() {
+            200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
+    /// Crée ou met à jour un profil ; renvoie le profil tel que le serveur l'a enregistré
+    /// (nom sans espaces autour). Un profil invalide est refusé (`Http { status: 400, .. }`).
+    pub fn put_profile(&self, profile: &Profile) -> Result<Profile, ApiError> {
+        let mut r = self.agent.put(self.url(&format!("profiles/{}", profile.id))).send_json(profile)?;
+        match r.status().as_u16() {
+            200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
             s => Err(Self::fail(s, &mut r)),
         }
     }

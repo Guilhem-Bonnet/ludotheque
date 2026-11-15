@@ -2,10 +2,10 @@
 //! simulés (Eden d'un côté, Ryujinx de l'autre), et le binaire `ludo` avec un faux émulateur.
 
 use ludo_client::api::Client;
-use ludo_client::engine::{Engine, Resolution, SyncOutcome};
+use ludo_client::engine::{Engine, EngineError, Resolution, SyncOutcome};
 use ludo_client::journal::Journal;
 use ludo_client::layout::{ryujinx_uid_bytes, DirLayout, RyujinxLayout, SaveLayout};
-use ludo_proto::{LeaseOutcome, SaveKey};
+use ludo_proto::{LeaseOutcome, Profile, ProfilePrefs, PushOutcome, PushParams, SaveKey};
 use ludo_server::store::{Store, SystemClock};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,6 +73,10 @@ impl Device {
     fn resolve(&mut self, client: &Client, key: &SaveKey, r: Resolution) -> SyncOutcome {
         let mut e = Engine { client, journal: &mut self.journal, device: self.name.into(), emulator: self.emulator.into(), playtime_s: 1 };
         e.resolve(key, self.layout.as_ref(), r).unwrap()
+    }
+    fn restore(&mut self, client: &Client, key: &SaveKey, rev: u64) -> Result<ludo_proto::SaveRevision, EngineError> {
+        let mut e = Engine { client, journal: &mut self.journal, device: self.name.into(), emulator: self.emulator.into(), playtime_s: 1 };
+        e.restore(key, Some(self.layout.as_ref()), rev)
     }
 }
 
@@ -225,4 +229,92 @@ fn ludo_run_avec_un_faux_emulateur() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("guilhem/switch-sm\tÀ jour\trévision 1"));
+}
+
+#[test]
+fn restauration_d_une_ancienne_version() {
+    let t = tempfile::tempdir().unwrap();
+    let client = Client::new(&server(&t.path().join("srv")));
+    let key = SaveKey { profile: "guilhem".into(), game: "switch-lm3".into() };
+    let acc = t.path().join("deck/saves");
+    let mut deck = Device {
+        name: "steam-deck",
+        emulator: "eden",
+        journal: Journal::open(&t.path().join("deck/journal.json")).unwrap(),
+        layout: Box::new(DirLayout { account: acc.clone(), device: None, exclude: vec![] }),
+    };
+    for (i, etage) in ["etage-1", "etage-2", "etage-3"].iter().enumerate() {
+        write(&acc.join("progress.dat"), etage);
+        assert_eq!(deck.sync(&client, &key), SyncOutcome::Uploaded { rev: i as u64 + 1 });
+    }
+
+    // Partie locale pas encore envoyée : elle sera archivée, pas perdue.
+    write(&acc.join("progress.dat"), "etage-4-local");
+    let r = deck.restore(&client, &key, 1).unwrap();
+    // Révision 4 = version locale écartée ; révision 5 = la version 1 devenue tête.
+    assert_eq!((r.rev, r.parent, r.device.as_str()), (5, 3, "steam-deck"));
+    assert_eq!(fs::read_to_string(acc.join("progress.dat")).unwrap(), "etage-1");
+    let hist = client.history(&key).unwrap();
+    assert_eq!(hist.iter().map(|r| (r.rev, r.discarded)).collect::<Vec<_>>(), vec![(5, false), (4, true), (3, false), (2, false), (1, false)]);
+    assert_eq!(hist[0].hash, hist[4].hash, "même contenu que la version restaurée");
+    assert_eq!(client.blob(&key, 4).map(|b| b.is_empty()).ok(), Some(false));
+    // Le journal suit la nouvelle tête : rien à faire à la synchronisation suivante.
+    assert_eq!(deck.sync(&client, &key), SyncOutcome::UpToDate);
+
+    // Révision inconnue : erreur, rien ne change.
+    assert!(matches!(deck.restore(&client, &key, 42), Err(EngineError::UnknownRevision(42))));
+    assert_eq!(client.head(&key).unwrap().unwrap().rev, 5);
+}
+
+#[test]
+fn restauration_contre_la_tete_actuelle_meme_si_le_journal_est_en_retard() {
+    let t = tempfile::tempdir().unwrap();
+    let client = Client::new(&server(&t.path().join("srv")));
+    let key = SaveKey { profile: "claire".into(), game: "switch-mk8".into() };
+    let acc = t.path().join("pc/saves");
+    let mut pc = Device {
+        name: "pc",
+        emulator: "eden",
+        journal: Journal::open(&t.path().join("pc/journal.json")).unwrap(),
+        layout: Box::new(DirLayout { account: acc.clone(), device: None, exclude: vec![] }),
+    };
+    write(&acc.join("s"), "a");
+    pc.sync(&client, &key);
+    write(&acc.join("s"), "b");
+    pc.sync(&client, &key);
+
+    // Le Deck envoie une partie : le journal du PC est en retard (base 2, tête 3).
+    let other = tempfile::tempdir().unwrap();
+    write(&other.path().join("s"), "deck");
+    let snap = ludo_core::snapshot::snapshot(other.path(), &[]).unwrap().unwrap();
+    let p = PushParams { base_rev: 2, device: "steam-deck".into(), emulator: "eden".into(), playtime_s: 9, discarded: false };
+    assert!(matches!(client.push(&key, &p, &snap.archive).unwrap(), PushOutcome::Accepted { .. }));
+
+    // La restauration se fait contre la tête du serveur (3), pas contre la base du journal ;
+    // la copie locale (« b », identique à sa base) n'est pas archivée.
+    let r = pc.restore(&client, &key, 1).unwrap();
+    assert_eq!((r.rev, r.parent), (4, 3));
+    assert_eq!(client.history(&key).unwrap().iter().filter(|r| r.discarded).count(), 0);
+    assert_eq!(fs::read_to_string(acc.join("s")).unwrap(), "a");
+}
+
+#[test]
+fn profils_par_le_client() {
+    let t = tempfile::tempdir().unwrap();
+    let client = Client::new(&server(&t.path().join("srv")));
+    assert!(client.profiles().unwrap().is_empty());
+    let p = Profile {
+        id: "claire".into(),
+        name: " Claire ".into(),
+        avatar_kind: Some("champi".into()),
+        accent: "#34e0a1".into(),
+        accent_soft: "#12352c".into(),
+        accent_ink: "#8ff0c8".into(),
+        prefs: ProfilePrefs { sons: false, vibrations: true },
+    };
+    let saved = client.put_profile(&p).unwrap();
+    assert_eq!(saved.name, "Claire");
+    assert_eq!(client.profiles().unwrap(), vec![saved]);
+    let bad = Profile { avatar_kind: Some("dragon".into()), ..p };
+    assert!(matches!(client.put_profile(&bad), Err(ludo_client::api::ApiError::Http { status: 400, .. })));
 }

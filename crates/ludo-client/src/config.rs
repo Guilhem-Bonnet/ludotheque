@@ -20,6 +20,26 @@ pub struct ProfileIds {
     pub eden_index: Option<u32>,
 }
 
+/// Un jeu synchronisé par cet appareil (section `[jeux.<identifiant>]`), en attendant le
+/// catalogue du serveur.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GameConf {
+    /// Fiche d'émulateur : ryujinx, eden…
+    pub emulateur: String,
+    /// Identifiant du titre (16 caractères hexadécimaux).
+    pub title_id: String,
+    /// Profils concernés ; absent = tous les profils de l'appareil.
+    #[serde(default)]
+    pub profils: Option<Vec<String>>,
+}
+
+impl GameConf {
+    /// Ce jeu se synchronise-t-il pour ce profil ?
+    pub fn concerns(&self, profile: &str) -> bool {
+        self.profils.as_ref().is_none_or(|ps| ps.iter().any(|p| p == profile))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub serveur: String,
@@ -30,6 +50,9 @@ pub struct Config {
     pub fiches: Option<PathBuf>,
     #[serde(default)]
     pub profils: BTreeMap<String, ProfileIds>,
+    /// Jeux synchronisés par cet appareil (identifiant ludothèque → émulateur et titre).
+    #[serde(default)]
+    pub jeux: BTreeMap<String, GameConf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +81,11 @@ const BUILTIN: &[(&str, &str)] = &[
 
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Journal local de synchronisation (partagé par `ludo` et l'interface).
+pub fn journal_path() -> PathBuf {
+    home().join(".local/share/ludo/journal.json")
 }
 
 /// Remplace un `~` initial par le dossier personnel.
@@ -91,6 +119,11 @@ impl Config {
 
     pub fn profile(&self, name: &str) -> Result<&ProfileIds, ConfigError> {
         self.profils.get(name).ok_or_else(|| ConfigError::UnknownProfile(name.into()))
+    }
+
+    /// Jeux configurés sur cet appareil pour ce profil (ordre des identifiants).
+    pub fn games_for<'a>(&'a self, profile: &'a str) -> impl Iterator<Item = (&'a String, &'a GameConf)> + 'a {
+        self.jeux.iter().filter(move |(_, g)| g.concerns(profile))
     }
 }
 
@@ -161,4 +194,35 @@ pub fn launch_command(p: &Prepared, rom: &Path) -> Result<Vec<String>, ConfigErr
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jeux_configures_par_profil() {
+        let cfg: Config = toml::from_str(
+            r#"
+            serveur = "http://127.0.0.1:8080"
+            appareil = "steam-deck"
+
+            [jeux.switch-mk8]
+            emulateur = "ryujinx"
+            title_id = "0100152000022000"
+
+            [jeux.switch-lm3]
+            emulateur = "eden"
+            title_id = "0100dca0064a6000"
+            profils = ["claire"]
+            "#,
+        )
+        .unwrap();
+        let ids = |p| cfg.games_for(p).map(|(id, _)| id.as_str()).collect::<Vec<_>>();
+        assert_eq!(ids("claire"), vec!["switch-lm3", "switch-mk8"]);
+        assert_eq!(ids("guilhem"), vec!["switch-mk8"]);
+        // Configuration existante sans section `jeux` : toujours lisible.
+        let old: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"").unwrap();
+        assert!(old.jeux.is_empty());
+    }
 }

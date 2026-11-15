@@ -1,10 +1,10 @@
 //! Tests de l'API HTTP et du stockage : envoi avec compare-and-swap, conflit, version écartée,
-//! historique, contenu, archives refusées, verrous, concurrence, blobs corrompus.
+//! historique, contenu, archives refusées, verrous, concurrence, blobs corrompus, profils.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use ludo_proto::{LeaseOutcome, PushOutcome, PushParams, SaveKey, SaveRevision};
+use ludo_proto::{LeaseOutcome, Profile, PushOutcome, PushParams, SaveKey, SaveRevision};
 use ludo_server::store::{Clock, Store};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -257,4 +257,114 @@ fn blob_tronque_detecte_puis_repare_au_renvoi() {
     let other = SaveKey { profile: "guilhem".into(), game: "switch-lm3-copie".into() };
     store.push(&other, &params(0, "pc"), &data).unwrap();
     assert_eq!(store.blob(&key, 1).unwrap().unwrap(), data);
+}
+
+fn put_profile_req(id: &str, body: serde_json::Value) -> Request<Body> {
+    Request::put(format!("/api/v1/profiles/{id}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+fn profile_json(id: &str, name: &str, kind: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id, "name": name, "avatarKind": kind,
+        "accent": "#38b6ff", "accentSoft": "#123049", "accentInk": "#9ad8ff",
+        "prefs": { "sons": true, "vibrations": false },
+        // Champs d'affichage de l'interface : ignorés par le serveur.
+        "status": "En cours sur Steam Deck", "busyElsewhere": true
+    })
+}
+
+#[tokio::test]
+async fn profils_creation_mise_a_jour_et_ordre() {
+    let a = app();
+    let (s, b) = call(&a, get("/api/v1/profiles")).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(serde_json::from_slice::<Vec<Profile>>(&b).unwrap(), vec![]);
+
+    // Création : le nom est enregistré sans les espaces autour.
+    let (s, b) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "  Guilhem ", "renard"))).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+    let p: Profile = serde_json::from_slice(&b).unwrap();
+    assert_eq!((p.name.as_str(), p.avatar_kind.as_deref(), p.prefs.vibrations), ("Guilhem", Some("renard"), false));
+
+    call(&a, put_profile_req("claire", profile_json("claire", "Claire", "champi"))).await;
+
+    // Mise à jour de Guilhem : il garde sa place (ordre de création), les champs changent.
+    let (s, _) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "Gui", "poisson"))).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (_, b) = call(&a, get("/api/v1/profiles")).await;
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    // Forme JSON attendue par l'interface (camelCase), sans les champs d'affichage.
+    assert_eq!(
+        v[0],
+        serde_json::json!({
+            "id": "guilhem", "name": "Gui", "avatarKind": "poisson",
+            "accent": "#38b6ff", "accentSoft": "#123049", "accentInk": "#9ad8ff",
+            "prefs": { "sons": true, "vibrations": false }
+        })
+    );
+    assert_eq!(v[1]["id"], "claire");
+    assert_eq!(v.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn profils_invalides_refuses() {
+    let a = app();
+    let mut sans_prefs = profile_json("claire", "Claire", "chat");
+    sans_prefs.as_object_mut().unwrap().remove("prefs");
+    sans_prefs.as_object_mut().unwrap().remove("avatarKind");
+    // Sans préférences ni personnage : accepté, préférences par défaut (tout activé).
+    let (s, b) = call(&a, put_profile_req("claire", sans_prefs)).await;
+    assert_eq!(s, StatusCode::OK);
+    let p: Profile = serde_json::from_slice(&b).unwrap();
+    assert_eq!((p.avatar_kind, p.prefs.sons, p.prefs.vibrations), (None, true, true));
+
+    let mut mauvaise_couleur = profile_json("guilhem", "Guilhem", "renard");
+    mauvaise_couleur["accent"] = "rouge".into();
+    for (id, body) in [
+        ("guilhem", profile_json("guilhem", "   ", "renard")),
+        ("guilhem", profile_json("guilhem", "", "renard")),
+        ("guilhem", profile_json("guilhem", "Dix-sept lettres!", "renard")),
+        ("guilhem", profile_json("guilhem", "Guilhem", "dragon")),
+        ("guilhem", profile_json("claire", "Claire", "renard")),
+        ("guilhem", mauvaise_couleur),
+        ("..", profile_json("..", "Point", "renard")),
+    ] {
+        let (s, b) = call(&a, put_profile_req(id, body.clone())).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{body} → {}", String::from_utf8_lossy(&b));
+    }
+    // Seize caractères (accents compris) : la limite est en caractères, pas en octets.
+    let (s, _) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "Éléonore-Hélène!", "etoile"))).await;
+    assert_eq!(s, StatusCode::OK);
+
+    let (_, b) = call(&a, get("/api/v1/profiles")).await;
+    let ids: Vec<String> = serde_json::from_slice::<Vec<Profile>>(&b).unwrap().into_iter().map(|p| p.id).collect();
+    assert_eq!(ids, vec!["claire", "guilhem"]);
+}
+
+#[test]
+fn profils_persistent_apres_redemarrage() {
+    let dir = tempfile::tempdir().unwrap();
+    let p: Profile = serde_json::from_value(profile_json("guilhem", "Guilhem", "renard")).unwrap();
+    {
+        let s = Store::open(dir.path(), Box::new(TestClock(Arc::new(AtomicU64::new(1))))).unwrap();
+        s.put_profile("guilhem", &p).unwrap();
+    }
+    let s = Store::open(dir.path(), Box::new(TestClock(Arc::new(AtomicU64::new(2))))).unwrap();
+    assert_eq!(s.profiles().unwrap(), vec![p]);
+}
+
+#[tokio::test]
+async fn profil_trop_gros_refuse() {
+    // La route des profils a sa propre limite (16 Kio), bien en dessous de celle des sauvegardes.
+    let a = app();
+    let mut body = profile_json("claire", "Claire", "champi");
+    body["status"] = serde_json::Value::String("x".repeat(20 * 1024));
+    let (s, _) = call(&a, put_profile_req("claire", body)).await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
+    let (_, b) = call(&a, get("/api/v1/profiles")).await;
+    assert_eq!(b, b"[]");
 }

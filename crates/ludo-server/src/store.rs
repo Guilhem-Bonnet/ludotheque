@@ -7,10 +7,14 @@
 //!   dossier est synchronisé, **avant** la ligne SQLite : une révision ne pointe jamais vers un
 //!   blob absent ou tronqué ; un blob existant est revérifié avant d'être réutilisé ;
 //! - l'envoi est un compare-and-swap sur la tête (versions écartées exclues) ;
-//! - une version écartée lors d'un conflit est archivée dans l'historique sans devenir tête.
+//! - une version écartée lors d'un conflit est archivée dans l'historique sans devenir tête ;
+//! - un profil n'est enregistré que s'il est valide (nom, personnage, couleurs).
 
 use ludo_core::snapshot::{archive_hash, validate_archive, SnapshotError};
-use ludo_proto::{Lease, LeaseOutcome, PushOutcome, PushParams, SaveKey, SaveRevision, LEASE_TTL_S};
+use ludo_proto::{
+    Lease, LeaseOutcome, Profile, ProfilePrefs, PushOutcome, PushParams, SaveKey, SaveRevision, AVATAR_KINDS, LEASE_TTL_S,
+    PROFILE_NAME_MAX,
+};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -31,6 +35,8 @@ pub enum StoreError {
     EmptyArchive,
     #[error("blob corrompu sur le disque : {0}")]
     CorruptBlob(String),
+    #[error("profil refusé : {0}")]
+    InvalidProfile(String),
 }
 
 /// Horloge injectable (les tests avancent le temps sans dormir).
@@ -95,6 +101,17 @@ CREATE TABLE IF NOT EXISTS leases (
     expires_at INTEGER NOT NULL,
     PRIMARY KEY (profile, game)
 );
+CREATE TABLE IF NOT EXISTS profiles (
+    id          TEXT    NOT NULL PRIMARY KEY,
+    name        TEXT    NOT NULL,
+    avatar_kind TEXT,
+    accent      TEXT    NOT NULL,
+    accent_soft TEXT    NOT NULL,
+    accent_ink  TEXT    NOT NULL,
+    sons        INTEGER NOT NULL DEFAULT 1,
+    vibrations  INTEGER NOT NULL DEFAULT 1,
+    updated_at  INTEGER NOT NULL
+);
 ";
 
 const COLS: &str = "rev, parent, hash, size, device, emulator, playtime_s, created_at, discarded";
@@ -123,6 +140,52 @@ fn head_tx(tx: &Transaction<'_>, key: &SaveKey) -> rusqlite::Result<Option<SaveR
     )
     .optional()
 }
+
+/// Couleur au format `#rrggbb`.
+fn is_hex_color(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Valide un profil et le normalise (nom sans espaces autour). `id` vient de la route.
+pub fn normalize_profile(id: &str, p: &Profile) -> Result<Profile, StoreError> {
+    check(id)?;
+    if p.id != id {
+        return Err(StoreError::InvalidProfile(format!("identifiant {} différent de la route {id}", p.id)));
+    }
+    let name = p.name.trim();
+    let len = name.chars().count();
+    if len == 0 || len > PROFILE_NAME_MAX {
+        return Err(StoreError::InvalidProfile(format!("nom de 1 à {PROFILE_NAME_MAX} caractères attendu")));
+    }
+    if name.chars().any(char::is_control) {
+        return Err(StoreError::InvalidProfile("caractère de contrôle dans le nom".into()));
+    }
+    if let Some(kind) = &p.avatar_kind {
+        if !AVATAR_KINDS.contains(&kind.as_str()) {
+            return Err(StoreError::InvalidProfile(format!("personnage inconnu : {kind}")));
+        }
+    }
+    for (field, value) in [("accent", &p.accent), ("accentSoft", &p.accent_soft), ("accentInk", &p.accent_ink)] {
+        if !is_hex_color(value) {
+            return Err(StoreError::InvalidProfile(format!("{field} : couleur #rrggbb attendue")));
+        }
+    }
+    Ok(Profile { name: name.to_string(), ..p.clone() })
+}
+
+fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
+    Ok(Profile {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        avatar_kind: r.get(2)?,
+        accent: r.get(3)?,
+        accent_soft: r.get(4)?,
+        accent_ink: r.get(5)?,
+        prefs: ProfilePrefs { sons: r.get::<_, i64>(6)? != 0, vibrations: r.get::<_, i64>(7)? != 0 },
+    })
+}
+
+const PROFILE_COLS: &str = "id, name, avatar_kind, accent, accent_soft, accent_ink, sons, vibrations";
 
 #[cfg(unix)]
 fn sync_dir(dir: &Path) -> std::io::Result<()> {
@@ -300,5 +363,39 @@ impl Store {
             params![key.profile, key.game, device],
         )?;
         Ok(())
+    }
+
+    /// Profils du foyer, dans l'ordre de leur création.
+    pub fn profiles(&self) -> Result<Vec<Profile>, StoreError> {
+        let db = self.db.lock().expect("verrou base");
+        let mut st = db.prepare(&format!("SELECT {PROFILE_COLS} FROM profiles ORDER BY rowid"))?;
+        let rows = st.query_map([], row_to_profile)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Crée ou met à jour un profil ; renvoie le profil tel qu'enregistré.
+    pub fn put_profile(&self, id: &str, profile: &Profile) -> Result<Profile, StoreError> {
+        let p = normalize_profile(id, profile)?;
+        let db = self.db.lock().expect("verrou base");
+        db.execute(
+            &format!(
+                "INSERT INTO profiles ({PROFILE_COLS}, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+                 ON CONFLICT(id) DO UPDATE SET name=excluded.name, avatar_kind=excluded.avatar_kind,
+                   accent=excluded.accent, accent_soft=excluded.accent_soft, accent_ink=excluded.accent_ink,
+                   sons=excluded.sons, vibrations=excluded.vibrations, updated_at=excluded.updated_at"
+            ),
+            params![
+                p.id,
+                p.name,
+                p.avatar_kind,
+                p.accent,
+                p.accent_soft,
+                p.accent_ink,
+                p.prefs.sons as i64,
+                p.prefs.vibrations as i64,
+                self.clock.now() as i64
+            ],
+        )?;
+        Ok(p)
     }
 }
