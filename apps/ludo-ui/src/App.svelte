@@ -21,6 +21,11 @@
   const easeOutExpo = (t: number) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t));
   function screenIn(_node: Element) {
     if (reducedMotion()) return { duration: 0 };
+    if (router.enter === 'hero') {
+      // L'écran suivant fait voler la tuile : il doit être visible presque tout de suite.
+      router.enter = 'normal';
+      return { duration: 160, css: (t: number) => `opacity: ${t};` };
+    }
     return {
       delay: 110,
       duration: 420,

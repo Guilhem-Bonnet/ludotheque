@@ -48,6 +48,14 @@
     };
   });
 
+  let launching = $state<string | null>(null);
+
+  /** Mise en scène du lancement : la tuile se soulève, les autres s'estompent, puis l'écran change. */
+  function launch(game: Game, el: HTMLElement) {
+    launching = game.id;
+    void play(game, el);
+  }
+
   const current = $derived(games[focused]);
   const offline = $derived(device.server === 'hors_ligne');
 </script>
@@ -76,7 +84,17 @@
       {#each games as game, i (game.id)}
         <!-- Une seule tuile par jeu : elle grandit au focus sans être recréée (le focus reste dessus). -->
         <div class="slot rise" class:focused={i === focused} style:--i={i}>
-          <Tile {game} size={i === focused ? 272 : 232} big={i === focused} hero={router.heroGame === game.id} autofocus={i === 0} onfocus={() => (focused = i)} onclick={() => play(game)} />
+          <Tile
+            {game}
+            size={i === focused ? 272 : 232}
+            big={i === focused}
+            hero={router.heroGame === game.id}
+            dimmed={launching !== null && launching !== game.id}
+            lifting={launching === game.id}
+            autofocus={i === 0}
+            onfocus={() => (focused = i)}
+            onclick={(el) => launch(game, el)}
+          />
           {#if i === focused && game.last}
             <div class="device-tab">
               <Icon name={game.last.deviceKind} size={22} color="var(--accent-ink)" />
@@ -134,7 +152,7 @@
   .state { display: flex; align-items: center; gap: 8px; }
 
   .row-wrap { padding: 48px 0 0 48px; }
-  .row { display: flex; align-items: flex-start; gap: 20px; overflow-x: auto; overflow-y: visible; padding: 10px 48px 10px 10px; margin: -10px 0 0 -10px; scrollbar-width: none; }
+  .row { display: flex; align-items: flex-start; gap: 20px; overflow-x: auto; overflow-y: visible; padding: 22px 64px 16px 12px; margin: -22px 0 0 -12px; scroll-padding-inline: 24px 64px; scrollbar-width: none; }
   .row::-webkit-scrollbar { display: none; }
   .slot { display: flex; flex-direction: column; flex-shrink: 0; margin-top: 20px; }
   .slot.focused { width: 272px; margin-top: 0; }

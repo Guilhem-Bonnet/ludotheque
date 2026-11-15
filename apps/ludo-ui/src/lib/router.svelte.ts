@@ -18,6 +18,12 @@ class Router {
   profile = $state<Profile | null>(null);
   /** Jeu dont la tuile s'envole vers l'écran suivant (élément partagé de la transition). */
   heroGame = $state<string | null>(null);
+  /** Position à l'écran de la tuile d'origine, pour la faire voler jusqu'à l'écran suivant (FLIP). */
+  heroRect: DOMRect | null = null;
+  /** Jeu en cours de lancement depuis l'accueil (mise en scène : les autres tuiles s'estompent). */
+  launching = $state<string | null>(null);
+  /** Entrée d'écran : 'hero' = fondu court, l'écran suivant fait voler la tuile lui-même. */
+  enter: 'normal' | 'hero' = 'normal';
   private stack: Screen[] = [];
 
   /** Sens du dernier changement d'écran (la transition d'App en tient compte). */

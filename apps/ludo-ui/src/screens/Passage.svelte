@@ -5,7 +5,7 @@
   import Tile from '../lib/components/Tile.svelte';
   import { isDemo } from '../lib/api';
   import { feedback } from '../lib/feedback';
-  import { replay } from '../lib/motion';
+  import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
   import type { Preparation } from '../lib/types';
@@ -56,7 +56,6 @@
         launching = true;
         s.label = 'Lancement…';
         feedback('launch');
-        replay(art, 'pop', 340);
         await wait(1500);
         s.state = 'fait';
         await wait(500);
@@ -68,7 +67,29 @@
     }
   }
 
+  /** Vol de la tuile depuis l'accueil (FLIP), avec un léger arc vers le haut à mi-course. */
+  function flyIn() {
+    const from = router.heroRect;
+    router.heroRect = null;
+    const tile = art?.querySelector<HTMLElement>('.tile');
+    if (!from || !tile || reducedMotion()) return;
+    const to = tile.getBoundingClientRect();
+    const zoom = parseFloat(getComputedStyle(document.querySelector('.app') as Element).zoom || '1') || 1;
+    const dx = (from.left - to.left) / zoom;
+    const dy = (from.top - to.top) / zoom;
+    const s = from.width / to.width;
+    art?.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px) scale(${s})` },
+        { transform: `translate(${dx * 0.45}px, ${dy * 0.45 - 18}px) scale(${(s + 1) / 2})`, offset: 0.5 },
+        { transform: 'none' },
+      ],
+      { duration: 560, easing: 'cubic-bezier(.16, 1, .3, 1)' },
+    );
+  }
+
   onMount(() => {
+    flyIn();
     focusFirst();
     feedback('loading');
     if (isDemo) void runDemo();
@@ -77,8 +98,8 @@
 
 <div class="screen" class:launching>
   <main>
-    <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero /></div>
-    <div class="side">
+    <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero shine={launching} lifting={launching} /></div>
+    <div class="side" class:dim={launching}>
       <div class="head rise" style:--i={1}>
         <h1>{launching ? 'Lancement' : 'Préparation'}</h1>
         <span>{preparation.game.title} · {preparation.game.emulator}</span>
@@ -88,7 +109,7 @@
           <li class="{step.state} rise" style:--i={i + 2}>
             <span class="line">
               {#if step.state === 'fait'}
-                <span class="draw" style:--len="16"><Icon name="check-circle" size={26} color="var(--ok)" /></span>
+                <span class="check draw" style:--len="16"><Icon name="check-circle" size={26} color="var(--ok)" /></span>
               {:else if step.state === 'en_cours'}
                 <span class="spin"><Icon name="spinner" size={26} color="var(--accent)" /></span>
               {:else}
@@ -114,9 +135,21 @@
 <style>
   .screen { height: 100%; display: flex; flex-direction: column; }
   main { flex-grow: 1; display: flex; align-items: center; gap: 72px; padding: 0 96px; }
-  .art { pointer-events: none; transition: transform var(--t-slow) var(--ease-land), filter var(--t-slow) ease-out; }
-  .launching .art { transform: translateY(-6px); filter: brightness(1.08); }
+  .art { pointer-events: none; transform-origin: top left; }
+  /* Le panneau arrive juste après l'atterrissage de la tuile (follow-through), depuis la droite. */
+  .side { animation: side-in 380ms var(--ease-land) 200ms both; transition: opacity var(--t-slow) ease-out, filter var(--t-slow) ease-out; }
+  @keyframes side-in { from { opacity: 0; transform: translateX(14px); } }
+  /* Au lancement, le panneau s'efface un peu : toute l'attention va à la tuile qui s'illumine. */
+  .side.dim { opacity: 0.55; filter: saturate(0.8); }
+  /* Coche réussie : la pastille grandit avec un léger dépassement, puis le trait se dessine. */
+  .check { animation: check-pop 260ms var(--ease-pop) both; }
+  @keyframes check-pop { from { transform: scale(0.7); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
+  /* Reflet régulier sur la partie remplie de la barre : la progression paraît vivante. */
+  .bar span { position: relative; overflow: hidden; }
+  .bar span::after { content: ''; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent); animation: bar-gleam 1.8s ease-in-out infinite; }
+  @keyframes bar-gleam { from { transform: translateX(-120%); } to { transform: translateX(260%); } }
   .side { flex-grow: 1; display: flex; flex-direction: column; gap: 36px; }
+  @media (prefers-reduced-motion: reduce) { .side, .check { animation: none; } .bar span::after { display: none; } }
   .head { display: flex; flex-direction: column; gap: 10px; }
   h1 { margin: 0; font-size: 36px; font-weight: 600; letter-spacing: -0.01em; }
   .head span { font-size: 17px; color: var(--ink-3); }

@@ -36,7 +36,8 @@
 
   <main>
     {#each sides as [key, side] (key)}
-      <button class="card focusable rise" style:--i={key === 'local' ? 1 : 2} class:chosen={chosen === key} class:dropped={chosen !== null && chosen !== key} onclick={() => use(key)} aria-pressed={chosen === key} disabled={chosen !== null}>
+      <button class="card focusable from-{key}" class:chosen={chosen === key} class:dropped={chosen !== null && chosen !== key} onclick={() => use(key)} aria-pressed={chosen === key} disabled={chosen !== null}>
+        {#if chosen === key}<span class="picked draw" style:--len="16"><Icon name="check-circle" size={30} color="var(--ok)" label="Sauvegarde choisie" /></span>{/if}
         <span class="card-head">
           <span class="dev"><Icon name={side.deviceKind} size={28} />{side.device}</span>
           {#if side.ahead}<span class="ahead">Plus de temps de jeu</span>{/if}
@@ -65,6 +66,16 @@
   .card:focus { box-shadow: 0 0 0 4px var(--ground), 0 0 0 8px var(--accent); transform: translateY(-4px); }
   .card.chosen { transform: translateY(-8px) scale(1.02); box-shadow: 0 0 0 4px var(--ground), 0 0 0 8px var(--ok), 0 24px 50px rgba(0,0,0,.45); }
   .card.dropped { opacity: 0.25; transform: translateY(14px) scale(0.98); }
+  .card { position: relative; }
+  /* Chaque carte arrive de son côté, la seconde 60 ms après la première. */
+  .from-local { animation: card-left 420ms var(--ease-land) 60ms both; }
+  .from-server { animation: card-right 420ms var(--ease-land) 120ms both; }
+  @keyframes card-left { from { opacity: 0; transform: translateX(-18px); } }
+  @keyframes card-right { from { opacity: 0; transform: translateX(18px); } }
+  .picked { position: absolute; top: -14px; right: -14px; width: 44px; height: 44px; border-radius: 50%; background: var(--surface); display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 16px rgba(0,0,0,.4); animation: picked 300ms var(--ease-pop) both; }
+  @keyframes picked { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .from-local, .from-server, .picked { animation: none; } }
   .card-head { display: flex; align-items: center; justify-content: space-between; }
   .dev { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 600; }
   .ahead { font-size: 13px; font-weight: 600; color: var(--ground); background: var(--accent-ink); padding: 5px 10px; border-radius: 8px; }

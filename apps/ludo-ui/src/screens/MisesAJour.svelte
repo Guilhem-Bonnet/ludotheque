@@ -59,7 +59,7 @@
         <section>
           <h2>{grp.label}</h2>
           {#each list as it (it.id)}
-            <div class="item rise">
+            <div class="item" class:success={progress[it.id] === 'fait'}>
               <span class="thumb" style:background={it.tile ?? 'var(--control)'}>{#if !it.tile}<Icon name="settings" size={26} color="var(--ink-2)" />{/if}</span>
               <span class="text"><span class="title">{it.title}</span><span class="detail">{it.detail}</span></span>
               {#if it.console}<ConsoleChip console={it.console} size="m" />{/if}
@@ -95,6 +95,9 @@
   .detail { font-size: 14px; color: var(--ink-3); }
   .act { all: unset; cursor: pointer; font-size: 15px; padding: 9px 16px; border-radius: var(--radius-control); background: var(--control); color: var(--ink); }
   .act:focus { background: var(--accent); color: var(--ground); }
+  .item { transition: background-color 600ms ease-out; }
+  .item.success { animation: success-flash 900ms ease-out; }
+  @keyframes success-flash { 0% { background: color-mix(in srgb, var(--ok) 16%, var(--surface)); } 100% { background: var(--surface); } }
   .done { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); animation: pop 320ms var(--ease-pop); }
   .mini { width: 120px; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; display: block; }
   .mini span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 120ms linear; }

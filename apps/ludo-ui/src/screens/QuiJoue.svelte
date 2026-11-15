@@ -55,6 +55,7 @@
           onclick={() => choose(p)}
           style:--accent={p.accent}
         >
+          {#if chosen === p.id}<span class="burst" aria-hidden="true"></span>{/if}
           <Avatar profile={p} size={i === focused ? 160 : 134} ring={i === focused} />
           <span class="label">
             <span class="name" class:dim={i !== focused}>{p.name}</span>
@@ -81,6 +82,12 @@
   .profile.chosen :global(.avatar) { transform: scale(1.08); }
   .profile { transition: opacity var(--t-std) ease-out, transform var(--t-std) var(--ease-land); }
   .profile.faded { opacity: 0; transform: translateY(10px); }
+  .profile { position: relative; }
+  /* Onde de la couleur du joueur qui s'étend depuis l'avatar choisi. */
+  .burst { position: absolute; top: 0; left: 50%; width: 160px; height: 160px; margin-left: -80px; border-radius: 50%; pointer-events: none;
+    box-shadow: 0 0 0 3px var(--accent); animation: burst 520ms var(--ease-land) both; }
+  @keyframes burst { from { transform: scale(1); opacity: 0.9; } to { transform: scale(1.6); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .burst { display: none; } }
   .label { display: flex; flex-direction: column; align-items: center; gap: 8px; }
   .name { font-size: 24px; font-weight: 600; }
   .name.dim { font-size: 21px; font-weight: 500; color: var(--ink-2); }

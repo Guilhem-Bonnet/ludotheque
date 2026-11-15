@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Tile from '../lib/components/Tile.svelte';
   import { api } from '../lib/api';
@@ -19,6 +19,16 @@
   let tab = $state(0);
   let filter = $state<'tous' | 'installes' | 'non_installes'>('tous');
   let slide = $state<'left' | 'right' | 'none'>('none');
+
+  // Indicateur d'onglet qui glisse d'un onglet à l'autre (continuité), au lieu d'un fond qui saute.
+  let tabEls = $state<HTMLElement[]>([]);
+  let indicator = $state({ x: 0, w: 0, ready: false });
+  $effect(() => {
+    const el = tabEls[tab];
+    if (!el) return;
+    const prev = untrack(() => indicator);
+    indicator = { x: el.offsetLeft, w: el.offsetWidth, ready: prev.ready || prev.w > 0 };
+  });
 
   onMount(() => {
     api.library(router.profile!.id).then((g) => {
@@ -70,8 +80,9 @@
     <div class="line">
       <div class="tabs" role="tablist" aria-label="Consoles">
         <span class="bumper">L1</span>
+        <span class="indicator" class:ready={indicator.ready} style:transform="translateX({indicator.x}px)" style:width="{indicator.w}px" aria-hidden="true"></span>
         {#each TABS as t, i (t.id)}
-          <button role="tab" aria-selected={i === tab} class="tab" class:on={i === tab} onclick={() => (tab = i)} tabindex="-1">{t.label}</button>
+          <button role="tab" aria-selected={i === tab} class="tab" class:on={i === tab} bind:this={tabEls[i]} onclick={() => (tab = i)} tabindex="-1">{t.label}</button>
         {/each}
         <span class="bumper">R1</span>
       </div>
@@ -107,10 +118,13 @@
   .line { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
   .meta { font-size: 15px; color: var(--ink-3); }
-  .tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; position: relative; }
+  .indicator { position: absolute; left: 0; top: 50%; height: 38px; margin-top: -19px; border-radius: var(--radius-control); background: var(--accent); z-index: 0; }
+  .indicator.ready { transition: transform 260ms var(--ease-land), width 260ms var(--ease-land); }
   .bumper { font-size: 12px; font-weight: 700; color: var(--ink-4); border: 1.5px solid var(--hint); border-radius: 6px; padding: 2px 6px; margin: 0 6px; }
   .tab { all: unset; cursor: pointer; font-size: 16px; padding: 9px 16px; border-radius: var(--radius-control); color: var(--ink-2); }
-  .tab.on { background: var(--accent); color: var(--ground); font-weight: 600; }
+  .tabs .tab { position: relative; z-index: 1; }
+  .tab.on { color: var(--ground); font-weight: 600; }
   .filters { display: flex; gap: 8px; }
   .pill { all: unset; cursor: pointer; font-size: 14px; padding: 7px 14px; border-radius: 999px; border: 1.5px solid var(--hint); color: var(--ink-2); }
   .pill[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }

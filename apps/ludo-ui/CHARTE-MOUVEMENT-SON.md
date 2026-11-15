@@ -43,3 +43,23 @@ Validée en partie par Guilhem le 15/11/2026 : la palette sonore « Feutré doux
 - Les sons `loading`, `downloaded` et `updated` sont des propositions dans l'esprit validé, pas encore écoutées.
 - Les vibrations sont à essayer sur le Deck : intensités et durées.
 - Démo à essayer : https://claude.ai/artifact/5noPFPFZmKzUXpSh4PU5sL
+
+## Passe d'animation du 15/11 (skills impeccable `animate` + motion-design)
+
+Thèse : un moment phare, le **lancement d'un jeu** ; ailleurs, uniquement de la continuité et des retours d'action.
+
+| Élément | Ce qui a changé | Principe |
+|---|---|---|
+| Transition d'écran | Un seul fondu : sortie en 160 ms, entrée en 420 ms en montant de 8 px ; plus de glissement latéral ni de cascade simultanée | une seule chose à suivre |
+| Focus d'une tuile | La tuile se soulève de 4 px ; son ombre descend et s'adoucit ; l'anneau se pose (de 95 % à 100 %) ; le titre suit 50 ms après, les pastilles 70 ms après | contre-mouvement, suivi décalé |
+| Appui A | Enfoncement à 95 %, léger dépassement à 103,5 %, retour au repos (280 ms) | anticipation, rebond doux |
+| Bord atteint | Oscillation amortie (6, −3, 1,5 px), sans son | |
+| Lancement (moment phare) | Les autres tuiles s'estompent (flou de 1,5 px) ; la tuile choisie se soulève, puis vole en arc jusqu'à l'écran de passage (FLIP, 560 ms) ; le panneau arrive après l'atterrissage ; au lancement, un reflet traverse la tuile pendant la montée des 4 notes, et le panneau s'efface | mise en scène, arcs, action secondaire |
+| Étapes cochées | La pastille grandit avec un dépassement, puis le trait se dessine ; reflet régulier sur la barre de progression | état de réussite |
+| Bibliothèque | Indicateur d'onglet qui glisse d'un onglet à l'autre ; la grille arrive du côté de l'onglet choisi | continuité |
+| Qui joue ? | Onde de la couleur du joueur depuis l'avatar choisi | action secondaire |
+| Conflit | Chaque carte arrive de son côté ; pastille cochée « pop » sur la carte choisie | |
+| Mises à jour | La ligne réussie s'éclaire brièvement en vert | |
+| Barre d'aide | La touche dessinée s'enfonce quand le bouton est appuyé | l'interface répond |
+
+Mode « animations réduites » : plus aucun déplacement ni changement d'échelle ; les fondus de couleur et les états restent.
