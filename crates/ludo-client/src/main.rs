@@ -75,10 +75,6 @@ struct Ctx {
     journal: Journal,
 }
 
-fn journal_path() -> PathBuf {
-    config::home().join(".local/share/ludo/journal.json")
-}
-
 fn label(o: &SyncOutcome) -> String {
     match o {
         SyncOutcome::UpToDate => "À jour".into(),
@@ -177,7 +173,7 @@ fn main() -> ExitCode {
     let result = (|| -> Result<ExitCode, String> {
         let cfg = Config::load(&path).map_err(|e| format!("{} : {e}", path.display()))?;
         let client = Client::new(&cfg.serveur);
-        let journal = Journal::open(&journal_path()).map_err(|e| e.to_string())?;
+        let journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
         let mut ctx = Ctx { cfg, client, journal };
         match cli.cmd {
             Cmd::Sync(jeu) => {

@@ -102,3 +102,38 @@ pub enum LeaseOutcome {
 
 /// Durée de vie d'un verrou sans battement, en secondes (conception 4.4).
 pub const LEASE_TTL_S: u64 = 120;
+
+/// Personnages illustrés autorisés pour l'image d'un profil.
+pub const AVATAR_KINDS: &[&str] = &["renard", "champi", "chat", "etoile", "planete", "poisson"];
+
+/// Longueur maximale du nom d'un profil, en caractères (après suppression des espaces autour).
+pub const PROFILE_NAME_MAX: usize = 16;
+
+/// Préférences d'un profil : elles suivent la personne sur tous ses appareils.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfilePrefs {
+    pub sons: bool,
+    pub vibrations: bool,
+}
+
+impl Default for ProfilePrefs {
+    fn default() -> Self {
+        Self { sons: true, vibrations: true }
+    }
+}
+
+/// Profil d'une personne du foyer, tel que l'interface le manipule (champs en camelCase).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: ProfileId,
+    pub name: String,
+    /// Personnage illustré (une valeur de [`AVATAR_KINDS`]) ; absent = initiale sur l'accent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_kind: Option<String>,
+    pub accent: String,
+    pub accent_soft: String,
+    pub accent_ink: String,
+    #[serde(default)]
+    pub prefs: ProfilePrefs,
+}
