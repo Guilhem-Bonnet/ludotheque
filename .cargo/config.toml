@@ -1,3 +1,12 @@
 # Les artefacts de compilation ne vont JAMAIS sur /mnt/Travail (disque déjà saturé une fois par un target/).
 [build]
 target-dir = "/home/guilhem/.cache/cargo-target/ludotheque"
+jobs = 4
+# Compilation bridée : les sessions Claude partagent agents.slice (MemoryHigh 36G) et systemd-oomd
+# tue la session si la pression mémoire y dépasse 80 % pendant 20 s (incident du 15/11, 14G à 16 jobs).
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"

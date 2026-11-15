@@ -4,7 +4,8 @@ consoles  = ["switch"]
 formats   = ["nsp", "xci"]
 lancement = "{bin} -f -u {profil_index} -g {rom}"
 profils   = "natifs"
-sauvegardes = "{data}/nand/user/save/0000000000000000/{profil_uuid}/{title_id}"
+# Titre en majuscules et sauvegarde « appareil » sous l UUID nul : mesuré le 15/11 sur Eden 0.2.1 (PC).
+sauvegardes = "{data}/nand/user/save/0000000000000000/{profil_uuid}/{title_id_maj}"
 exclusions  = ["*.tmp"]
 systeme     = ["keys/prod.keys", "keys/title.keys"]
 
