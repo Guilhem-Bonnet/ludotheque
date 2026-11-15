@@ -4,5 +4,6 @@
 pub mod api;
 pub mod config;
 pub mod engine;
+pub mod install;
 pub mod journal;
 pub mod layout;

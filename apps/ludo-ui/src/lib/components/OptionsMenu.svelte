@@ -6,7 +6,7 @@
   import CloudIcon from './CloudIcon.svelte';
   import Icon from './Icon.svelte';
   import Tile from './Tile.svelte';
-  import { api } from '../api';
+  import { api, CANCELLED } from '../api';
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
   import { focusFirst } from '../nav';
@@ -37,6 +37,40 @@
   let synced = $state(false);
   let failed = $state<string | null>(null);
   let confirmRemove = $state(false);
+  let installing = $state<number | null>(null);
+  let installError = $state<string | null>(null);
+  let removing = $state(false);
+  let cancelling = $state(false);
+
+  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  /** Installer pour de bon (téléchargement réel), sans quitter le menu : la progression s'affiche sur la ligne. */
+  async function install() {
+    if (installing !== null) return;
+    installError = null;
+    installing = 0;
+    try {
+      await api.installGame(game.id, (p) => (installing = p));
+      onchange({ ...game, install: 'installe' });
+      feedback('downloaded');
+      requestAnimationFrame(() => focusFirst());
+    } catch (e) {
+      // Annulation voulue : pas un échec, le fichier partiel est gardé pour reprendre.
+      if (message(e) !== CANCELLED) {
+        installError = message(e);
+        feedback('err');
+      }
+    } finally {
+      installing = null;
+      cancelling = false;
+    }
+  }
+
+  function cancelInstall() {
+    if (installing === null || cancelling) return;
+    cancelling = true;
+    void api.cancelInstall(game.id);
+  }
 
   async function syncGame() {
     if (syncing) return;
@@ -70,11 +104,23 @@
     feedback('tab');
   }
 
-  function remove() {
+  async function remove() {
+    if (removing) return;
     if (!confirmRemove) { confirmRemove = true; feedback('err'); return; }
-    onchange({ ...game, install: 'non_installe', sync: game.sync });
-    feedback('saved');
-    onclose();
+    confirmRemove = false;
+    removing = true;
+    installError = null;
+    try {
+      await api.uninstallGame(game.id);
+      onchange({ ...game, install: 'non_installe', sync: game.sync });
+      feedback('saved');
+      onclose();
+    } catch (e) {
+      installError = message(e);
+      feedback('err');
+    } finally {
+      removing = false;
+    }
   }
 
   onMount(() => {
@@ -98,7 +144,18 @@
   </header>
 
   <ul>
-    <li><button class="opt focusable" data-autofocus onclick={onplay}><Icon name={installed ? 'play' : 'download'} size={22} />{installed ? 'Jouer' : 'Installer'}</button></li>
+    <li>
+      {#if installed}
+        <button class="opt focusable" data-autofocus onclick={onplay}><Icon name="play" size={22} />Jouer</button>
+      {:else}
+        <button class="opt focusable" data-autofocus data-sound="none" aria-busy={installing !== null} onclick={install}>
+          <Icon name="download" size={22} />{installing !== null ? `Téléchargement… ${Math.round(installing * 100)} %` : installError ? 'Réessayer' : 'Installer'}
+        </button>
+      {/if}
+    </li>
+    {#if installing !== null}
+      <li><button class="opt focusable" data-sound="none" disabled={cancelling} onclick={cancelInstall}><Icon name="trash" size={22} />{cancelling ? 'Annulation…' : 'Annuler le téléchargement'}</button></li>
+    {/if}
     <li><button class="opt focusable" onclick={ondetails}><Icon name="history" size={22} />Détails et sauvegardes</button></li>
     {#if installed}
       <li>
@@ -112,9 +169,10 @@
       <li><button class="opt focusable" data-sound="none" onclick={switchEmulator}><Icon name="settings" size={22} />Émulateur<span class="value">{game.emulator.split(' ')[0]}</span></button></li>
     {/if}
     {#if installed}
-      <li><button class="opt focusable danger" class:armed={confirmRemove} data-sound="none" onclick={remove}><Icon name="trash" size={22} />{confirmRemove ? 'Confirmer : désinstaller' : 'Désinstaller'}</button></li>
+      <li><button class="opt focusable danger" class:armed={confirmRemove} data-sound="none" onclick={remove}><Icon name="trash" size={22} />{removing ? 'Suppression…' : confirmRemove ? 'Confirmer : désinstaller' : 'Désinstaller'}</button></li>
     {/if}
   </ul>
+  {#if installError}<p class="error" role="alert">{installError}</p>{/if}
   <p class="note">Les sauvegardes restent sur le serveur.</p>
 </div>
 
@@ -141,5 +199,6 @@
   .value::after { content: ' ›'; }
   .danger { color: #ff9b9b; }
   .danger.armed { background: rgba(255, 90, 90, 0.16); }
+  .error { margin: 0; font-size: 14px; color: #ff9b9b; }
   .note { margin: auto 0 0; font-size: 13px; color: var(--ink-4); }
 </style>

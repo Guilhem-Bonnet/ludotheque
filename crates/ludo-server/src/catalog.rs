@@ -198,7 +198,8 @@ fn dir_stats(dir: &Path) -> (u64, u64) {
             }
             if ft.is_dir() {
                 stack.push(e.path());
-            } else {
+            } else if ft.is_file() {
+                // Mêmes entrées que le tar servi (`list_tar_entries`) : fichiers réguliers seulement.
                 size += m.len();
             }
             mtime = mtime.max(mtime_s(&m));

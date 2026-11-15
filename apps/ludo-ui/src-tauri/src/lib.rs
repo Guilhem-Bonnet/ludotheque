@@ -1,9 +1,10 @@
 //! Coque Tauri de l'interface Ludothèque : expose au front les commandes du client `ludo`.
 //!
 //! Commandes branchées : `device`, `rumble` (vibrations natives), `profiles`, `saveProfile`,
-//! `history`, `restore`, `sync`, `library`, `recent` (catalogue du serveur). Les autres (`updates`,
-//! `prepare`) arriveront avec la suite du lot P1c ; d'ici là, le front utilise sa source de
-//! démonstration pour chaque commande absente ou en échec.
+//! `history`, `restore`, `sync`, `library`, `recent` (catalogue du serveur), `installGame`,
+//! `installContent`, `uninstallGame` (installation réelle sur l'appareil ; progression par
+//! l'événement `ludo://progression`). Les autres (`updates`, `prepare`) arriveront avec la suite du
+//! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
 pub mod rumble;
 
@@ -11,11 +12,14 @@ use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use ludo_client::api::Client;
 use ludo_client::config::{self, Config};
 use ludo_client::engine::{Engine, SyncOutcome};
+use ludo_client::install::{self, Installer};
 use ludo_client::journal::{Entry, Journal};
 use ludo_proto::{CatalogGame, FileRole, GameArt, GameFile, LeaseOutcome, Profile, SaveKey, SaveSummary};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::Emitter;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -586,11 +590,163 @@ async fn sync(profile: String) -> Result<Vec<UiGame>, String> {
     .await
 }
 
+/// Événement de progression d'une installation (`ludo://progression`).
+pub const EVENT_PROGRESSION: &str = "ludo://progression";
+
+/// Charge de l'événement : `done` et `total` cumulent tous les fichiers de l'opération en cours ;
+/// `file` est l'identifiant du fichier en train d'arriver.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Progression {
+    game: String,
+    file: u64,
+    done: u64,
+    total: u64,
+}
+
+/// Opérations en cours : jeu → drapeau d'annulation. Une seule opération à la fois par jeu.
+pub type Occupes = Mutex<BTreeMap<String, Arc<AtomicBool>>>;
+
+static EN_COURS: Occupes = Mutex::new(BTreeMap::new());
+
+/// Réservation d'un jeu ; rendue à la destruction (même en cas d'erreur ou de panique).
+#[derive(Debug)]
+pub struct JeuOccupe<'a> {
+    set: &'a Occupes,
+    game: String,
+    /// Passe à `true` quand l'interface demande l'annulation (`cancelInstall`).
+    pub cancel: Arc<AtomicBool>,
+}
+
+impl<'a> JeuOccupe<'a> {
+    /// Réserve le jeu, ou refuse si une opération y est déjà en cours.
+    pub fn prendre(set: &'a Occupes, game: &str) -> Result<Self, String> {
+        let mut g = set.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if g.contains_key(game) {
+            return Err("Une installation de ce jeu est déjà en cours".into());
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        g.insert(game.to_string(), cancel.clone());
+        Ok(Self { set, game: game.to_string(), cancel })
+    }
+}
+
+impl Drop for JeuOccupe<'_> {
+    fn drop(&mut self) {
+        self.set.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&self.game);
+    }
+}
+
+/// Demande l'annulation de l'opération en cours sur ce jeu ; `false` si aucune.
+pub fn annuler(set: &Occupes, game: &str) -> bool {
+    match set.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(game) {
+        Some(flag) => {
+            flag.store(true, Ordering::SeqCst);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Fichiers à installer : sans `only`, le jeu de base puis ses mises à jour (les DLC restent un choix
+/// explicite) ; avec `only`, ce seul fichier, qui doit être une mise à jour ou un DLC du jeu.
+pub fn install_plan(game: &CatalogGame, only: Option<u64>) -> Result<Vec<GameFile>, String> {
+    match only {
+        Some(id) => {
+            let f = game.files.iter().find(|f| f.id == id).ok_or("Contenu introuvable sur le serveur")?;
+            if f.role == FileRole::Base {
+                return Err("Ce fichier est le jeu lui-même, pas un contenu additionnel".into());
+            }
+            Ok(vec![f.clone()])
+        }
+        None => {
+            let plan: Vec<GameFile> = [FileRole::Base, FileRole::Maj]
+                .into_iter()
+                .flat_map(|role| game.files.iter().filter(move |f| f.role == role).cloned())
+                .collect();
+            if plan.iter().all(|f| f.role != FileRole::Base) {
+                return Err("Aucun fichier à installer pour ce jeu sur le serveur".into());
+            }
+            Ok(plan)
+        }
+    }
+}
+
+fn roms_dir(cfg: &Config) -> Result<std::path::PathBuf, String> {
+    cfg.roms.clone().ok_or_else(|| "Dossier des jeux non configuré sur cet appareil (option roms)".to_string())
+}
+
+fn find_game(client: &Client, id: &str) -> Result<CatalogGame, String> {
+    client.games().map_err(|e| e.to_string())?.into_iter().find(|g| g.id == id).ok_or_else(|| "Jeu introuvable sur le serveur".to_string())
+}
+
+/// Installe les fichiers du plan l'un après l'autre en émettant la progression cumulée.
+fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &[GameFile], cancel: Arc<AtomicBool>) -> Result<(), String> {
+    let roms = roms_dir(cfg)?;
+    let client = Client::new(&cfg.serveur);
+    let installer = Installer::new(&client, &roms).with_cancel(cancel);
+    let total: u64 = plan.iter().map(|f| f.size).sum();
+    let mut before = 0u64;
+    for f in plan {
+        let mut report = |done: u64, _| {
+            let _ = app.emit(EVENT_PROGRESSION, Progression { game: game.id.clone(), file: f.id, done: before + done, total });
+        };
+        installer.install(&game.id, f, &mut report).map_err(|e| e.to_string())?;
+        before += f.size;
+    }
+    let _ = app.emit(EVENT_PROGRESSION, Progression { game: game.id.clone(), file: plan.last().map_or(0, |f| f.id), done: total, total });
+    Ok(())
+}
+
+/// Installe un jeu : fichiers de base et mises à jour (les DLC se choisissent un par un).
+#[tauri::command(rename = "installGame")]
+async fn install_game(app: tauri::AppHandle, game: String) -> Result<(), String> {
+    blocking(move || {
+        let busy = JeuOccupe::prendre(&EN_COURS, &game)?;
+        let cfg = load_config()?;
+        let g = find_game(&Client::new(&cfg.serveur), &game)?;
+        run_install(&app, &cfg, &g, &install_plan(&g, None)?, busy.cancel.clone())
+    })
+    .await
+}
+
+/// Installe une mise à jour ou un DLC (identifiant de fichier du catalogue).
+#[tauri::command(rename = "installContent")]
+async fn install_content(app: tauri::AppHandle, game: String, content: u64) -> Result<(), String> {
+    blocking(move || {
+        let busy = JeuOccupe::prendre(&EN_COURS, &game)?;
+        let cfg = load_config()?;
+        let g = find_game(&Client::new(&cfg.serveur), &game)?;
+        run_install(&app, &cfg, &g, &install_plan(&g, Some(content))?, busy.cancel.clone())
+    })
+    .await
+}
+
+/// Annule l'installation en cours d'un jeu (sans effet s'il n'y en a pas). Le téléchargement d'un
+/// fichier garde son `.part` pour reprendre ; l'extraction d'un dossier est supprimée.
+#[tauri::command(rename = "cancelInstall")]
+fn cancel_install(game: String) {
+    annuler(&EN_COURS, &game);
+}
+
+/// Désinstalle un jeu : supprime de l'appareil ses fichiers de ROM (base, mises à jour, DLC).
+/// Les sauvegardes ne sont jamais touchées.
+#[tauri::command(rename = "uninstallGame")]
+async fn uninstall_game(game: String) -> Result<(), String> {
+    blocking(move || {
+        let _busy = JeuOccupe::prendre(&EN_COURS, &game)?;
+        let cfg = load_config()?;
+        let roms = roms_dir(&cfg)?;
+        let g = find_game(&Client::new(&cfg.serveur), &game)?;
+        install::uninstall(&roms, &g.files).map(|_| ()).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     rumble::init();
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent])
+        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install])
         .run(tauri::generate_context!())
         .expect("échec du démarrage de l'interface");
 }
@@ -783,5 +939,62 @@ mod tests {
         let ids: Vec<_> = select_recent(&lib, &saves, 5).into_iter().map(|g| g.id).collect();
         assert_eq!(ids, ["g7", "g6", "g5", "g4", "g3"]);
         assert!(select_recent(&lib, &[], 5).is_empty());
+    }
+
+    fn plan_game() -> CatalogGame {
+        catalog_game(
+            "switch-lm3",
+            "switch",
+            vec![
+                file(5, FileRole::Dlc, "switch/MAJ-DLC/d.nsp", 3),
+                file(2, FileRole::Maj, "switch/MAJ-DLC/m.nsp", 2),
+                file(1, FileRole::Base, "switch/lm3.nsp", 10),
+            ],
+        )
+    }
+
+    #[test]
+    fn plan_d_installation() {
+        let g = plan_game();
+        // Jeu complet : base puis mises à jour, sans DLC.
+        let ids: Vec<_> = install_plan(&g, None).unwrap().iter().map(|f| f.id).collect();
+        assert_eq!(ids, [1, 2]);
+        // Un contenu précis : DLC ou mise à jour seulement.
+        assert_eq!(install_plan(&g, Some(5)).unwrap()[0].id, 5);
+        assert!(install_plan(&g, Some(1)).unwrap_err().contains("le jeu lui-même"));
+        assert!(install_plan(&g, Some(99)).unwrap_err().contains("introuvable"));
+        // Sans fichier de base sur le serveur : rien à installer.
+        let sans_base = catalog_game("x", "switch", vec![file(2, FileRole::Maj, "switch/MAJ-DLC/m.nsp", 2)]);
+        assert!(install_plan(&sans_base, None).is_err());
+    }
+
+    #[test]
+    fn une_seule_operation_par_jeu() {
+        let set: Occupes = Mutex::new(BTreeMap::new());
+        let a = JeuOccupe::prendre(&set, "switch-lm3").unwrap();
+        assert!(JeuOccupe::prendre(&set, "switch-lm3").unwrap_err().contains("déjà en cours"));
+        // Un autre jeu n'est pas bloqué.
+        let _b = JeuOccupe::prendre(&set, "ds-x").unwrap();
+        // Annulation : lève le drapeau du jeu concerné seulement.
+        assert!(annuler(&set, "switch-lm3"));
+        assert!(a.cancel.load(Ordering::SeqCst) && !_b.cancel.load(Ordering::SeqCst));
+        assert!(!annuler(&set, "inconnu"));
+        drop(a);
+        assert!(JeuOccupe::prendre(&set, "switch-lm3").is_ok());
+    }
+
+    #[test]
+    fn evenement_de_progression() {
+        let p = Progression { game: "g".into(), file: 3, done: 10, total: 40 };
+        assert_eq!(serde_json::to_value(&p).unwrap(), serde_json::json!({ "game": "g", "file": 3, "done": 10, "total": 40 }));
+        assert_eq!(EVENT_PROGRESSION, "ludo://progression");
+    }
+
+    #[test]
+    fn dossier_des_roms_obligatoire() {
+        let cfg: Config = serde_json::from_value(serde_json::json!({ "serveur": "x", "appareil": "pc" })).unwrap();
+        assert!(roms_dir(&cfg).unwrap_err().contains("roms"));
+        let cfg: Config = serde_json::from_value(serde_json::json!({ "serveur": "x", "appareil": "pc", "roms": "/r" })).unwrap();
+        assert_eq!(roms_dir(&cfg).unwrap(), std::path::PathBuf::from("/r"));
     }
 }

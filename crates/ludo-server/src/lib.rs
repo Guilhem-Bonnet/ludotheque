@@ -12,7 +12,10 @@
 //! - `PUT    /profiles/{id}`                          création ou mise à jour d'un profil (JSON)
 //! - `GET    /saves/{profile}`                        têtes de sauvegarde du profil, une par jeu
 //! - `GET    /games`                                  catalogue des jeux et de leurs fichiers
-//! - `GET    /games/{id}/files/{file_id}`              téléchargement (HTTP Range pour reprendre)
+//! - `GET    /games/{id}/files/{file_id}`              téléchargement (HTTP Range pour reprendre) ;
+//!   un dossier (Wii U, Switch 2 extrait) est servi en tar non compressé généré à la volée
+//!   (`Content-Type: application/x-tar`, `X-Ludo-Archive: tar`, `X-Ludo-Total-Bytes` = somme des
+//!   fichiers) : pas de `Range` (réponse 200 complète, l'en-tête est ignoré), pas de `Content-Length`
 //! - `POST   /catalog/rescan`                         nouveau balayage du dossier des ROM
 //!
 //! Pas d'authentification : usage LAN seulement (conception 4.9).
@@ -46,7 +49,6 @@ impl IntoResponse for StoreError {
             | StoreError::InvalidProfile(_) => StatusCode::BAD_REQUEST,
             StoreError::NotFound => StatusCode::NOT_FOUND,
             StoreError::Forbidden(_) => StatusCode::FORBIDDEN,
-            StoreError::IsDirectory => StatusCode::UNPROCESSABLE_ENTITY,
             StoreError::NoRoms | StoreError::RomsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -250,6 +252,10 @@ async fn get_game_file(
 ) -> Result<Response, StoreError> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let (path, _) = blocking(move || s.file_location(&game, file_id)).await?;
+    // Un dossier est servi en tar à la volée (le `Range` est ignoré : réponse 200 complète).
+    if tokio::fs::symlink_metadata(&path).await.is_ok_and(|m| m.is_dir()) {
+        return tar_response(path).await;
+    }
     let mut file = tokio::fs::File::open(&path).await.map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => StoreError::NotFound,
         _ => StoreError::Io(e),
@@ -289,4 +295,120 @@ async fn get_game_file(
             Body::empty(),
         ),
     }
+}
+
+/// Écrivain bloquant qui découpe le tar en blocs envoyés au flux de la réponse. Si le client se
+/// déconnecte (récepteur fermé), l'écriture échoue et la tâche de génération s'arrête.
+struct ChannelWriter {
+    tx: tokio::sync::mpsc::Sender<std::io::Result<Bytes>>,
+    buf: Vec<u8>,
+}
+
+impl ChannelWriter {
+    fn send_buf(&mut self) -> std::io::Result<()> {
+        if self.buf.is_empty() {
+            return Ok(());
+        }
+        let chunk = Bytes::from(std::mem::replace(&mut self.buf, Vec::with_capacity(STREAM_CHUNK)));
+        self.tx.blocking_send(Ok(chunk)).map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+}
+
+impl std::io::Write for ChannelWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.buf.extend_from_slice(data);
+        if self.buf.len() >= STREAM_CHUNK {
+            self.send_buf()?;
+        }
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.send_buf()
+    }
+}
+
+/// Flux d'octets alimenté par un canal (la génération du tar tourne sur un fil bloquant).
+struct ChannelStream(tokio::sync::mpsc::Receiver<std::io::Result<Bytes>>);
+
+impl futures_core::Stream for ChannelStream {
+    type Item = std::io::Result<Bytes>;
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        self.0.poll_recv(cx)
+    }
+}
+
+/// Entrée d'un dossier à archiver : chemin relatif (séparateur `/`) et nature.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TarEntry {
+    /// Chemin relatif au dossier du jeu (peut ne pas être de l'UTF-8 : le scanner compte ces entrées aussi).
+    pub name: std::path::PathBuf,
+    pub is_dir: bool,
+}
+
+/// Liste, dans un ordre stable, les dossiers et fichiers réguliers sous `root` (chemins relatifs à
+/// `root`). Les liens symboliques et tout ce qui n'est ni fichier ni dossier sont ignorés : le
+/// tar ne peut ni sortir de la racine ni suivre un lien. Renvoie aussi la somme des tailles.
+pub fn list_tar_entries(root: &std::path::Path) -> std::io::Result<(Vec<TarEntry>, u64)> {
+    fn walk(dir: &std::path::Path, prefix: &std::path::Path, out: &mut Vec<TarEntry>, total: &mut u64) -> std::io::Result<()> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let ft = e.file_type()?;
+            let rel = prefix.join(e.file_name());
+            if ft.is_dir() {
+                out.push(TarEntry { name: rel.clone(), is_dir: true });
+                walk(&e.path(), &rel, out, total)?;
+            } else if ft.is_file() {
+                *total += e.metadata()?.len();
+                out.push(TarEntry { name: rel, is_dir: false });
+            }
+        }
+        Ok(())
+    }
+    let (mut out, mut total) = (Vec::new(), 0);
+    walk(root, std::path::Path::new(""), &mut out, &mut total)?;
+    Ok((out, total))
+}
+
+fn write_tar(root: &std::path::Path, entries: &[TarEntry], w: ChannelWriter) -> std::io::Result<()> {
+    let mut b = tar::Builder::new(w);
+    b.mode(tar::HeaderMode::Deterministic);
+    for e in entries {
+        let full = root.join(&e.name);
+        if e.is_dir {
+            b.append_dir(&e.name, &full)?;
+        } else {
+            // Fichier remplacé par autre chose depuis le listage : on s'arrête (tar incohérent).
+            let mut f = std::fs::File::open(&full)?;
+            if !f.metadata()?.is_file() {
+                return Err(std::io::Error::other("entrée modifiée pendant l'archivage"));
+            }
+            b.append_file(&e.name, &mut f)?;
+        }
+    }
+    let mut w = b.into_inner()?;
+    std::io::Write::flush(&mut w)
+}
+
+/// Réponse tar d'un dossier de jeu : générée à la volée, sans copie temporaire.
+async fn tar_response(root: std::path::PathBuf) -> Result<Response, StoreError> {
+    let dir = root.clone();
+    let (entries, total) = blocking(move || list_tar_entries(&dir).map_err(StoreError::Io)).await?;
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    let err_tx = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let w = ChannelWriter { tx, buf: Vec::with_capacity(STREAM_CHUNK) };
+        if let Err(e) = write_tar(&root, &entries, w) {
+            tracing::warn!(erreur = %e, "archivage interrompu");
+            // Erreur transmise au flux : la réponse se termine en échec (le client voit un tar tronqué).
+            let _ = err_tx.blocking_send(Err(e));
+        }
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-tar")
+        .header("x-ludo-archive", "tar")
+        .header("x-ludo-total-bytes", total)
+        .body(Body::from_stream(ChannelStream(rx)))
+        .map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())))
 }
