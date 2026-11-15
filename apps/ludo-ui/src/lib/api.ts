@@ -1,7 +1,24 @@
 // Accès aux données. Dans l'app Tauri, chaque appel passe par une commande Rust (`ludo-client`).
 // Dans un navigateur (développement, démonstration), une source de démonstration répond à la place.
 
-import type { Conflict, DeviceInfo, Game, Preparation, Profile, SaveRevision, UpdateItem } from './types';
+import type { Conflict, ConflictSide, DeviceInfo, Game, Preparation, Profile, SaveRevision, UpdateItem } from './types';
+
+/** Étapes d'un lancement réel, dans l'ordre (événement `ludo://passage`). */
+export type LaunchStep = 'profil' | 'telechargement' | 'sauvegarde' | 'lancement' | 'en_jeu' | 'envoi' | 'termine';
+
+export interface LaunchEvent {
+  step: LaunchStep;
+  state: 'en_cours' | 'fait';
+  detail?: string;
+}
+
+/** Fin d'un lancement : partie jouée et sauvegarde envoyée, ou conflit à trancher (rien n'a été lancé sauf si `played`). */
+export type LaunchResult =
+  | { result: 'termine'; playtime: string; detail?: string; emulatorError?: boolean }
+  | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean; rev: number };
+
+/** Suite d'un choix de conflit : appliqué, ou conflit à retrancher (le serveur a changé depuis l'affichage). */
+export type ResolveResult = { result: 'fait' } | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean; rev: number };
 
 export interface LudoApi {
   device(): Promise<DeviceInfo>;
@@ -26,6 +43,17 @@ export interface LudoApi {
   uninstallGame(game: string): Promise<void>;
   /** Enregistre le profil (image, nom, préférences) sur le serveur. */
   saveProfile(profile: Profile): Promise<Profile>;
+  /**
+   * Lance le jeu pour de vrai : verrou de partie, installation si besoin, sauvegarde, émulateur, envoi à la fermeture.
+   * `onstep` suit les étapes, `onprogress` (0 à 1) le téléchargement. Erreur : message en français.
+   */
+  launchGame(profile: string, game: string, onstep?: (e: LaunchEvent) => void, onprogress?: OnProgress): Promise<LaunchResult>;
+  /** Tranche un conflit : « local » garde la sauvegarde de cet appareil, « serveur » prend celle du serveur ; l'autre reste dans l'historique. */
+  resolveConflict(profile: string, game: string, choice: 'local' | 'serveur', rev: number): Promise<ResolveResult>;
+  /** Renvoie la sauvegarde d'une partie déjà jouée dont l'envoi a échoué, sans relancer le jeu. */
+  retrySend(profile: string, game: string): Promise<LaunchResult>;
+  /** Appelé quand la fermeture de la fenêtre est refusée parce qu'une partie est en cours ; renvoie la fonction d'arrêt de l'écoute. */
+  onCloseRefused(cb: () => void): Promise<() => void>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
   prepare(profile: string, game: string): Promise<{ conflict: Conflict } | { preparation: Preparation }>;
 }
@@ -73,6 +101,29 @@ async function withProgress<T>(game: string, onprogress: OnProgress | undefined,
       });
     } catch {
       // Pas d'écoute possible : l'installation se fait quand même, sans progression.
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    unlisten?.();
+  }
+}
+
+const EVENT_PASSAGE = 'ludo://passage';
+
+/** Exécute `run` en relayant les étapes du lancement du jeu `game` à `onstep`. */
+async function withSteps<T>(game: string, onstep: ((e: LaunchEvent) => void) | undefined, run: () => Promise<T>): Promise<T> {
+  let unlisten: (() => void) | undefined;
+  if (onstep) {
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      unlisten = await listen<{ game: string; step: LaunchStep; state: 'en_cours' | 'fait'; detail?: string }>(EVENT_PASSAGE, (ev) => {
+        const { game: g, step, state, detail } = ev.payload;
+        if (g === game) onstep({ step, state, detail });
+      });
+    } catch {
+      // Pas d'écoute possible : le lancement se fait quand même, sans étapes.
     }
   }
   try {
@@ -183,6 +234,34 @@ const demoApi: LudoApi = {
     // Démo : les envois en attente partent ; un conflit reste à trancher (il demande un choix).
     for (const g of GAMES) if (g.sync === 'envoi_en_attente' || g.sync === 'synchronisation') g.sync = 'a_jour';
     return GAMES.map((g) => ({ ...g }));
+  },
+  async launchGame(_profile, _game, onstep, onprogress) {
+    const step = async (s: LaunchStep, ms: number, detail?: string) => {
+      onstep?.({ step: s, state: 'en_cours' });
+      await wait(ms);
+      onstep?.({ step: s, state: 'fait', detail });
+    };
+    await step('profil', 200);
+    onstep?.({ step: 'telechargement', state: 'en_cours' });
+    for (let i = 1; i <= 10; i++) { await wait(60); onprogress?.(i / 10); }
+    onstep?.({ step: 'telechargement', state: 'fait' });
+    await step('sauvegarde', 500);
+    await step('lancement', 600);
+    await step('en_jeu', 1500);
+    await step('envoi', 600);
+    onstep?.({ step: 'termine', state: 'fait' });
+    return { result: 'termine', playtime: '12 h 41' };
+  },
+  async resolveConflict() {
+    await wait(150);
+    return { result: 'fait' };
+  },
+  async retrySend() {
+    await wait(400);
+    return { result: 'termine', playtime: '12 h 41' };
+  },
+  async onCloseRefused() {
+    return () => {};
   },
   async prepare(profile, gameId) {
     await wait(150);
@@ -307,6 +386,39 @@ const tauriApi: LudoApi = {
     } catch (e) {
       if (!commandMissing(e)) throw new Error(String(e));
       await demoApi.restore(profile, game, rev, onstep);
+    }
+  },
+  launchGame: async (profile, game, onstep, onprogress) => {
+    try {
+      return await withSteps(game, onstep, () => withProgress(game, onprogress, () => invoke<LaunchResult>('launchGame', { profile, game })));
+    } catch (e) {
+      // Commande absente seulement : démonstration. Toute autre erreur est celle du lancement réel.
+      if (!commandMissing(e)) throw new Error(String(e));
+      return demoApi.launchGame(profile, game, onstep, onprogress);
+    }
+  },
+  resolveConflict: async (profile, game, choice, rev) => {
+    try {
+      return await invoke<ResolveResult>('resolveConflict', { profile, game, choice, rev });
+    } catch (e) {
+      if (!commandMissing(e)) throw new Error(String(e));
+      return demoApi.resolveConflict(profile, game, choice, rev);
+    }
+  },
+  retrySend: async (profile, game) => {
+    try {
+      return await invoke<LaunchResult>('retrySend', { profile, game });
+    } catch (e) {
+      if (!commandMissing(e)) throw new Error(String(e));
+      return demoApi.retrySend(profile, game);
+    }
+  },
+  onCloseRefused: async (cb) => {
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      return await listen('ludo://fermeture-refusee', () => cb());
+    } catch {
+      return () => {};
     }
   },
   prepare: viaTauri('prepare', (profile, game) => ({ profile, game })),

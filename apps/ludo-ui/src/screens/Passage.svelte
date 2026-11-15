@@ -9,6 +9,7 @@
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
+  import type { LaunchEvent, LaunchResult, LaunchStep } from '../lib/api';
   import type { Preparation } from '../lib/types';
 
   // Écran de passage : n'apparaît que s'il y a quelque chose à faire (téléchargement, synchro).
@@ -72,61 +73,147 @@
   let downloading = $state(false);
   let failed = $state(false);
   let cancelling = $state(false);
-  let dlIndex = -1;
-  let dlLabel = '';
+  /** Lancement réel en cours (téléchargement, sauvegarde, partie, envoi) : B ne quitte pas l'écran. */
+  let busy = $state(false);
+  /** Partie jouée dont l'envoi a échoué : « Réessayer l'envoi » ne relance pas le jeu. */
+  let sendOnly = $state(false);
+  /** Partie terminée par une erreur de l'émulateur : il ne reste que « Retour ». */
+  let ended = $state(false);
+  /** Fermeture de la fenêtre refusée pendant la partie. */
+  let closeNote = $state(false);
+  let phase = $state<'prep' | 'launching' | 'playing' | 'sending'>('prep');
+  /** Étapes d'origine, pour « Réessayer ». */
+  // svelte-ignore state_referenced_locally
+  const initial = preparation.steps.map((x) => ({ ...x }));
+  const dlLabel = preparation.steps.find((x) => x.progress !== undefined)?.label ?? 'Téléchargement…';
 
-  /**
-   * Hors démonstration : le téléchargement est réel (progression envoyée par l'app). Renvoie `true`
-   * si tout est en place (ou s'il n'y avait rien à télécharger) ; en cas d'échec l'étape reste
-   * visible avec le message d'erreur et « Réessayer » est proposé ; annulé : retour à l'écran précédent.
-   */
-  async function download(): Promise<boolean> {
-    if (dlIndex < 0) {
-      dlIndex = steps.findIndex((x) => x.progress !== undefined && x.state !== 'fait');
-      if (dlIndex >= 0) dlLabel = steps[dlIndex].label;
+  /** Ordre des étapes de `LaunchStep` → position dans la liste. */
+  const index: Record<LaunchStep, number> = { profil: 0, telechargement: 1, sauvegarde: 2, lancement: 3, en_jeu: 4, envoi: 5, termine: 5 };
+  /** Libellé d'une étape en échec. */
+  const failLabel = ['Profil indisponible', 'Téléchargement impossible', 'Sauvegarde impossible à synchroniser', 'Lancement impossible', 'Partie interrompue', 'Envoi de la sauvegarde impossible'];
+
+  /** Applique une étape annoncée par l'app (lancement réel). */
+  function onStep(e: LaunchEvent) {
+    const s = steps[index[e.step]];
+    if (!s) return;
+    const done = e.state === 'fait';
+    s.state = done ? 'fait' : 'en_cours';
+    switch (e.step) {
+      case 'profil':
+        break;
+      case 'telechargement': {
+        const real = s.progress !== undefined;
+        downloading = !done && real;
+        if (done) {
+          if (real) { s.progress = 100; s.label = 'Téléchargement terminé'; s.detail = preparation.game.size ?? undefined; feedback('downloaded'); }
+          else s.label = 'Jeu installé';
+        } else if (real) { s.label = dlLabel; }
+        break;
+      }
+      case 'sauvegarde':
+        s.label = done ? 'Sauvegarde : à jour' : 'Sauvegarde : synchronisation';
+        if (done) s.detail = e.detail;
+        break;
+      case 'lancement':
+        s.label = done ? 'Émulateur lancé' : 'Lancement…';
+        if (!done) { phase = 'launching'; launching = true; feedback('launch'); }
+        break;
+      case 'en_jeu':
+        s.label = done ? 'Partie terminée' : 'En jeu';
+        s.detail = done ? undefined : 'Partie en cours. La sauvegarde partira à la fermeture de l\u2019émulateur.';
+        if (!done) phase = 'playing';
+        break;
+      case 'envoi':
+        s.label = done ? 'Sauvegarde envoyée' : 'Envoi de la sauvegarde…';
+        s.detail = done ? e.detail : undefined;
+        if (!done) { phase = 'sending'; launching = false; }
+        break;
+      case 'termine':
+        break;
     }
-    if (dlIndex < 0) return true;
-    const s = steps[dlIndex];
-    s.label = dlLabel;
-    s.state = 'en_cours';
-    s.progress = 0;
-    s.detail = undefined;
+  }
+
+  /** Une erreur du lancement s'écrit sur l'étape en cours, avec « Réessayer » et « Retour ». */
+  function onFailure(msg: string) {
+    let i = steps.findLastIndex((x) => x.state === 'en_cours');
+    if (i < 0) i = steps.findIndex((x) => x.state !== 'fait');
+    i = Math.max(i, 0);
+    const s = steps[i];
+    s.label = /^En cours sur /.test(msg) ? 'Partie en cours sur un autre appareil' : failLabel[i] ?? 'Échec';
+    s.detail = msg;
+    s.progress = s.progress !== undefined ? 0 : undefined;
+    s.state = 'a_venir';
+    failed = true;
+    // La partie est jouée : seul l'envoi se réessaie, jamais le lancement du jeu.
+    sendOnly = i === 5;
+    launching = false;
+    downloading = false;
+    phase = 'prep';
+    feedback('err');
+    requestAnimationFrame(() => focusFirst());
+  }
+
+  /** Fin d'un lancement ou d'un renvoi : conflit à trancher, ou sauvegarde envoyée (retour à l'accueil). */
+  async function finish(r: LaunchResult) {
+    if (r.result === 'conflit') {
+      router.replace({ name: 'conflit', conflict: { game: preparation.game, profile: preparation.profile, local: r.local, server: r.server, played: r.played, rev: r.rev } });
+      return;
+    }
+    for (const st of steps) st.state = 'fait';
+    phase = 'sending';
+    launching = false;
+    if (r.emulatorError) {
+      // Sortie en erreur : la sauvegarde est synchronisée, mais ce n'est pas un succès à fêter.
+      steps[4].label = 'Partie terminée';
+      steps[5].label = 'L\u2019émulateur s\u2019est arrêté avec une erreur · sauvegarde synchronisée';
+      steps[5].detail = r.detail;
+      steps[5].state = 'a_venir';
+      ended = true;
+      feedback('err');
+      requestAnimationFrame(() => focusFirst());
+      return;
+    }
+    steps[5].label = 'Sauvegarde envoyée';
+    steps[5].detail = r.detail;
+    feedback('saved');
+    await wait(1200);
+    router.reset({ name: 'accueil' });
+  }
+
+  /** Lancement réel, ou seulement le renvoi de la sauvegarde (`sendOnly`, partie déjà jouée). */
+  async function runReal() {
     failed = false;
     cancelling = false;
-    downloading = true;
+    busy = true;
     try {
-      await api.installGame(preparation.game.id, (p, prep) => {
-        // Le serveur convertit d'abord le fichier (NSZ → NSP) : l'étape le dit, la barre suit le convertisseur.
-        s.label = prep ? prepLabel(prep) : dlLabel;
-        s.progress = prep ? (prep.percent ?? 0) : Math.round(p * 100);
-      });
-      s.progress = 100;
-      s.label = 'Téléchargement terminé';
-      s.detail = preparation.game.size ?? undefined;
-      s.state = 'fait';
-      feedback('downloaded');
-      return true;
+      if (sendOnly) {
+        steps[5].label = 'Envoi de la sauvegarde…';
+        steps[5].detail = undefined;
+        steps[5].state = 'en_cours';
+        phase = 'sending';
+        await finish(await api.retrySend(preparation.profile, preparation.game.id));
+      } else {
+        steps = initial.map((x) => ({ ...x }));
+        await finish(
+          await api.launchGame(preparation.profile, preparation.game.id, onStep, (p, prep) => {
+            const s = steps[1];
+            if (s.progress === undefined) return;
+            // Le serveur convertit d'abord le fichier (NSZ → NSP) : l'étape le dit, la barre suit le convertisseur.
+            s.label = prep ? prepLabel(prep) : dlLabel;
+            s.progress = prep ? (prep.percent ?? 0) : Math.round(p * 100);
+          }),
+        );
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (cancelling || msg === CANCELLED) {
         router.back();
-        return false;
+        return;
       }
-      s.label = 'Téléchargement impossible';
-      s.detail = msg;
-      s.progress = 0;
-      s.state = 'a_venir';
-      failed = true;
-      feedback('err');
-      requestAnimationFrame(() => focusFirst());
-      return false;
+      onFailure(msg);
     } finally {
-      downloading = false;
+      busy = false;
     }
-  }
-
-  async function runReal() {
-    if (await download()) await runSteps();
   }
 
   function cancel() {
@@ -164,17 +251,21 @@
     else void runReal();
     // B pendant le téléchargement : annuler (l'écran se déclare « modal » le temps du transfert).
     window.addEventListener('ludo:modal-back', cancel);
-    return () => window.removeEventListener('ludo:modal-back', cancel);
+    const unlisten = isDemo ? Promise.resolve(() => {}) : api.onCloseRefused(() => { closeNote = true; });
+    return () => {
+      window.removeEventListener('ludo:modal-back', cancel);
+      void unlisten.then((u) => u());
+    };
   });
 </script>
 
-<div class="screen" class:launching data-modal={downloading ? "" : undefined}>
+<div class="screen" class:launching data-modal={busy ? "" : undefined}>
   <Ambiance art={preparation.game.art} x={14} />
   <main>
     <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero shine={launching} lifting={launching} /></div>
     <div class="side" class:dim={launching}>
       <div class="head rise" style:--i={1}>
-        <h1>{launching ? 'Lancement' : 'Préparation'}</h1>
+        <h1>{phase === 'playing' ? 'En jeu' : phase === 'sending' ? 'Sauvegarde' : launching ? 'Lancement' : 'Préparation'}</h1>
         <span>{preparation.game.title} · {preparation.game.emulator}</span>
       </div>
       <ol>
@@ -203,8 +294,14 @@
       {#if downloading}
         <button class="act focusable" data-autofocus data-sound="none" disabled={cancelling} onclick={cancel}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
       {:else if failed}
-        <button class="act focusable" data-autofocus onclick={() => void runReal()}>Réessayer</button>
+        <span class="acts">
+          <button class="act focusable" data-autofocus onclick={() => void runReal()}>{sendOnly ? 'Réessayer l\u2019envoi' : 'Réessayer'}</button>
+          <button class="act focusable" onclick={() => router.back()}>Retour</button>
+        </span>
+      {:else if ended}
+        <button class="act focusable" data-autofocus onclick={() => router.reset({ name: 'accueil' })}>Retour</button>
       {/if}
+      {#if closeNote && busy}<p class="note" role="status">Partie en cours : fermer le jeu d\u2019abord</p>{/if}
     </div>
   </main>
   <ButtonHints note="Sauvegardes conservées sur le serveur" hints={[{ key: 'B', label: 'Annuler' }]} />
@@ -244,6 +341,9 @@
   .act { all: unset; cursor: pointer; align-self: flex-start; margin-left: 42px; padding: 12px 24px; border-radius: 12px; font-size: 16px; font-weight: 600; background: var(--control); color: var(--ink); }
   .act:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   .act:disabled { cursor: default; opacity: 0.8; }
+  .note { margin: 0 0 0 42px; font-size: 15px; color: var(--ink-3); }
+  .acts { display: flex; gap: 12px; margin-left: 42px; }
+  .acts .act { margin-left: 0; }
   .spin { animation: spin 900ms linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
