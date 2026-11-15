@@ -1,6 +1,6 @@
 //! Client HTTP synchrone du serveur de la ludothèque.
 
-use ludo_proto::{LeaseOutcome, LeaseRequest, Profile, PushOutcome, PushParams, SaveKey, SaveRevision};
+use ludo_proto::{CatalogGame, LeaseOutcome, LeaseRequest, Profile, PushOutcome, PushParams, RescanReport, SaveKey, SaveRevision, SaveSummary};
 use std::time::Duration;
 use ureq::Agent;
 
@@ -141,6 +141,33 @@ impl Client {
     /// (nom sans espaces autour). Un profil invalide est refusé (`Http { status: 400, .. }`).
     pub fn put_profile(&self, profile: &Profile) -> Result<Profile, ApiError> {
         let mut r = self.agent.put(self.url(&format!("profiles/{}", profile.id))).send_json(profile)?;
+        match r.status().as_u16() {
+            200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
+    /// Catalogue des jeux du serveur (titres, jaquettes, fichiers).
+    pub fn games(&self) -> Result<Vec<CatalogGame>, ApiError> {
+        let mut r = self.agent.get(self.url("games")).call()?;
+        match r.status().as_u16() {
+            200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
+    /// Têtes de sauvegarde d'un profil (une par jeu), en une seule requête.
+    pub fn save_summaries(&self, profile: &str) -> Result<Vec<SaveSummary>, ApiError> {
+        let mut r = self.agent.get(self.url(&format!("saves/{profile}"))).call()?;
+        match r.status().as_u16() {
+            200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
+    /// Demande au serveur de balayer à nouveau son dossier de ROM.
+    pub fn rescan(&self) -> Result<RescanReport, ApiError> {
+        let mut r = self.agent.post(self.url("catalog/rescan")).send_empty()?;
         match r.status().as_u16() {
             200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
             s => Err(Self::fail(s, &mut r)),

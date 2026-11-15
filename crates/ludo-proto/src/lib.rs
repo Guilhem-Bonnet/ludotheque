@@ -137,3 +137,100 @@ pub struct Profile {
     #[serde(default)]
     pub prefs: ProfilePrefs,
 }
+
+/// Consoles gérées : sous-dossiers du dossier des ROM du serveur, valeurs de `Console` dans l'interface.
+pub const CONSOLES: &[&str] = &["switch", "switch2", "3ds", "ds", "wiiu", "gc"];
+
+/// Motifs de jaquette illustrée connus de l'interface (`Motif` de `types.ts`).
+pub const MOTIFS: &[&str] = &["manoir", "course", "lune", "prairie", "cristal", "vagues", "montagnes", "eclair"];
+
+/// Jaquette illustrée : dégradé vif `from` → `to`, motif, couleur des silhouettes (`Art` de `types.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameArt {
+    pub motif: String,
+    pub from: String,
+    pub to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ink: Option<String>,
+}
+
+/// Rôle d'un fichier dans un jeu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileRole {
+    /// Le jeu lui-même.
+    Base,
+    /// Mise à jour (dossier `MAJ-DLC/`).
+    Maj,
+    /// Contenu additionnel (dossier `MAJ-DLC/`).
+    Dlc,
+}
+
+impl FileRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FileRole::Base => "base",
+            FileRole::Maj => "maj",
+            FileRole::Dlc => "dlc",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "base" => Some(FileRole::Base),
+            "maj" => Some(FileRole::Maj),
+            "dlc" => Some(FileRole::Dlc),
+            _ => None,
+        }
+    }
+}
+
+/// Un fichier (ou un dossier, pour Wii U et Switch 2 extrait) d'un jeu sur le serveur.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameFile {
+    /// Identifiant stable tant que le chemin ne change pas (sert dans l'URL de téléchargement).
+    pub id: u64,
+    pub role: FileRole,
+    /// Chemin relatif au dossier des ROM (`switch/Mario Kart 8 Deluxe.nsp`), séparateur `/`.
+    pub path: String,
+    /// Format : `nsp`, `xci`, `nsz`, `xcz`, `cxi`, `3ds`, `zcci`, `zcxi`, `nds`, `rvz`, `nup` ou `dir`.
+    pub format: String,
+    /// Taille en octets (somme récursive pour un dossier).
+    pub size: u64,
+    /// Dernière modification (secondes Unix).
+    pub mtime: u64,
+}
+
+/// Un jeu du catalogue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogGame {
+    pub id: GameId,
+    pub console: String,
+    pub title: String,
+    /// Titre court de la tuile (retours à la ligne `\n` autorisés).
+    pub short: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_id: Option<String>,
+    pub art: GameArt,
+    /// Décrit dans `catalogue.toml` (sinon titre et jaquette déduits du nom de fichier).
+    pub catalogued: bool,
+    pub files: Vec<GameFile>,
+}
+
+/// Résumé de la tête de sauvegarde d'un jeu pour un profil (`GET /saves/{profile}`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveSummary {
+    pub game: GameId,
+    pub rev: Revision,
+    pub playtime_s: u64,
+    pub device: DeviceId,
+    pub emulator: String,
+    pub created_at: u64,
+}
+
+/// Résultat d'un nouveau balayage du dossier des ROM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RescanReport {
+    pub games: usize,
+    pub files: usize,
+}

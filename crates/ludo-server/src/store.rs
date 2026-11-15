@@ -10,9 +10,10 @@
 //! - une version écartée lors d'un conflit est archivée dans l'historique sans devenir tête ;
 //! - un profil n'est enregistré que s'il est valide (nom, personnage, couleurs).
 
+use crate::catalog;
 use ludo_core::snapshot::{archive_hash, validate_archive, SnapshotError};
 use ludo_proto::{
-    Lease, LeaseOutcome, Profile, ProfilePrefs, PushOutcome, PushParams, SaveKey, SaveRevision, AVATAR_KINDS, LEASE_TTL_S,
+    CatalogGame, FileRole, GameArt, GameFile, Lease, LeaseOutcome, Profile, RescanReport, SaveSummary, ProfilePrefs, PushOutcome, PushParams, SaveKey, SaveRevision, AVATAR_KINDS, LEASE_TTL_S,
     PROFILE_NAME_MAX,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -37,6 +38,16 @@ pub enum StoreError {
     CorruptBlob(String),
     #[error("profil refusé : {0}")]
     InvalidProfile(String),
+    #[error("catalogue illisible : {0}")]
+    Catalog(String),
+    #[error("dossier des ROM non configuré (variable LUDO_ROMS)")]
+    NoRoms,
+    #[error("introuvable")]
+    NotFound,
+    #[error("chemin refusé : {0}")]
+    Forbidden(String),
+    #[error("dossier : non téléchargeable en un seul fichier")]
+    IsDirectory,
 }
 
 /// Horloge injectable (les tests avancent le temps sans dormir).
@@ -55,6 +66,8 @@ pub struct Store {
     db: Mutex<Connection>,
     blobs: PathBuf,
     clock: Box<dyn Clock>,
+    /// Racine des ROM (`LUDO_ROMS`) ; absente = catalogue vide.
+    roms: Option<PathBuf>,
 }
 
 /// Les identifiants servent dans les routes : jeu de caractères restreint.
@@ -112,6 +125,28 @@ CREATE TABLE IF NOT EXISTS profiles (
     vibrations  INTEGER NOT NULL DEFAULT 1,
     updated_at  INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS games (
+    id         TEXT    NOT NULL PRIMARY KEY,
+    console    TEXT    NOT NULL,
+    title      TEXT    NOT NULL,
+    short      TEXT    NOT NULL,
+    title_id   TEXT,
+    art_motif  TEXT    NOT NULL,
+    art_from   TEXT    NOT NULL,
+    art_to     TEXT    NOT NULL,
+    art_ink    TEXT,
+    catalogued INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS files (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    game   TEXT    NOT NULL,
+    role   TEXT    NOT NULL,
+    path   TEXT    NOT NULL UNIQUE,
+    format TEXT    NOT NULL,
+    size   INTEGER NOT NULL,
+    mtime  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS files_game ON files (game);
 ";
 
 const COLS: &str = "rev, parent, hash, size, device, emulator, playtime_s, created_at, discarded";
@@ -198,6 +233,38 @@ fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
 
 const PROFILE_COLS: &str = "id, name, avatar_kind, accent, accent_soft, accent_ink, sons, vibrations";
 
+fn row_to_file(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<GameFile> {
+    let role: String = r.get(at + 1)?;
+    Ok(GameFile {
+        id: r.get::<_, i64>(at)? as u64,
+        role: FileRole::parse(&role).unwrap_or(FileRole::Base),
+        path: r.get(at + 2)?,
+        format: r.get(at + 3)?,
+        size: r.get::<_, i64>(at + 4)? as u64,
+        mtime: r.get::<_, i64>(at + 5)? as u64,
+    })
+}
+
+/// Joint un chemin relatif à la racine en refusant toute évasion : chemin absolu, `..`, ou lien
+/// symbolique qui sortirait de la racine (le chemin canonique doit rester sous la racine canonique).
+pub fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, StoreError> {
+    use std::path::Component;
+    let relp = Path::new(rel);
+    if rel.is_empty() || !relp.components().all(|c| matches!(c, Component::Normal(_))) {
+        return Err(StoreError::Forbidden(rel.into()));
+    }
+    let root = root.canonicalize()?;
+    let full = root.join(relp).canonicalize().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => StoreError::NotFound,
+        _ => StoreError::Io(e),
+    })?;
+    if full.starts_with(&root) {
+        Ok(full)
+    } else {
+        Err(StoreError::Forbidden(rel.into()))
+    }
+}
+
 #[cfg(unix)]
 fn sync_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::File::open(dir)?.sync_all()
@@ -214,7 +281,13 @@ impl Store {
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         db.execute_batch(SCHEMA)?;
-        Ok(Self { db: Mutex::new(db), blobs: data_dir.join("blobs"), clock })
+        Ok(Self { db: Mutex::new(db), blobs: data_dir.join("blobs"), clock, roms: None })
+    }
+
+    /// Indique le dossier des ROM (catalogue, téléchargements). Le balayage se lance avec [`Store::rescan`].
+    pub fn with_roms(mut self, root: PathBuf) -> Self {
+        self.roms = Some(root);
+        self
     }
 
     fn blob_path(&self, hash: &str) -> PathBuf {
@@ -419,5 +492,123 @@ impl Store {
             ],
         )?;
         Ok(p)
+    }
+
+    /// Têtes de sauvegarde d'un profil (une par jeu, versions écartées exclues), plus récentes d'abord.
+    pub fn save_summaries(&self, profile: &str) -> Result<Vec<SaveSummary>, StoreError> {
+        check(profile)?;
+        let db = self.db.lock().expect("verrou base");
+        let mut st = db.prepare(
+            "SELECT s.game, s.rev, s.playtime_s, s.device, s.emulator, s.created_at FROM save_revisions s
+             WHERE s.profile=?1 AND s.discarded=0
+               AND s.rev = (SELECT MAX(rev) FROM save_revisions t WHERE t.profile=s.profile AND t.game=s.game AND t.discarded=0)
+             ORDER BY s.created_at DESC, s.game",
+        )?;
+        let rows = st.query_map(params![profile], |r| {
+            Ok(SaveSummary {
+                game: r.get(0)?,
+                rev: r.get::<_, i64>(1)? as u64,
+                playtime_s: r.get::<_, i64>(2)? as u64,
+                device: r.get(3)?,
+                emulator: r.get(4)?,
+                created_at: r.get::<_, i64>(5)? as u64,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Balaie le dossier des ROM et remplace le catalogue en base. Les identifiants de fichiers
+    /// restent stables tant que le chemin ne change pas.
+    pub fn rescan(&self) -> Result<RescanReport, StoreError> {
+        let root = self.roms.as_ref().ok_or(StoreError::NoRoms)?;
+        let scanned = catalog::scan(root)?;
+        let mut db = self.db.lock().expect("verrou base");
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let ids: Vec<&str> = scanned.iter().map(|g| g.id.as_str()).collect();
+        let paths: std::collections::HashSet<&str> = scanned.iter().flat_map(|g| g.files.iter().map(|f| f.path.as_str())).collect();
+        let old_games: Vec<String> = tx.prepare("SELECT id FROM games")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        for id in old_games.iter().filter(|id| !ids.contains(&id.as_str())) {
+            tx.execute("DELETE FROM games WHERE id=?1", params![id])?;
+        }
+        let old_files: Vec<String> = tx.prepare("SELECT path FROM files")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        for p in old_files.iter().filter(|p| !paths.contains(p.as_str())) {
+            tx.execute("DELETE FROM files WHERE path=?1", params![p])?;
+        }
+        let mut files = 0;
+        for g in &scanned {
+            tx.execute(
+                "INSERT INTO games (id, console, title, short, title_id, art_motif, art_from, art_to, art_ink, catalogued)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+                 ON CONFLICT(id) DO UPDATE SET console=excluded.console, title=excluded.title, short=excluded.short,
+                   title_id=excluded.title_id, art_motif=excluded.art_motif, art_from=excluded.art_from,
+                   art_to=excluded.art_to, art_ink=excluded.art_ink, catalogued=excluded.catalogued",
+                params![g.id, g.console, g.title, g.short, g.title_id, g.art.motif, g.art.from, g.art.to, g.art.ink, g.catalogued as i64],
+            )?;
+            for f in &g.files {
+                tx.execute(
+                    "INSERT INTO files (game, role, path, format, size, mtime) VALUES (?1,?2,?3,?4,?5,?6)
+                     ON CONFLICT(path) DO UPDATE SET game=excluded.game, role=excluded.role, format=excluded.format,
+                       size=excluded.size, mtime=excluded.mtime",
+                    params![g.id, f.role.as_str(), f.path, f.format, f.size as i64, f.mtime as i64],
+                )?;
+                files += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(RescanReport { games: scanned.len(), files })
+    }
+
+    /// Catalogue des jeux, triés par titre, avec leurs fichiers.
+    pub fn games(&self) -> Result<Vec<CatalogGame>, StoreError> {
+        let db = self.db.lock().expect("verrou base");
+        let mut by_game: std::collections::HashMap<String, Vec<GameFile>> = std::collections::HashMap::new();
+        let mut st = db.prepare("SELECT game, id, role, path, format, size, mtime FROM files ORDER BY role, path")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, row_to_file(r, 1)?)))?;
+        for row in rows {
+            let (game, file) = row?;
+            by_game.entry(game).or_default().push(file);
+        }
+        let mut st = db.prepare(
+            "SELECT id, console, title, short, title_id, art_motif, art_from, art_to, art_ink, catalogued
+             FROM games ORDER BY title COLLATE NOCASE, id",
+        )?;
+        let rows = st.query_map([], |r| {
+            Ok(CatalogGame {
+                id: r.get(0)?,
+                console: r.get(1)?,
+                title: r.get(2)?,
+                short: r.get(3)?,
+                title_id: r.get(4)?,
+                art: GameArt { motif: r.get(5)?, from: r.get(6)?, to: r.get(7)?, ink: r.get(8)? },
+                catalogued: r.get::<_, i64>(9)? != 0,
+                files: Vec::new(),
+            })
+        })?;
+        let mut games: Vec<CatalogGame> = rows.collect::<Result<_, _>>()?;
+        for g in &mut games {
+            g.files = by_game.remove(&g.id).unwrap_or_default();
+        }
+        Ok(games)
+    }
+
+    /// Emplacement sur le disque d'un fichier du catalogue, vérifié : le chemin résolu doit rester
+    /// sous la racine des ROM (liens symboliques et `..` compris). Renvoie aussi la fiche du fichier.
+    pub fn file_location(&self, game: &str, file_id: u64) -> Result<(PathBuf, GameFile), StoreError> {
+        check(game)?;
+        let root = self.roms.as_ref().ok_or(StoreError::NoRoms)?;
+        let file = {
+            let db = self.db.lock().expect("verrou base");
+            db.query_row(
+                "SELECT id, role, path, format, size, mtime FROM files WHERE game=?1 AND id=?2",
+                params![game, file_id as i64],
+                |r| row_to_file(r, 0),
+            )
+            .optional()?
+        }
+        .ok_or(StoreError::NotFound)?;
+        if file.format == "dir" {
+            return Err(StoreError::IsDirectory);
+        }
+        Ok((safe_join(root, &file.path)?, file))
     }
 }

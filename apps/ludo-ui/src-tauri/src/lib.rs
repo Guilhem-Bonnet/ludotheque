@@ -1,9 +1,9 @@
 //! Coque Tauri de l'interface Ludothèque : expose au front les commandes du client `ludo`.
 //!
 //! Commandes branchées : `device`, `rumble` (vibrations natives), `profiles`, `saveProfile`,
-//! `history`, `restore`, `sync`. Les autres (`recent`, `library`, `updates`, `prepare`) arriveront
-//! avec le catalogue du serveur (lot P1c) ; d'ici là, le front utilise sa source de démonstration
-//! pour chaque commande absente ou en échec.
+//! `history`, `restore`, `sync`, `library`, `recent` (catalogue du serveur). Les autres (`updates`,
+//! `prepare`) arriveront avec la suite du lot P1c ; d'ici là, le front utilise sa source de
+//! démonstration pour chaque commande absente ou en échec.
 
 pub mod rumble;
 
@@ -11,9 +11,10 @@ use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use ludo_client::api::Client;
 use ludo_client::config::{self, Config};
 use ludo_client::engine::{Engine, SyncOutcome};
-use ludo_client::journal::Journal;
-use ludo_proto::{LeaseOutcome, Profile, SaveKey};
+use ludo_client::journal::{Entry, Journal};
+use ludo_proto::{CatalogGame, FileRole, GameArt, GameFile, LeaseOutcome, Profile, SaveKey, SaveSummary};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 #[derive(Debug, Serialize)]
@@ -295,25 +296,216 @@ fn sync_profile(cfg: &Config, profile: &str) -> Result<Vec<GameSync>, String> {
     Ok(out)
 }
 
-/// Synchronisation manuelle de tous les jeux configurés pour ce profil.
+/// Dernière session jouée (`LastSession` de `types.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiLast {
+    device: String,
+    device_kind: &'static str,
+    when: String,
+}
+
+/// Jeu tel que l'interface l'affiche (`Game` de `types.ts`, champs en camelCase).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiGame {
+    id: String,
+    title: String,
+    short: String,
+    console: String,
+    tile: String,
+    tile_ink: String,
+    art: GameArt,
+    emulator: String,
+    install: &'static str,
+    sync: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    playtime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last: Option<UiLast>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<String>,
+}
+
+/// Taille lisible, virgule décimale et unités françaises : « 6,8 Go », « 65,8 Mo ».
+pub fn size_label(bytes: u64) -> String {
+    for (unit, name) in [(1_000_000_000u64, "Go"), (1_000_000, "Mo")] {
+        if bytes >= unit {
+            let tenths = (u128::from(bytes) * 10 + u128::from(unit) / 2) / u128::from(unit);
+            return format!("{},{} {name}", tenths / 10, tenths % 10);
+        }
+    }
+    if bytes >= 1_000 {
+        format!("{} Ko", (bytes + 500) / 1_000)
+    } else {
+        format!("{bytes} o")
+    }
+}
+
+/// Émulateur affiché : celui du jeu dans la configuration de l'appareil, sinon l'usage par console.
+pub fn emulator_label(configured: Option<&str>, console: &str) -> String {
+    match configured {
+        Some(id) => {
+            let mut c = id.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+        }
+        None => match console {
+            "switch" => "Ryujinx",
+            "switch2" => "Lichii",
+            "3ds" => "Azahar",
+            "ds" => "melonDS",
+            "wiiu" => "Cemu",
+            "gc" => "Dolphin",
+            _ => "Émulateur",
+        }
+        .into(),
+    }
+}
+
+/// Installé = au moins un fichier de base présent dans le dossier des ROM de l'appareil.
+pub fn install_state(files: &[GameFile], exists: &dyn Fn(&str) -> bool) -> &'static str {
+    if files.iter().any(|f| f.role == FileRole::Base && exists(&f.path)) {
+        "installe"
+    } else {
+        "non_installe"
+    }
+}
+
+/// État de synchronisation d'après le journal local de l'appareil.
+pub fn sync_state(entry: Option<&Entry>) -> &'static str {
+    match entry {
+        Some(e) if e.conflict => "conflit",
+        Some(e) if e.pending_upload => "envoi_en_attente",
+        Some(_) => "a_jour",
+        None => "aucune",
+    }
+}
+
+/// Couleur du texte sur une tuile : sombre sur fond clair, blanc sinon (luminance perçue).
+pub fn tile_ink(tile: &str) -> &'static str {
+    let c = |i: usize| tile.get(i..i + 2).and_then(|h| u32::from_str_radix(h, 16).ok()).unwrap_or(0);
+    let luma = 299 * c(1) + 587 * c(3) + 114 * c(5);
+    if luma > 150_000 {
+        "#0b1f2a"
+    } else {
+        "#ffffff"
+    }
+}
+
+/// Ce que `build_library` lit hors du catalogue : tout est injecté, pour tester sans disque ni réseau.
+pub struct LibraryEnv<'a> {
+    /// Tête de sauvegarde du profil pour un jeu.
+    pub saves: &'a [SaveSummary],
+    /// Entrée du journal local pour (profil, jeu).
+    pub journal: &'a dyn Fn(&str) -> Option<Entry>,
+    /// Émulateur configuré sur cet appareil pour un jeu.
+    pub emulator: &'a dyn Fn(&str) -> Option<String>,
+    /// Le fichier (chemin relatif à la racine des ROM) existe-t-il sur cet appareil ?
+    pub exists: &'a dyn Fn(&str) -> bool,
+    pub to_local: &'a dyn Fn(u64) -> NaiveDateTime,
+    pub today: NaiveDate,
+}
+
+/// Catalogue du serveur vers les jeux de l'interface, dans l'ordre du catalogue.
+pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
+    games
+        .iter()
+        .map(|g| {
+            let save = env.saves.iter().find(|s| s.game == g.id);
+            let total: u64 = g.files.iter().map(|f| f.size).sum();
+            UiGame {
+                id: g.id.clone(),
+                title: g.title.clone(),
+                short: g.short.clone(),
+                console: g.console.clone(),
+                tile: g.art.to.clone(),
+                tile_ink: tile_ink(&g.art.to).into(),
+                art: g.art.clone(),
+                emulator: emulator_label((env.emulator)(&g.id).as_deref(), &g.console),
+                install: install_state(&g.files, env.exists),
+                sync: sync_state((env.journal)(&g.id).as_ref()),
+                playtime: save.map(|s| playtime_label(s.playtime_s)),
+                last: save.map(|s| UiLast {
+                    device: device_name(&s.device),
+                    device_kind: device_kind(&s.device),
+                    when: when_label((env.to_local)(s.created_at), env.today),
+                }),
+                size: (total > 0).then(|| size_label(total)),
+            }
+        })
+        .collect()
+}
+
+/// Jeux avec une sauvegarde pour le profil, du plus récent au plus ancien, au plus `limit`.
+pub fn select_recent(library: &[UiGame], saves: &[SaveSummary], limit: usize) -> Vec<UiGame> {
+    let mut ordered: Vec<&SaveSummary> = saves.iter().collect();
+    ordered.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.game.cmp(&b.game)));
+    ordered.iter().filter_map(|s| library.iter().find(|g| g.id == s.game)).take(limit).cloned().collect()
+}
+
+/// Bibliothèque du profil et têtes de sauvegarde, lues sur le serveur (erreur si injoignable) et
+/// sur l'appareil (journal, dossier des ROM).
 ///
-/// L'interface attend la bibliothèque à jour (`Game[]`), qui n'existe pas encore (catalogue du
-/// lot P1c) : après avoir réellement synchronisé, la commande renvoie toujours une erreur qui
-/// résume chaque jeu, et l'interface garde sa bibliothèque de démonstration. Une liste vide
-/// viderait la bibliothèque de l'accueil (`all = lib` dans `Accueil.svelte`).
+/// Catalogue vide (serveur sans dossier de ROM) : erreur, pour que l'interface garde sa
+/// bibliothèque de démonstration plutôt que d'afficher un accueil vide.
+fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSummary>), String> {
+    let client = Client::new(&cfg.serveur);
+    let games = client.games().map_err(|e| e.to_string())?;
+    if games.is_empty() {
+        return Err("aucun jeu dans le catalogue du serveur".into());
+    }
+    let saves = client.save_summaries(profile).map_err(|e| e.to_string())?;
+    let journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
+    let prefix = format!("{profile}/");
+    let entries: BTreeMap<String, Entry> =
+        journal.entries().filter_map(|(k, e)| k.strip_prefix(&prefix).map(|g| (g.to_string(), e.clone()))).collect();
+    let library = build_library(
+        &games,
+        &LibraryEnv {
+            saves: &saves,
+            journal: &|g| entries.get(g).cloned(),
+            emulator: &|g| cfg.jeux.get(g).map(|c| c.emulateur.clone()),
+            exists: &|p| cfg.roms.as_ref().is_some_and(|r| r.join(p).exists()),
+            to_local: &local_time,
+            today: Local::now().date_naive(),
+        },
+    );
+    Ok((library, saves))
+}
+
+/// Bibliothèque complète du profil (catalogue du serveur, état local).
 #[tauri::command]
-async fn sync(profile: String) -> Result<Vec<serde_json::Value>, String> {
+async fn library(profile: String) -> Result<Vec<UiGame>, String> {
+    blocking(move || Ok(fetch_library(&load_config()?, &profile)?.0)).await
+}
+
+/// Jeux récents du profil : ceux qui ont une sauvegarde, du plus récent au plus ancien (5 au plus).
+#[tauri::command]
+async fn recent(profile: String) -> Result<Vec<UiGame>, String> {
+    blocking(move || {
+        let (library, saves) = fetch_library(&load_config()?, &profile)?;
+        Ok(select_recent(&library, &saves, 5))
+    })
+    .await
+}
+
+/// Synchronisation manuelle de tous les jeux configurés pour ce profil, puis bibliothèque à jour.
+///
+/// Chaque jeu est synchronisé (verrou de l'interface compris) ; son résultat se lit ensuite dans le
+/// journal (conflit, envoi en attente, à jour). Un échec propre à un jeu (adaptateur, dossier de
+/// sauvegarde) n'arrête pas les autres : il est écrit dans la sortie d'erreur. Serveur injoignable :
+/// erreur, l'interface garde alors ses données de démonstration.
+#[tauri::command]
+async fn sync(profile: String) -> Result<Vec<UiGame>, String> {
     blocking(move || {
         let cfg = load_config()?;
-        let results = sync_profile(&cfg, &profile)?;
-        let resume: Vec<String> = results
-            .iter()
-            .map(|(id, r)| match r {
-                Ok(o) => format!("{id} : {}", sync_label(o)),
-                Err(e) => format!("{id} : {e}"),
-            })
-            .collect();
-        Err(format!("catalogue des jeux absent (lot P1c) ; synchronisation faite : [{}]", resume.join(" ; ")))
+        for (id, result) in sync_profile(&cfg, &profile)? {
+            match result {
+                Ok(o) => eprintln!("sync {id} : {}", sync_label(&o)),
+                Err(e) => eprintln!("sync {id} : échec : {e}"),
+            }
+        }
+        Ok(fetch_library(&cfg, &profile)?.0)
     })
     .await
 }
@@ -322,7 +514,7 @@ async fn sync(profile: String) -> Result<Vec<serde_json::Value>, String> {
 pub fn run() {
     rumble::init();
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync])
+        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent])
         .run(tauri::generate_context!())
         .expect("échec du démarrage de l'interface");
 }
@@ -393,5 +585,122 @@ mod tests {
             ])
         );
         assert!(ui_history(&[], to_local, today).is_empty());
+    }
+
+    fn file(id: u64, role: FileRole, path: &str, size: u64) -> GameFile {
+        GameFile { id, role, path: path.into(), format: "nsp".into(), size, mtime: 0 }
+    }
+
+    fn catalog_game(id: &str, console: &str, files: Vec<GameFile>) -> CatalogGame {
+        CatalogGame {
+            id: id.into(),
+            console: console.into(),
+            title: "Luigi's Mansion 3".into(),
+            short: "Luigi's\nMansion 3".into(),
+            title_id: None,
+            art: GameArt { motif: "manoir".into(), from: "#22e08f".into(), to: "#0a5a78".into(), ink: None },
+            catalogued: true,
+            files,
+        }
+    }
+
+    fn save(game: &str, device: &str, playtime_s: u64, created_at: u64) -> SaveSummary {
+        SaveSummary { game: game.into(), rev: 1, playtime_s, device: device.into(), emulator: "ryujinx".into(), created_at }
+    }
+
+    #[test]
+    fn tailles_lisibles() {
+        assert_eq!(size_label(6_800_000_000), "6,8 Go");
+        assert_eq!(size_label(65_800_000), "65,8 Mo");
+        assert_eq!(size_label(13_249_000_000), "13,2 Go");
+        assert_eq!(size_label(12_300), "12 Ko");
+        assert_eq!(size_label(999), "999 o");
+    }
+
+    #[test]
+    fn etats_d_installation_et_de_synchronisation() {
+        let files = [file(1, FileRole::Maj, "switch/MAJ-DLC/m.nsp", 1), file(2, FileRole::Base, "switch/a.nsp", 1)];
+        // Seule la mise à jour est là : pas installé. Le fichier de base est là : installé.
+        assert_eq!(install_state(&files, &|p| p.contains("MAJ-DLC")), "non_installe");
+        assert_eq!(install_state(&files, &|p| p == "switch/a.nsp"), "installe");
+        assert_eq!(install_state(&[], &|_| true), "non_installe");
+
+        let entry = |conflict, pending_upload| Entry { base_rev: 1, base_hash: None, pending_upload, conflict };
+        assert_eq!(sync_state(Some(&entry(true, true))), "conflit");
+        assert_eq!(sync_state(Some(&entry(false, true))), "envoi_en_attente");
+        assert_eq!(sync_state(Some(&entry(false, false))), "a_jour");
+        assert_eq!(sync_state(None), "aucune");
+    }
+
+    #[test]
+    fn emulateurs_par_defaut_et_configures() {
+        assert_eq!(emulator_label(Some("ryujinx"), "switch"), "Ryujinx");
+        assert_eq!(emulator_label(Some("eden"), "switch"), "Eden");
+        assert_eq!(emulator_label(None, "3ds"), "Azahar");
+        assert_eq!(emulator_label(None, "wiiu"), "Cemu");
+    }
+
+    #[test]
+    fn encre_des_tuiles() {
+        assert_eq!(tile_ink("#0a5a78"), "#ffffff");
+        assert_eq!(tile_ink("#9ae6ff"), "#0b1f2a");
+    }
+
+    fn env<'a>(saves: &'a [SaveSummary], entries: &'a BTreeMap<String, Entry>, local: &'a [&'a str]) -> LibraryEnv<'a> {
+        LibraryEnv {
+            saves,
+            journal: Box::leak(Box::new(move |g: &str| entries.get(g).cloned())),
+            emulator: Box::leak(Box::new(|g: &str| (g == "switch-lm3").then(|| "eden".to_string()))),
+            exists: Box::leak(Box::new(move |p: &str| local.contains(&p))),
+            to_local: Box::leak(Box::new(|ts: u64| at(2026, 11, 15, 20, 15) - chrono::Duration::days(ts as i64))),
+            today: NaiveDate::from_ymd_opt(2026, 11, 15).unwrap(),
+        }
+    }
+
+    #[test]
+    fn jeu_de_l_interface_a_la_forme_attendue() {
+        let games = [catalog_game(
+            "switch-lm3",
+            "switch",
+            vec![file(1, FileRole::Base, "switch/lm3.nsp", 6_000_000_000), file(2, FileRole::Dlc, "switch/MAJ-DLC/d.nsp", 800_000_000)],
+        )];
+        let saves = [save("switch-lm3", "steam-deck", 45_600, 0)];
+        let entries = BTreeMap::from([("switch-lm3".to_string(), Entry { base_rev: 1, base_hash: None, pending_upload: true, conflict: false })]);
+        let lib = build_library(&games, &env(&saves, &entries, &["switch/lm3.nsp"]));
+        assert_eq!(
+            serde_json::to_value(&lib).unwrap(),
+            serde_json::json!([{
+                "id": "switch-lm3", "title": "Luigi's Mansion 3", "short": "Luigi's\nMansion 3", "console": "switch",
+                "tile": "#0a5a78", "tileInk": "#ffffff",
+                "art": { "motif": "manoir", "from": "#22e08f", "to": "#0a5a78" },
+                "emulator": "Eden", "install": "installe", "sync": "envoi_en_attente",
+                "playtime": "12 h 40",
+                "last": { "device": "Steam Deck", "deviceKind": "deck", "when": "Aujourd'hui 20:15" },
+                "size": "6,8 Go"
+            }])
+        );
+    }
+
+    #[test]
+    fn jeu_sans_sauvegarde_ni_fichier_local() {
+        let games = [catalog_game("ds-x", "ds", vec![file(1, FileRole::Base, "ds/x.nds", 65_800_000)])];
+        let lib = build_library(&games, &env(&[], &BTreeMap::new(), &[]));
+        let v = serde_json::to_value(&lib[0]).unwrap();
+        assert_eq!((v["install"].as_str(), v["sync"].as_str(), v["emulator"].as_str()), (Some("non_installe"), Some("aucune"), Some("melonDS")));
+        assert!(v.get("playtime").is_none() && v.get("last").is_none());
+        assert_eq!(v["size"], "65,8 Mo");
+    }
+
+    #[test]
+    fn jeux_recents() {
+        let games: Vec<_> = (1..=7).map(|i| catalog_game(&format!("g{i}"), "switch", vec![])).collect();
+        // g1..g7 ont une sauvegarde (g1 la plus ancienne) ; « inconnu » n'est pas au catalogue ; g8 sans sauvegarde.
+        let mut saves: Vec<_> = (1..=7).map(|i| save(&format!("g{i}"), "pc", 60, 100 + i)).collect();
+        saves.push(save("inconnu", "pc", 60, 999));
+        let entries = BTreeMap::new();
+        let lib = build_library(&games, &env(&saves, &entries, &[]));
+        let ids: Vec<_> = select_recent(&lib, &saves, 5).into_iter().map(|g| g.id).collect();
+        assert_eq!(ids, ["g7", "g6", "g5", "g4", "g3"]);
+        assert!(select_recent(&lib, &[], 5).is_empty());
     }
 }
