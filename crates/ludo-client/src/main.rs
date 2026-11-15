@@ -4,6 +4,7 @@
 //! 3 partie en cours sur un autre appareil (`--jouer-ici`), 4 dossier de sauvegarde disparu.
 
 use clap::{Parser, Subcommand, ValueEnum};
+use ludo_client::launch;
 use ludo_client::api::Client;
 use ludo_client::config::{self, Config};
 use ludo_client::engine::{Engine, Resolution, SyncOutcome};
@@ -132,14 +133,17 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool) -> Resu
     // Verrou de partie (souple). Hors ligne : on joue quand même.
     let online = match ctx.client.acquire_lease(&key, &device, jouer_ici) {
         Ok(LeaseOutcome::HeldElsewhere { lease }) => {
-            println!("En cours sur {}", lease.device);
+            println!("En cours sur {}", launch::holder_device(&lease.device));
             return Ok(ExitCode::from(3));
         }
         Ok(LeaseOutcome::Granted { .. }) => true,
         Err(_) => false,
     };
 
-    let before = sync_once(ctx, jeu, &key, 0)?;
+    // Cumul du serveur avant la partie (None = serveur injoignable, à ne pas confondre avec 0) :
+    // un envoi fait avant la partie ne doit jamais remettre le cumul à zéro.
+    let base_playtime = launch::head_playtime(&ctx.client, &key);
+    let before = sync_once(ctx, jeu, &key, base_playtime.unwrap_or(0))?;
     println!("{}", label(&before));
     if let Some(code) = exit_for(&before) {
         if online {
@@ -147,19 +151,30 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool) -> Resu
         }
         return Ok(code);
     }
-    let base_playtime = ctx.client.head(&key).ok().flatten().map_or(0, |h| h.playtime_s);
 
     let prepared = config::prepare(&ctx.cfg, &jeu.emulateur, &key.profile, &jeu.title_id).map_err(|e| e.to_string())?;
     let argv = config::launch_command(&prepared, rom).map_err(|e| e.to_string())?;
     let (bin, args) = argv.split_first().ok_or("commande de lancement vide")?;
     let started = Instant::now();
-    let status = std::process::Command::new(bin).args(args).status().map_err(|e| format!("Échec du lancement : {e}"))?;
+    // Le verrou expire au bout de 120 s : renouvelé pendant toute la partie (comme l'app).
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let client = &ctx.client;
+    let status = std::thread::scope(|s| {
+        let _stop = launch::StopOnDrop(&stop);
+        if online {
+            s.spawn(|| launch::heartbeat(client, &key, &device, &stop));
+        }
+        std::process::Command::new(bin).args(args).status()
+    })
+    .map_err(|e| format!("Échec du lancement : {e}"))?;
     let elapsed = started.elapsed().as_secs();
     if !status.success() {
         println!("Émulateur terminé avec une erreur ({status}) – sauvegarde quand même synchronisée");
     }
 
-    let after = sync_once(ctx, jeu, &key, base_playtime + elapsed)?;
+    // Cumul relu juste avant l'envoi : une partie commencée hors ligne ne remet pas le cumul à la durée seule.
+    let total = launch::playtime_after(base_playtime, launch::head_playtime(&ctx.client, &key), elapsed);
+    let after = sync_once(ctx, jeu, &key, total)?;
     println!("{}", label(&after));
     if online {
         let _ = ctx.client.release_lease(&key, &device);
