@@ -55,6 +55,21 @@
 
   let launching = $state<string | null>(null);
 
+  /* Synchronisation manuelle (A sur le nuage de l'en-tête). */
+  let syncing = $state(false);
+  let syncFocused = $state(false);
+  async function syncNow() {
+    if (syncing) return;
+    if (offline) { feedback('err'); return; }
+    syncing = true;
+    const lib = await api.sync(router.profile!.id);
+    const byId = new Map(lib.map((g) => [g.id, g]));
+    all = lib;
+    games = games.map((g) => ({ ...g, sync: byId.get(g.id)?.sync ?? g.sync }));
+    syncing = false;
+    feedback(lib.some((g) => g.sync === 'conflit') ? 'conflict' : 'saved');
+  }
+
   /** Mise en scène du lancement : la tuile se soulève, les autres s'estompent, puis l'écran change. */
   function launch(game: Game, el: HTMLElement) {
     launching = game.id;
@@ -79,7 +94,7 @@
       </div>
     </div>
     <div class="status">
-      <SyncStatus games={all} {offline} />
+      <SyncStatus games={all} {offline} busy={syncing} onclick={syncNow} onfocus={() => (syncFocused = true)} onblur={() => (syncFocused = false)} />
       <span class="clock">{clock}</span>
     </div>
   </header>
@@ -143,7 +158,11 @@
     </button>
   </nav>
 
-  <ButtonHints hints={[{ key: 'A', label: 'Jouer' }, { key: 'Y', label: 'Détails' }, { key: 'X', label: 'Options' }]} />
+  {#if syncFocused}
+    <ButtonHints hints={[{ key: 'A', label: 'Synchroniser' }]} />
+  {:else}
+    <ButtonHints hints={[{ key: 'A', label: 'Jouer' }, { key: 'Y', label: 'Détails' }, { key: 'X', label: 'Options' }]} />
+  {/if}
 </div>
 
 <style>

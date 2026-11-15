@@ -10,6 +10,8 @@ export interface LudoApi {
   library(profile: string): Promise<Game[]>;
   history(profile: string, game: string): Promise<SaveRevision[]>;
   updates(): Promise<UpdateItem[]>;
+  /** Synchronisation demandée à la main : envoie et récupère tout, puis renvoie la bibliothèque à jour. */
+  sync(profile: string): Promise<Game[]>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
   prepare(profile: string, game: string): Promise<{ conflict: Conflict } | { preparation: Preparation }>;
 }
@@ -75,6 +77,12 @@ const demoApi: LudoApi = {
       { id: 'u4', group: 'emulateurs', title: 'Ryujinx', detail: '1.3.3 → 1.3.4 · version de référence du foyer', action: 'Mettre à jour' },
     ];
   },
+  async sync() {
+    await wait(1800);
+    // Démo : les envois en attente partent ; un conflit reste à trancher (il demande un choix).
+    for (const g of GAMES) if (g.sync === 'envoi_en_attente' || g.sync === 'synchronisation') g.sync = 'a_jour';
+    return GAMES.map((g) => ({ ...g }));
+  },
   async prepare(profile, gameId) {
     await wait(150);
     const game = GAMES.find((g) => g.id === gameId) ?? GAMES[0];
@@ -125,6 +133,7 @@ const tauriApi: LudoApi = {
   library: viaTauri('library', (profile) => ({ profile })),
   history: viaTauri('history', (profile, game) => ({ profile, game })),
   updates: viaTauri('updates', () => ({})),
+  sync: viaTauri('sync', (profile) => ({ profile })),
   prepare: viaTauri('prepare', (profile, game) => ({ profile, game })),
 };
 
