@@ -16,6 +16,7 @@ use ludo_client::install::{self, Installer};
 use ludo_client::journal::{Entry, Journal};
 use ludo_proto::{CatalogGame, FileRole, GameArt, GameFile, LeaseOutcome, Profile, SaveKey, SaveSummary};
 use serde::Serialize;
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -536,7 +537,8 @@ fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSu
             saves: &saves,
             journal: &|g| entries.get(g).cloned(),
             emulator: &|g| cfg.jeux.get(g).map(|c| c.emulateur.clone()),
-            exists: &|p| cfg.roms.as_ref().is_some_and(|r| r.join(p).exists()),
+            // Présent tel quel, ou converti par le serveur (`.nsz` installé en `.nsp`).
+            exists: &|p| cfg.roms.as_ref().is_some_and(|r| r.join(p).exists() || install::converted_rel(p).is_some_and(|c| r.join(c).exists())),
             to_local: &local_time,
             today: Local::now().date_naive(),
         },
@@ -601,6 +603,20 @@ pub struct Progression {
     file: u64,
     done: u64,
     total: u64,
+    /// Présent tant que le serveur prépare le fichier (conversion NSZ → NSP) : l'interface affiche
+    /// « Préparation sur le serveur… ». Absent = téléchargement normal (compatible avec l'ancienne charge).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prepare: Option<Preparation>,
+}
+
+/// Avancement de la préparation d'un fichier sur le serveur.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preparation {
+    queued: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    percent: Option<u8>,
+    elapsed_s: u64,
 }
 
 /// Opérations en cours : jeu → drapeau d'annulation. Une seule opération à la fois par jeu.
@@ -679,21 +695,44 @@ fn find_game(client: &Client, id: &str) -> Result<CatalogGame, String> {
     client.games().map_err(|e| e.to_string())?.into_iter().find(|g| g.id == id).ok_or_else(|| "Jeu introuvable sur le serveur".to_string())
 }
 
+/// Formats que lit l'émulateur configuré pour ce jeu sur cet appareil (fiche) ; vide si le jeu n'est
+/// pas configuré ou la fiche illisible : le serveur envoie alors le fichier tel quel.
+fn accepted_formats(cfg: &Config, game: &str) -> Vec<String> {
+    cfg.jeux.get(game).and_then(|g| cfg.fiche(&g.emulateur).ok()).map(|f| f.formats).unwrap_or_default()
+}
+
 /// Installe les fichiers du plan l'un après l'autre en émettant la progression cumulée.
+///
+/// Un fichier converti par le serveur (NSZ → NSP) change de taille : le total cumulé remplace la
+/// taille du catalogue par la taille réelle dès qu'elle est connue.
 fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &[GameFile], cancel: Arc<AtomicBool>) -> Result<(), String> {
     let roms = roms_dir(cfg)?;
     let client = Client::new(&cfg.serveur);
-    let installer = Installer::new(&client, &roms).with_cancel(cancel);
-    let total: u64 = plan.iter().map(|f| f.size).sum();
-    let mut before = 0u64;
+    let formats = accepted_formats(cfg, &game.id);
+    let total: Cell<u64> = Cell::new(plan.iter().map(|f| f.size).sum());
+    let before = Cell::new(0u64);
+    let file_id = Cell::new(plan.first().map_or(0, |f| f.id));
+    let emit = |done: u64, prepare: Option<Preparation>| {
+        let _ = app.emit(EVENT_PROGRESSION, Progression { game: game.id.clone(), file: file_id.get(), done: before.get() + done, total: total.get(), prepare });
+    };
+    let installer = Installer::new(&client, &roms).with_cancel(cancel).with_formats(formats).with_prepare(|p| {
+        emit(0, Some(Preparation { queued: p.state == "queued", percent: p.percent, elapsed_s: p.elapsed_s }));
+    });
     for f in plan {
-        let mut report = |done: u64, _| {
-            let _ = app.emit(EVENT_PROGRESSION, Progression { game: game.id.clone(), file: f.id, done: before + done, total });
+        file_id.set(f.id);
+        // Taille réellement attendue de ce fichier (celle du catalogue tant qu'on ne sait pas mieux).
+        let known = Cell::new(f.size);
+        let mut report = |done: u64, file_total: u64| {
+            if file_total != known.get() {
+                total.set(total.get() - known.get() + file_total);
+                known.set(file_total);
+            }
+            emit(done, None);
         };
         installer.install(&game.id, f, &mut report).map_err(|e| e.to_string())?;
-        before += f.size;
+        before.set(before.get() + known.get());
     }
-    let _ = app.emit(EVENT_PROGRESSION, Progression { game: game.id.clone(), file: plan.last().map_or(0, |f| f.id), done: total, total });
+    emit(total.get() - before.get(), None);
     Ok(())
 }
 
@@ -985,9 +1024,26 @@ mod tests {
 
     #[test]
     fn evenement_de_progression() {
-        let p = Progression { game: "g".into(), file: 3, done: 10, total: 40 };
+        let p = Progression { game: "g".into(), file: 3, done: 10, total: 40, prepare: None };
+        // Sans préparation, la charge reste celle d'avant (compatibilité de l'interface).
         assert_eq!(serde_json::to_value(&p).unwrap(), serde_json::json!({ "game": "g", "file": 3, "done": 10, "total": 40 }));
+        let p = Progression { prepare: Some(Preparation { queued: false, percent: Some(42), elapsed_s: 7 }), ..p };
+        assert_eq!(
+            serde_json::to_value(&p).unwrap(),
+            serde_json::json!({ "game": "g", "file": 3, "done": 10, "total": 40, "prepare": { "queued": false, "percent": 42, "elapsedS": 7 } })
+        );
         assert_eq!(EVENT_PROGRESSION, "ludo://progression");
+    }
+
+    #[test]
+    fn formats_de_l_emulateur_du_jeu() {
+        let cfg: Config = serde_json::from_value(serde_json::json!({
+            "serveur": "x", "appareil": "pc",
+            "jeux": { "switch-mk8": { "emulateur": "eden", "title_id": "0100152000022000" } }
+        }))
+        .unwrap();
+        assert_eq!(accepted_formats(&cfg, "switch-mk8"), ["nsp", "xci"]);
+        assert!(accepted_formats(&cfg, "inconnu").is_empty());
     }
 
     #[test]

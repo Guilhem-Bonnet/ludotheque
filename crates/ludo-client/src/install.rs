@@ -9,7 +9,7 @@
 //! abandonner sur un délai d'inactivité ou une annulation, même si le serveur ne dit plus rien.
 
 use crate::api::{ApiError, Client};
-use ludo_proto::GameFile;
+use ludo_proto::{conversion_target, ConvertProgress, GameFile, CONVERTIBLE};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -35,6 +35,9 @@ pub enum InstallError {
     SizeMismatch { expected: u64, got: u64 },
     #[error("téléchargement interrompu ({0}) ; il reprendra là où il s'est arrêté")]
     Interrupted(String),
+    /// Conversion côté serveur (NSZ → NSP) refusée ou échouée ; le message vient du serveur.
+    #[error("{0}")]
+    Convert(String),
     #[error("Installation annulée")]
     Cancelled,
     #[error("archive refusée : {0}")]
@@ -56,6 +59,15 @@ pub fn human(bytes: u64) -> String {
         }
     }
     if bytes >= 1_000 { format!("{} Ko", (bytes + 500) / 1_000) } else { format!("{bytes} o") }
+}
+
+/// Chemin relatif du fichier une fois converti par le serveur (`x.nsz` → `x.nsp`, `x.xcz` → `x.xci`) ;
+/// `None` pour tout autre format. Sert à retrouver, sur l'appareil, un jeu installé converti.
+pub fn converted_rel(rel: &str) -> Option<String> {
+    let p = Path::new(rel);
+    let ext = p.extension()?.to_str()?;
+    let (_, to) = CONVERTIBLE.iter().find(|(from, _)| from.eq_ignore_ascii_case(ext))?;
+    Some(p.with_extension(to).to_string_lossy().into_owned())
 }
 
 /// Résultat d'une installation de fichier.
@@ -159,6 +171,9 @@ impl<'a> Ticker<'a> {
         let last = Instant::now().checked_sub(Duration::from_secs(1)).unwrap_or_else(Instant::now);
         Self { cb, total, last }
     }
+    fn set_total(&mut self, total: u64) {
+        self.total = total;
+    }
     fn tick(&mut self, done: u64) {
         if self.last.elapsed() >= Duration::from_millis(100) {
             self.last = Instant::now();
@@ -250,11 +265,97 @@ pub struct Installer<'a> {
     pub idle: Duration,
     /// Mis à `true` (depuis un autre fil) pour annuler l'installation en cours.
     pub cancel: Arc<AtomicBool>,
+    /// Formats que l'émulateur sait lire (`nsp`, `xci`…) : le serveur convertit un NSZ / XCZ si besoin.
+    /// Vide = fichier servi tel quel.
+    pub formats: Vec<String>,
+    /// Appelé à chaque réponse « conversion en cours » du serveur (interface : « Préparation sur le serveur… »).
+    on_prepare: Option<PrepareCb<'a>>,
+    /// Plus longue attente entre deux demandes pendant une conversion (le serveur propose 5 s).
+    pub retry_cap: Duration,
+    /// Abandon si la conversion n'avance plus du tout depuis ce délai (elle continue côté serveur).
+    pub prepare_stall: Duration,
 }
+
+type PrepareCb<'a> = Box<dyn Fn(&ConvertProgress) + 'a>;
+
+/// Plus longue attente entre deux demandes pendant une conversion.
+pub const RETRY_CAP: Duration = Duration::from_secs(30);
+/// Durée sans aucun changement de la conversion avant d'abandonner.
+pub const PREPARE_STALL: Duration = Duration::from_secs(600);
 
 impl<'a> Installer<'a> {
     pub fn new(client: &'a Client, roms: &'a Path) -> Self {
-        Self { client, roms, idle: IDLE_TIMEOUT, cancel: Arc::new(AtomicBool::new(false)) }
+        Self { client, roms, idle: IDLE_TIMEOUT, cancel: Arc::new(AtomicBool::new(false)), formats: Vec::new(), on_prepare: None, retry_cap: RETRY_CAP, prepare_stall: PREPARE_STALL }
+    }
+
+    /// Formats lus par l'émulateur du jeu (fiche : `formats`).
+    pub fn with_formats(mut self, formats: Vec<String>) -> Self {
+        self.formats = formats;
+        self
+    }
+
+    pub fn with_prepare(mut self, f: impl Fn(&ConvertProgress) + 'a) -> Self {
+        self.on_prepare = Some(Box::new(f));
+        self
+    }
+
+    pub fn with_retry_cap(mut self, cap: Duration) -> Self {
+        self.retry_cap = cap;
+        self
+    }
+
+    pub fn with_prepare_stall(mut self, stall: Duration) -> Self {
+        self.prepare_stall = stall;
+        self
+    }
+
+    /// Chemin local d'un fichier du catalogue : converti (`.nsp` / `.xci`) si le serveur doit le convertir.
+    pub fn local_rel(&self, file: &GameFile) -> Result<PathBuf, InstallError> {
+        let rel = checked_rel(&file.path)?;
+        Ok(match conversion_target(&file.format, &self.formats) {
+            Some(to) => rel.with_extension(to),
+            None => rel.to_path_buf(),
+        })
+    }
+
+    /// Demande le fichier ; tant que le serveur répond « conversion en cours » (202), attend le
+    /// délai demandé puis redemande (annulation prise en compte). Abandonne si rien ne bouge.
+    fn fetch(&self, game: &str, file: &GameFile, from: u64, if_range: Option<&str>) -> Result<ureq::http::Response<ureq::Body>, InstallError> {
+        let mut last: Option<(String, u64, Option<u8>)> = None;
+        let mut since = Instant::now();
+        loop {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err(InstallError::Cancelled);
+            }
+            let mut resp = match self.client.download_as(game, file.id, from, if_range, &self.formats) {
+                Err(ApiError::Http { status: 500 | 503, body }) if conversion_target(&file.format, &self.formats).is_some() => return Err(InstallError::Convert(body)),
+                r => r?,
+            };
+            if resp.status().as_u16() != 202 {
+                return Ok(resp);
+            }
+            let wait = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).map_or(5, |s| s.max(1));
+            let wait = Duration::from_secs(wait).min(self.retry_cap);
+            let body = resp.body_mut().read_to_string().unwrap_or_default();
+            let p: ConvertProgress = serde_json::from_str(&body).unwrap_or(ConvertProgress { state: "converting".into(), elapsed_s: 0, written_bytes: 0, source_bytes: 0, percent: None });
+            if let Some(cb) = &self.on_prepare {
+                cb(&p);
+            }
+            let sig = (p.state.clone(), p.written_bytes, p.percent);
+            if last.as_ref() != Some(&sig) {
+                last = Some(sig);
+                since = Instant::now();
+            } else if since.elapsed() >= self.prepare_stall {
+                return Err(InstallError::Interrupted(format!("la préparation sur le serveur n'avance plus depuis {:.0?} ; elle continue, une nouvelle tentative la retrouvera", self.prepare_stall)));
+            }
+            let until = Instant::now() + wait;
+            while Instant::now() < until {
+                if self.cancel.load(Ordering::SeqCst) {
+                    return Err(InstallError::Cancelled);
+                }
+                std::thread::sleep(Duration::from_millis(50).min(until - Instant::now()));
+            }
+        }
     }
 
     pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
@@ -272,7 +373,7 @@ impl<'a> Installer<'a> {
         if self.cancel.load(Ordering::SeqCst) {
             return Err(InstallError::Cancelled);
         }
-        let dest = self.roms.join(checked_rel(&file.path)?);
+        let dest = self.roms.join(self.local_rel(file)?);
         for p in [dest.clone(), with_suffix(&dest, ".part"), with_suffix(&dest, ".part.etag"), with_suffix(&dest, ".old")] {
             guard(self.roms, &p)?;
         }
@@ -283,15 +384,21 @@ impl<'a> Installer<'a> {
         if file.format == "dir" {
             self.install_dir(game, file, &dest, &mut ticker)
         } else {
-            self.install_file(game, file, &dest, &mut ticker)
+            self.install_file(game, file, &dest, conversion_target(&file.format, &self.formats).is_some(), &mut ticker)
         }
     }
 
-    fn install_file(&self, game: &str, file: &GameFile, dest: &Path, t: &mut Ticker) -> Result<Installed, InstallError> {
-        if fs::symlink_metadata(dest).is_ok_and(|m| m.is_file() && m.len() == file.size) {
-            t.finish(file.size);
+    /// `converted` : le serveur convertit le fichier ; sa taille n'est connue qu'à la réponse (celle du
+    /// catalogue est celle du fichier compressé), et le fichier présent est jugé complet (il n'est
+    /// mis en place qu'une fois entier).
+    fn install_file(&self, game: &str, file: &GameFile, dest: &Path, converted: bool, t: &mut Ticker) -> Result<Installed, InstallError> {
+        if fs::symlink_metadata(dest).is_ok_and(|m| m.is_file() && (if converted { m.len() > 0 } else { m.len() == file.size })) {
+            let size = fs::metadata(dest).map_or(file.size, |m| m.len());
+            t.set_total(size);
+            t.finish(size);
             return Ok(Installed::AlreadyPresent);
         }
+        let mut expected = file.size;
         let part = with_suffix(dest, ".part");
         let etag_path = with_suffix(dest, ".part.etag");
         let discard = || {
@@ -301,18 +408,36 @@ impl<'a> Installer<'a> {
         let mut start = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
         let saved_etag = fs::read_to_string(&etag_path).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         // Reprise seulement avec un validateur connu : sinon on ne sait pas si le fichier a changé.
-        if start > file.size || (start > 0 && saved_etag.is_none()) {
+        if (!converted && start > file.size) || (start > 0 && saved_etag.is_none()) {
             discard();
             start = 0;
         }
         let mut retried = false;
         loop {
-            if start == file.size && start > 0 {
+            if !converted && start == file.size && start > 0 {
                 break; // le partiel est déjà complet (interruption juste avant le renommage)
             }
-            check_space(dest, file.size - start)?;
-            let resp = self.client.download(game, file.id, start, saved_etag.as_deref())?;
+            if !converted {
+                check_space(dest, file.size - start)?;
+            }
+            let resp = self.fetch(game, file, start, saved_etag.as_deref())?;
             let status = resp.status().as_u16();
+            if converted && status == 416 && start > 0 && content_range_total(&resp) == Some(start) {
+                expected = start;
+                break; // le partiel converti est déjà complet
+            }
+            if converted && matches!(status, 200 | 206) {
+                // Le serveur a-t-il vraiment converti ? Sinon un .nsz porterait le nom d'un .nsp.
+                let Some(total) = served_total(&resp, status) else {
+                    return Err(InstallError::Convert("réponse du serveur sans taille du fichier converti".into()));
+                };
+                if resp.headers().get("x-ludo-format").is_none() {
+                    return Err(InstallError::Convert("le serveur n'a pas converti le fichier (version trop ancienne ?)".into()));
+                }
+                expected = total;
+                t.set_total(total);
+                check_space(dest, if status == 206 { total.saturating_sub(start) } else { total })?;
+            }
             let restart = match status {
                 416 => true,
                 206 => !content_range_starts_at(&resp, start),
@@ -345,7 +470,7 @@ impl<'a> Installer<'a> {
             .map_err(|e| io("ouverture du fichier partiel", e))?;
             let mut done = if resume { start } else { 0 };
             if !resume {
-                check_space(dest, file.size)?;
+                check_space(dest, expected)?;
             }
             let mut stream = Stream::new(resp, self.idle, self.cancel.clone());
             let mut buf = vec![0u8; 256 * 1024];
@@ -357,10 +482,10 @@ impl<'a> Installer<'a> {
                 };
                 out.write_all(&buf[..n]).map_err(|e| io("écriture", e))?;
                 done += n as u64;
-                if done > file.size {
+                if done > expected {
                     drop(out);
                     discard();
-                    return Err(InstallError::SizeMismatch { expected: file.size, got: done });
+                    return Err(InstallError::SizeMismatch { expected, got: done });
                 }
                 t.tick(done);
             }
@@ -368,17 +493,17 @@ impl<'a> Installer<'a> {
             break;
         }
         let got = fs::metadata(&part).map_err(|e| io("lecture du fichier partiel", e))?.len();
-        if got > file.size {
+        if got > expected {
             discard();
-            return Err(InstallError::SizeMismatch { expected: file.size, got });
+            return Err(InstallError::SizeMismatch { expected, got });
         }
-        if got < file.size {
+        if got < expected {
             // Flux plus court que prévu : on garde le partiel, une reprise est possible.
-            return Err(InstallError::Interrupted(format!("{} reçus sur {}", human(got), human(file.size))));
+            return Err(InstallError::Interrupted(format!("{} reçus sur {}", human(got), human(expected))));
         }
         fs::rename(&part, dest).map_err(|e| io("mise en place", e))?;
         let _ = remove_any(&etag_path);
-        t.finish(file.size);
+        t.finish(expected);
         Ok(Installed::Downloaded)
     }
 
@@ -429,6 +554,20 @@ impl<'a> Installer<'a> {
         t.finish(file.size);
         Ok(Installed::Downloaded)
     }
+}
+
+/// Taille totale du fichier converti d'après la réponse : `Content-Range` (206) ou `X-Ludo-Total-Bytes` / `Content-Length` (200).
+fn served_total(resp: &ureq::http::Response<ureq::Body>, status: u16) -> Option<u64> {
+    if status == 206 {
+        return content_range_total(resp);
+    }
+    let h = |n: &str| resp.headers().get(n).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
+    h("x-ludo-total-bytes").or_else(|| h("content-length"))
+}
+
+/// Total d'un `Content-Range` (`bytes a-b/total` ou `bytes */total`).
+fn content_range_total(resp: &ureq::http::Response<ureq::Body>) -> Option<u64> {
+    resp.headers().get("content-range")?.to_str().ok()?.rsplit('/').next()?.trim().parse().ok()
 }
 
 fn is_tar(resp: &ureq::http::Response<ureq::Body>) -> bool {
@@ -527,11 +666,18 @@ pub fn uninstall(roms: &Path, files: &[GameFile]) -> Result<usize, InstallError>
     let mut plan = Vec::new();
     for f in files {
         let path = roms.join(checked_rel(&f.path)?);
-        let targets = [path.clone(), with_suffix(&path, ".part"), with_suffix(&path, ".part.etag"), with_suffix(&path, ".old")];
-        for t in &targets {
-            guard(roms, t)?;
+        // Le fichier peut avoir été installé converti par le serveur (`.nsz` → `.nsp`) : mêmes restes.
+        let mut variants = vec![path.clone()];
+        if let Some(c) = converted_rel(&f.path) {
+            variants.push(roms.join(checked_rel(&c)?));
         }
-        plan.push((path, targets));
+        for v in variants {
+            let targets = [v.clone(), with_suffix(&v, ".part"), with_suffix(&v, ".part.etag"), with_suffix(&v, ".old")];
+            for t in &targets {
+                guard(roms, t)?;
+            }
+            plan.push((v, targets));
+        }
     }
     let mut removed = 0;
     for (path, targets) in plan {
