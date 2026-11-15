@@ -147,6 +147,14 @@ fn is_hex_color(s: &str) -> bool {
 }
 
 /// Valide un profil et le normalise (nom sans espaces autour). `id` vient de la route.
+/// Caractères invisibles ou de contrôle du sens d'écriture (deux noms identiques à l'écran,
+/// texte retourné) : espaces de largeur nulle, marques et isolats bidi, trait d'union conditionnel.
+fn is_invisible(c: char) -> bool {
+    matches!(c, '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}' | '\u{180E}'
+        | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}'
+        | '\u{3164}' | '\u{FEFF}' | '\u{FFA0}')
+}
+
 pub fn normalize_profile(id: &str, p: &Profile) -> Result<Profile, StoreError> {
     check(id)?;
     if p.id != id {
@@ -159,6 +167,9 @@ pub fn normalize_profile(id: &str, p: &Profile) -> Result<Profile, StoreError> {
     }
     if name.chars().any(char::is_control) {
         return Err(StoreError::InvalidProfile("caractère de contrôle dans le nom".into()));
+    }
+    if name.chars().any(is_invisible) {
+        return Err(StoreError::InvalidProfile("caractère invisible dans le nom".into()));
     }
     if let Some(kind) = &p.avatar_kind {
         if !AVATAR_KINDS.contains(&kind.as_str()) {
@@ -377,6 +388,17 @@ impl Store {
     pub fn put_profile(&self, id: &str, profile: &Profile) -> Result<Profile, StoreError> {
         let p = normalize_profile(id, profile)?;
         let db = self.db.lock().expect("verrou base");
+        // Deux profils ne portent pas le même nom (sans tenir compte de la casse, accents compris).
+        {
+            let wanted = p.name.to_lowercase();
+            let mut st = db.prepare("SELECT name FROM profiles WHERE id <> ?1")?;
+            let names = st.query_map(params![p.id], |r| r.get::<_, String>(0))?;
+            for n in names {
+                if n?.to_lowercase() == wanted {
+                    return Err(StoreError::InvalidProfile("nom déjà utilisé par un autre profil".into()));
+                }
+            }
+        }
         db.execute(
             &format!(
                 "INSERT INTO profiles ({PROFILE_COLS}, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
