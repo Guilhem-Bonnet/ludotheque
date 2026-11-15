@@ -342,7 +342,11 @@ impl<'a> Installer<'a> {
                 cb(&p);
             }
             let sig = (p.state.clone(), p.written_bytes, p.percent);
-            if last.as_ref() != Some(&sig) {
+            if p.state == "queued" {
+                // En file derrière une autre conversion : rien à reprocher à la conversion, le délai ne court pas.
+                last = None;
+                since = Instant::now();
+            } else if last.as_ref() != Some(&sig) {
                 last = Some(sig);
                 since = Instant::now();
             } else if since.elapsed() >= self.prepare_stall {

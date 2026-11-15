@@ -279,11 +279,11 @@ async fn get_game_file(
         let m = tokio::fs::metadata(&path).await.map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { StoreError::NotFound } else { StoreError::Io(e) })?;
         (m.len(), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs()))
     };
-    match conv.request(&path, len, mtime, target) {
-        Outcome::Ready { path, len, key, format } => {
+    match conv.request(&path, len, mtime, target).await {
+        Outcome::Ready { file, len, key, format, guard } => {
             // Validateur stable : identifiant de conversion et taille (la date du cache change à chaque accès).
             let etag = format!("\"c{}-{len:x}\"", &key[..16]);
-            serve_path(path, &headers, Some(etag), &[("x-ludo-format", format.to_string()), ("x-ludo-total-bytes", len.to_string())]).await
+            serve_open(tokio::fs::File::from_std(file), &headers, Some(etag), &[("x-ludo-format", format.to_string()), ("x-ludo-total-bytes", len.to_string())], Some(guard)).await
         }
         Outcome::Pending(p) => Ok(Response::builder()
             .status(StatusCode::ACCEPTED)
@@ -299,15 +299,30 @@ async fn get_game_file(
 /// Sert un fichier ou un dossier (tar) du disque ; `etag` remplace le validateur taille + date,
 /// `extra` ajoute des en-têtes à la réponse.
 async fn serve_path(path: std::path::PathBuf, headers: &HeaderMap, etag: Option<String>, extra: &[(&'static str, String)]) -> Result<Response, StoreError> {
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     // Un dossier est servi en tar à la volée (le `Range` est ignoré : réponse 200 complète).
     if tokio::fs::symlink_metadata(&path).await.is_ok_and(|m| m.is_dir()) {
         return tar_response(path).await;
     }
-    let mut file = tokio::fs::File::open(&path).await.map_err(|e| match e.kind() {
+    let file = tokio::fs::File::open(&path).await.map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => StoreError::NotFound,
         _ => StoreError::Io(e),
     })?;
+    serve_open(file, headers, etag, extra, None).await
+}
+
+/// Flux qui garde `_guard` (utilisation d'un fichier du cache) jusqu'à la fin de l'envoi.
+struct Guarded<S>(S, #[allow(dead_code)] Option<convert::UseGuard>);
+
+impl<S: futures_core::Stream + Unpin> futures_core::Stream for Guarded<S> {
+    type Item = S::Item;
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.0).poll_next(cx)
+    }
+}
+
+/// Sert un fichier déjà ouvert (donc à l'abri d'une éviction du cache entre-temps).
+async fn serve_open(mut file: tokio::fs::File, headers: &HeaderMap, etag: Option<String>, extra: &[(&'static str, String)], guard: Option<convert::UseGuard>) -> Result<Response, StoreError> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let meta = file.metadata().await?;
     if !meta.is_file() {
         return Err(StoreError::Forbidden("pas un fichier".into()));
@@ -328,7 +343,7 @@ async fn serve_path(path: std::path::PathBuf, headers: &HeaderMap, etag: Option<
     let base = extra.iter().fold(base, |b, (k, v)| b.header(*k, v));
     let respond = |b: axum::http::response::Builder, body: Body| b.body(body).map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())));
     match parse_range(wanted, len) {
-        RangeSpec::Full => respond(base.status(StatusCode::OK).header(header::CONTENT_LENGTH, len), Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK))),
+        RangeSpec::Full => respond(base.status(StatusCode::OK).header(header::CONTENT_LENGTH, len), Body::from_stream(Guarded(tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK), guard))),
         RangeSpec::Part(start, end) => {
             file.seek(std::io::SeekFrom::Start(start)).await?;
             let n = end - start + 1;
@@ -336,7 +351,7 @@ async fn serve_path(path: std::path::PathBuf, headers: &HeaderMap, etag: Option<
                 base.status(StatusCode::PARTIAL_CONTENT)
                     .header(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"))
                     .header(header::CONTENT_LENGTH, n),
-                Body::from_stream(tokio_util::io::ReaderStream::with_capacity(file.take(n), STREAM_CHUNK)),
+                Body::from_stream(Guarded(tokio_util::io::ReaderStream::with_capacity(file.take(n), STREAM_CHUNK), guard)),
             )
         }
         RangeSpec::Unsatisfiable => respond(

@@ -20,7 +20,9 @@ const FAKE: &str = r#"#!/bin/bash
 while [ $# -gt 0 ]; do case "$1" in --keys) K="$2"; shift 2;; -o) O="$2"; shift 2;; -D|--minimal-output) shift;; *) F="$1"; shift;; esac; done
 D=$(dirname "$K")
 echo "$F" >> "$D/calls.log"
-echo "10% debut"
+printf '| 0%% Decompress\r/ 1%% Decompress\r- 42%% Decompress\r'
+case "$F" in *noisy*) head -c 3000000 /dev/zero | tr '\0' 'x' >&2; head -c 2000000 /dev/zero | tr '\0' 'y';; esac
+case "$F" in *forky*) sleep 300 & echo $! > "$D/child.pid"; wait;; esac
 while [ -e "$D/gate" ]; do sleep 0.05; done
 b=$(basename "$F")
 case "$b" in *bad*) echo partiel > "$O/${b%.*}.nsp"; echo "boom" >&2; exit 1;; esac
@@ -91,6 +93,10 @@ fn write(p: &Path, content: &[u8]) {
 
 /// `keys` : fournir un fichier de clés (faux) ou non. `max` : taille maximale du cache.
 fn env(keys: bool, max: u64, files: &[&str]) -> Env {
+    env_with(keys, max, files, |_| ())
+}
+
+fn env_with(keys: bool, max: u64, files: &[&str], tweak: impl FnOnce(&mut ConvertConfig)) -> Env {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().unwrap();
     let roms = tmp.path().join("roms");
@@ -109,6 +115,8 @@ fn env(keys: bool, max: u64, files: &[&str]) -> Env {
     cfg.command = script.to_string_lossy().into_owned();
     cfg.keys = keys.then(|| tmp.path().join("keys/prod.keys"));
     cfg.timeout = Duration::from_secs(20);
+    cfg.failure_backoff = Duration::from_secs(2);
+    tweak(&mut cfg);
     let router = ludo_server::router_with(Arc::new(store), Some(Converter::new(cfg).unwrap()));
     Env { router, tmp, games }
 }
@@ -219,7 +227,8 @@ async fn echec_sans_fichier_partiel_puis_nouvel_essai() {
     assert!(!msg.contains("boom"), "pas de détail interne côté client");
     assert_eq!(e.ready_dirs(), 0, "rien dans le cache");
     assert_eq!(std::fs::read_dir(e.cache().join("work")).unwrap().count(), 0, "dossier de travail nettoyé");
-    // La demande suivante relance une conversion (qui échoue encore).
+    // Une fois le délai d'attente écoulé, la demande suivante relance une conversion (qui échoue encore).
+    tokio::time::sleep(Duration::from_millis(2100)).await;
     assert_eq!(e.until_done("bad", ALL).await.0, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(e.calls(), 2);
 }
@@ -249,4 +258,92 @@ async fn eviction_lru_par_dernier_acces() {
     }
     assert_eq!(e.calls(), before);
     assert_eq!(e.get("B", ALL, &[]).await.0, StatusCode::ACCEPTED);
+}
+
+#[tokio::test]
+async fn pourcentage_lu_sur_la_sortie_a_retour_chariot() {
+    let e = env(true, 1 << 30, &["Jeu [0100152000022000][v0].nsz"]);
+    e.gate(true);
+    let mut vu = None;
+    for _ in 0..100 {
+        let (st, _, body) = e.get("Jeu", ALL, &[]).await;
+        assert_eq!(st, StatusCode::ACCEPTED);
+        vu = serde_json::from_slice::<ConvertProgress>(&body).unwrap().percent;
+        if vu.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(vu, Some(42), "pourcentage publié au fil de l'eau, avant la fin");
+    e.gate(false);
+    assert_eq!(e.until_done("Jeu", ALL).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn sorties_volumineuses_sans_blocage() {
+    // 3 Mo sur stderr et 2 Mo sur stdout sans fin de ligne : un tube non vidé bloquerait le convertisseur.
+    let e = env(true, 1 << 30, &["Jeu noisy [0100152000022000][v0].nsz"]);
+    let (st, _, body) = e.until_done("noisy", ALL).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(body.ends_with(b"DECOMP"));
+}
+
+fn vivant(pid: &str) -> bool {
+    std::process::Command::new("kill").args(["-0", pid]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+}
+
+#[tokio::test]
+async fn delai_depasse_tue_le_groupe_de_processus() {
+    let e = env_with(true, 1 << 30, &["Jeu forky [0100152000022000][v0].nsz"], |c| c.timeout = Duration::from_millis(800));
+    let (st, _, _) = e.until_done("forky", ALL).await;
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR);
+    let pid = std::fs::read_to_string(e.tmp.path().join("keys/child.pid")).unwrap().trim().to_string();
+    for _ in 0..40 {
+        if !vivant(&pid) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!vivant(&pid), "le fils lancé par le convertisseur doit être tué avec lui");
+    assert_eq!(e.ready_dirs(), 0);
+}
+
+#[tokio::test]
+async fn echec_garde_en_attente_puis_nouvel_essai() {
+    let e = env_with(true, 1 << 30, &["Jeu bad [0100152000022000][v0].nsz"], |c| c.failure_backoff = Duration::from_millis(1500));
+    assert_eq!(e.until_done("bad", ALL).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+    // Pendant le délai : toujours l'échec, sans relancer le convertisseur.
+    for _ in 0..3 {
+        assert_eq!(e.get("bad", ALL, &[]).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    assert_eq!(e.calls(), 1, "aucune relance pendant le délai d'attente");
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    assert_eq!(e.until_done("bad", ALL).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(e.calls(), 2, "relancé une fois le délai écoulé");
+}
+
+#[tokio::test]
+async fn eviction_pendant_un_envoi_sans_coupure() {
+    let names = ["A [0100152000022000][v0].nsz", "B [0100152000023000][v0].nsz", "C [0100152000024000][v0].nsz"];
+    let probe = env(true, 1 << 30, &names[..1]);
+    let one = probe.until_done("A", ALL).await.2.len() as u64;
+    let src = one - 6;
+    // Place pour deux conversions : la troisième force une éviction.
+    let e = env(true, one * 2 + src, &names);
+    for n in ["A", "B"] {
+        assert_eq!(e.until_done(n, ALL).await.0, StatusCode::OK);
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    // Envoi de A commencé (corps non lu) : A est le plus ancien mais en cours d'utilisation.
+    let (g, f) = e.id("A");
+    let resp = e.router.clone().oneshot(Request::get(format!("/api/v1/games/{g}/files/{f}{ALL}")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(e.until_done("C", ALL).await.0, StatusCode::OK);
+    assert_eq!(e.ready_dirs(), 2, "une conversion évincée : la plus ancienne non utilisée (B)");
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body.len() as u64, one, "envoi complet malgré l'éviction");
+    assert!(body.ends_with(b"DECOMP"));
+    // Envoi fini : A n'est plus protégé, une nouvelle conversion peut l'évincer.
+    assert_eq!(e.until_done("B", ALL).await.0, StatusCode::OK);
+    assert_eq!(e.ready_dirs(), 2);
 }
