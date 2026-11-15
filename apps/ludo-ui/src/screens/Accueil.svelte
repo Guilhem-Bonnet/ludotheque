@@ -8,6 +8,7 @@
   import Avatar from '../lib/components/Avatar.svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
+  import SyncStatus from '../lib/components/SyncStatus.svelte';
   import Tile from '../lib/components/Tile.svelte';
   import { api } from '../lib/api';
   import { focusFirst } from '../lib/nav';
@@ -18,6 +19,8 @@
   let { device }: { device: DeviceInfo } = $props();
 
   let games = $state<Game[]>([]);
+  /** Toute la bibliothèque du profil : sert à l'état global de synchronisation de l'en-tête. */
+  let all = $state<Game[]>([]);
   let focused = $state(0);
   let updatesCount = $state(0);
   let clock = $state(now());
@@ -29,8 +32,9 @@
   onMount(() => {
     const t = setInterval(() => (clock = now()), 15_000);
     const profile = router.profile!;
-    Promise.all([api.recent(profile.id), api.updates()]).then(([g, u]) => {
+    Promise.all([api.recent(profile.id), api.updates(), api.library(profile.id)]).then(([g, u, lib]) => {
       games = g;
+      all = lib;
       updatesCount = u.length;
       focusFirst();
     });
@@ -75,11 +79,7 @@
       </div>
     </div>
     <div class="status">
-      {#if offline}
-        <span class="state pill"><span class="dot off"></span>Hors ligne</span>
-      {:else}
-        <span class="state pill"><span class="dot"></span>À jour</span>
-      {/if}
+      <SyncStatus games={all} {offline} />
       <span class="clock">{clock}</span>
     </div>
   </header>
@@ -151,9 +151,6 @@
   /* Pastilles translucides (reprises de la direction B). */
   .pill { background: rgba(255, 255, 255, 0.1); }
   .who.pill { padding: 5px 20px 5px 5px; border-radius: 40px; gap: 12px; }
-  .state.pill { padding: 8px 14px; border-radius: 20px; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 var(--ok); }
-  .dot.off { background: var(--offline); }
   .clock { font-weight: 600; color: var(--ink); }
   header { display: flex; align-items: center; justify-content: space-between; padding: 28px 48px 0; }
   .who { display: flex; align-items: center; gap: 14px; }
@@ -161,7 +158,6 @@
   .name { font-size: 17px; font-weight: 600; }
   .device { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
   .status { display: flex; align-items: center; gap: 14px; font-size: 15px; color: var(--ink); }
-  .state { display: flex; align-items: center; gap: 8px; }
 
   .row-wrap { padding: 48px 0 0 48px; }
   .row { display: flex; align-items: flex-start; gap: 20px; overflow-x: auto; overflow-y: visible; padding: 22px 64px 16px 12px; margin: -22px 0 0 -12px; scroll-padding-inline: 24px 64px; scrollbar-width: none; }

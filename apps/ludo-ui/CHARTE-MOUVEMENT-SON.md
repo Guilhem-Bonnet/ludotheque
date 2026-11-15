@@ -73,5 +73,5 @@ Maquette : https://claude.ai/artifact/NSBRvReHdaGeZR1KapYfxh. Les couleurs terne
 | Fond | Prend la couleur de la jaquette sélectionnée (`Ambiance.svelte`) ; la lumière se place au-dessus de la tuile | Fondu enchaîné de 420 ms d'un jeu à l'autre ; la même ambiance suit le jeu jusqu'à l'écran de passage et à la fiche |
 | Jaquettes | Scène illustrée en dégradé vif, motif original (`CoverArt.svelte`), titre en bas à gauche, décor à droite | Au focus, parallaxe : le décor glisse de 1 px, le premier plan de 3 px avec un léger zoom |
 | Pastille console | Monochrome blanche sur fond sombre translucide (comme Cocoon, ES-DE) ; jamais le rouge Switch | — |
-| En-tête | Profil (avatar, nom, appareil) et « À jour » dans des pastilles translucides | — |
+| En-tête | Profil (avatar, nom, appareil) en pastille translucide ; à droite, nuage de synchronisation global façon Steam (`SyncStatus.svelte`) : état le plus prioritaire de toutes les sauvegardes du profil (Hors ligne > Conflit > Synchronisation > Envoi en attente > À jour) | Nouveau nuage avec petit rebond ; flèches qui tournent pendant la synchronisation ; nuage qui respire en attente d'envoi |
 | Images de profil | Personnage illustré sur la couleur du profil ; cette couleur est l'accent de l'interface (Guilhem #38B6FF, Claire #34E0A1) | Clignement des yeux rare (toutes les 5,5 s) |
