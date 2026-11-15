@@ -97,12 +97,12 @@
           />
           {#if i === focused && game.last}
             <div class="device-tab">
-              <Icon name={game.last.deviceKind} size={22} color="var(--accent-ink)" />
+              <Icon name={game.last.deviceKind} size={16} color="var(--ink-4)" />
               <span>{game.last.device} · {game.last.when}</span>
               {#if game.sync === 'a_jour'}
-                <span class="tab-state"><Icon name="cloud-ok" size={18} color="var(--ok)" label="À jour" /></span>
+                <span class="tab-state"><Icon name="cloud-ok" size={15} color="var(--ink-4)" label="À jour" /></span>
               {:else if game.sync === 'envoi_en_attente'}
-                <span class="tab-state"><Icon name="cloud-pending" size={18} color="var(--pending)" label="Envoi en attente" /></span>
+                <span class="tab-state"><Icon name="cloud-pending" size={15} color="var(--pending)" label="Envoi en attente" /></span>
               {/if}
             </div>
           {/if}
@@ -157,16 +157,15 @@
   .slot { display: flex; flex-direction: column; flex-shrink: 0; margin-top: 20px; }
   .slot.focused { width: 272px; margin-top: 0; }
 
-  /* Geste signature : l'onglet d'appareil glisse sous la tuile en focus. */
+  /* Ligne discrète sous la tuile en focus : appareil et heure de la dernière partie, en gris neutre. */
   .device-tab {
-    margin: -6px 10px 0; padding: 18px 14px 12px; border-radius: 0 0 14px 14px; white-space: nowrap;
-    background: var(--accent-soft); color: var(--accent-ink);
-    display: flex; align-items: center; gap: 10px; font-size: 14px;
+    margin: 12px 4px 0; white-space: nowrap; color: var(--ink-3);
+    display: flex; align-items: center; gap: 7px; font-size: 13px;
   }
   .tab-state { margin-left: auto; display: flex; }
   @media (prefers-reduced-motion: no-preference) {
-    .device-tab { animation: tab-out 220ms cubic-bezier(.2, .8, .2, 1) both; }
-    @keyframes tab-out { from { transform: translateY(-18px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .device-tab { animation: tab-out 240ms var(--ease-land) 80ms both; }
+    @keyframes tab-out { from { transform: translateY(-4px); opacity: 0; } to { transform: none; opacity: 1; } }
   }
 
   .caption-slot { margin-top: 26px; height: 40px; }
