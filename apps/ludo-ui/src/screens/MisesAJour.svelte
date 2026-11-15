@@ -62,7 +62,7 @@
             <div class="item" class:success={progress[it.id] === 'fait'}>
               <span class="thumb" style:background={it.tile ?? 'var(--control)'}>{#if !it.tile}<Icon name="settings" size={26} color="var(--ink-2)" />{/if}</span>
               <span class="text"><span class="title">{it.title}</span><span class="detail">{it.detail}</span></span>
-              {#if it.console}<ConsoleChip console={it.console} size="m" />{/if}
+              {#if it.console}<ConsoleChip console={it.console} size="m" on="ui" />{/if}
               {#if progress[it.id] === 'fait'}
                 <span class="done draw" style:--len="16"><Icon name="check-circle" size={24} color="var(--ok)" />{it.action === 'Installer' ? 'Installé' : 'À jour'}</span>
               {:else if progress[it.id] !== undefined}

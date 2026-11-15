@@ -1,9 +1,11 @@
 <script lang="ts">
   import ConsoleChip from './ConsoleChip.svelte';
+  import CoverArt from './CoverArt.svelte';
   import SyncBadge from './SyncBadge.svelte';
   import type { Game } from '../types';
 
-  // Tuile typographique d'un jeu (aucune illustration officielle : titre + couleur propre au jeu).
+  // Tuile d'un jeu : jaquette illustrée (motif original, aucune image officielle) + titre + console.
+  // Au focus, les deux plans de la jaquette glissent à des vitesses différentes (parallaxe douce).
   //
   // Mouvement au focus (couches primaire / secondaire / ambiance) :
   // - la tuile grandit (rebond léger) et se soulève de 4 px ;
@@ -65,13 +67,14 @@
   {onfocus}
   onclick={() => el && onclick?.(el)}
 >
+  {#if game.art}<CoverArt art={game.art} />{/if}
   <span class="ring" aria-hidden="true"></span>
   <span class="gleam" aria-hidden="true"></span>
   <span class="top">
     <ConsoleChip console={game.console} size={size > 250 ? 'l' : size < 190 ? 's' : 'm'} />
     <SyncBadge {game} size={Math.round(size * 0.14)} />
   </span>
-  <span class="title" style:font-size="{titleSize}px" style:color={game.tileInk}>{game.short}</span>
+  <span class="title" style:font-size="{titleSize}px" style:color={game.tileInk} class:shadowed={game.tileInk.toLowerCase() === '#ffffff'}>{game.short}</span>
 </button>
 
 <style>
@@ -79,7 +82,7 @@
     all: unset; cursor: pointer; flex-shrink: 0; box-sizing: border-box;
     border-radius: var(--radius-tile); padding: 20px;
     display: flex; flex-direction: column; justify-content: space-between;
-    position: relative; isolation: isolate;
+    position: relative; isolation: isolate; overflow: visible;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
     transition:
       width var(--t-std) var(--ease-pop),
@@ -116,6 +119,12 @@
   .title { line-height: 1.04; font-weight: 700; letter-spacing: -0.02em; white-space: pre-line; text-wrap: balance;
     transition: font-size var(--t-std) var(--ease-pop), transform 300ms var(--ease-land) 50ms; }
   .tile:focus .title { transform: translateY(-2px); }
+  .title.shadowed { text-shadow: 0 2px 10px rgba(0, 0, 0, 0.28); }
+
+  /* Parallaxe de la jaquette : le premier plan glisse plus que le décor. */
+  .tile:focus :global(.far) { transform: translate(-1px, -1px); }
+  .tile:focus :global(.near) { transform: translate(-3px, -2px) scale(1.02); }
+  .tile.lifting :global(.near) { transform: translate(-4px, -4px) scale(1.04); }
   .top { display: flex; justify-content: space-between; align-items: center; transition: transform 300ms var(--ease-pop) 70ms; transform-origin: left center; }
   .tile:focus .top { transform: scale(1.04); }
 
@@ -141,5 +150,6 @@
   @media (prefers-reduced-motion: reduce) {
     .tile:focus, .tile.lifting, .tile.dimmed { transform: none; }
     .tile:focus .title, .tile:focus .top { transform: none; }
+    .tile:focus :global(.far), .tile:focus :global(.near), .tile.lifting :global(.near) { transform: none; }
   }
 </style>

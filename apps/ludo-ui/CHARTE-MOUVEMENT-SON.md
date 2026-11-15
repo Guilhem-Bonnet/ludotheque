@@ -63,3 +63,15 @@ Thèse : un moment phare, le **lancement d'un jeu** ; ailleurs, uniquement de la
 | Barre d'aide | La touche dessinée s'enfonce quand le bouton est appuyé | l'interface répond |
 
 Mode « animations réduites » : plus aucun déplacement ni changement d'échelle ; les fondus de couleur et les états restent.
+
+## Direction de couleur C « Ambiance » (validée par Guilhem le 15/11)
+
+Maquette : https://claude.ai/artifact/NSBRvReHdaGeZR1KapYfxh. Les couleurs ternes sont proscrites.
+
+| Élément | Règle | Mouvement |
+|---|---|---|
+| Fond | Prend la couleur de la jaquette sélectionnée (`Ambiance.svelte`) ; la lumière se place au-dessus de la tuile | Fondu enchaîné de 420 ms d'un jeu à l'autre ; la même ambiance suit le jeu jusqu'à l'écran de passage et à la fiche |
+| Jaquettes | Scène illustrée en dégradé vif, motif original (`CoverArt.svelte`), titre en bas à gauche, décor à droite | Au focus, parallaxe : le décor glisse de 1 px, le premier plan de 3 px avec un léger zoom |
+| Pastille console | Monochrome blanche sur fond sombre translucide (comme Cocoon, ES-DE) ; jamais le rouge Switch | — |
+| En-tête | Profil (avatar, nom, appareil) et « À jour » dans des pastilles translucides | — |
+| Images de profil | Personnage illustré sur la couleur du profil ; cette couleur est l'accent de l'interface (Guilhem #38B6FF, Claire #34E0A1) | Clignement des yeux rare (toutes les 5,5 s) |

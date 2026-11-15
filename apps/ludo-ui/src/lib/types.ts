@@ -5,6 +5,14 @@ export type Console = 'switch' | 'switch2' | '3ds' | 'ds' | 'wiiu' | 'gc';
 /** Les cinq états de synchronisation (conception 10.4), plus l'absence de sauvegarde. */
 export type SyncState = 'a_jour' | 'synchronisation' | 'envoi_en_attente' | 'conflit' | 'hors_ligne' | 'aucune';
 
+/** Motif d'une jaquette illustrée (dessins originaux, cf. CoverArt.svelte). */
+export type Motif = 'manoir' | 'course' | 'lune' | 'prairie' | 'cristal' | 'vagues' | 'montagnes' | 'eclair';
+
+/** Jaquette illustrée : dégradé vif `from` → `to`, motif, couleur des silhouettes. */
+export interface Art { motif: Motif; from: string; to: string; ink?: string }
+
+export type AvatarKind = 'renard' | 'champi' | 'chat' | 'etoile' | 'planete' | 'poisson';
+
 export type DeviceKind = 'pc' | 'deck' | 'thor' | 'tv';
 
 export interface Profile {
@@ -12,6 +20,8 @@ export interface Profile {
   name: string;
   /** URL de l'avatar choisi ; absent = initiale sur la couleur du profil. */
   avatar?: string;
+  /** Personnage illustré choisi (en attendant les images personnelles). */
+  avatarKind?: AvatarKind;
   accent: string;
   accentSoft: string;
   accentInk: string;
@@ -37,6 +47,7 @@ export interface Game {
   console: Console;
   tile: string;
   tileInk: string;
+  art?: Art;
   emulator: string;
   install: InstallState;
   progress?: number;

@@ -4,6 +4,7 @@
   import { cubicOut } from 'svelte/easing';
   import { feedback } from '../lib/feedback';
   import { reducedMotion } from '../lib/motion';
+  import Ambiance from '../lib/components/Ambiance.svelte';
   import Avatar from '../lib/components/Avatar.svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
@@ -57,13 +58,17 @@
   }
 
   const current = $derived(games[focused]);
+
+  // Ambiance (direction C) : la lumière se place au-dessus de la tuile sélectionnée.
+  const lightX = $derived(Math.min(14 + focused * 18, 86));
   const offline = $derived(device.server === 'hors_ligne');
 </script>
 
 <div class="screen">
+  <Ambiance art={current?.art} x={lightX} key={current?.id} />
   <header class="rise" style:--i={0}>
-    <div class="who">
-      <Avatar profile={router.profile!} size={52} ring />
+    <div class="who pill">
+      <Avatar profile={router.profile!} size={46} />
       <div class="who-text">
         <span class="name">{router.profile!.name}</span>
         <span class="device">{device.name}</span>
@@ -71,11 +76,11 @@
     </div>
     <div class="status">
       {#if offline}
-        <span class="state"><Icon name="cloud-off" size={22} color="var(--offline)" />Hors ligne</span>
+        <span class="state pill"><span class="dot off"></span>Hors ligne</span>
       {:else}
-        <span class="state"><Icon name="cloud-ok" size={22} color="var(--ok)" />À jour</span>
+        <span class="state pill"><span class="dot"></span>À jour</span>
       {/if}
-      <span>{clock}</span>
+      <span class="clock">{clock}</span>
     </div>
   </header>
 
@@ -142,13 +147,20 @@
 </div>
 
 <style>
-  .screen { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+  .screen { height: 100%; display: flex; flex-direction: column; overflow: hidden; position: relative; isolation: isolate; }
+  /* Pastilles translucides (reprises de la direction B). */
+  .pill { background: rgba(255, 255, 255, 0.1); }
+  .who.pill { padding: 5px 20px 5px 5px; border-radius: 40px; gap: 12px; }
+  .state.pill { padding: 8px 14px; border-radius: 20px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 0 var(--ok); }
+  .dot.off { background: var(--offline); }
+  .clock { font-weight: 600; color: var(--ink); }
   header { display: flex; align-items: center; justify-content: space-between; padding: 28px 48px 0; }
   .who { display: flex; align-items: center; gap: 14px; }
   .who-text { display: flex; flex-direction: column; gap: 2px; }
-  .name { font-size: 18px; font-weight: 600; }
-  .device { font-size: 13px; color: var(--ink-3); }
-  .status { display: flex; align-items: center; gap: 22px; font-size: 15px; color: var(--ink-2); }
+  .name { font-size: 17px; font-weight: 600; }
+  .device { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+  .status { display: flex; align-items: center; gap: 14px; font-size: 15px; color: var(--ink); }
   .state { display: flex; align-items: center; gap: 8px; }
 
   .row-wrap { padding: 48px 0 0 48px; }
@@ -159,7 +171,7 @@
 
   /* Ligne discrète sous la tuile en focus : appareil et heure de la dernière partie, en gris neutre. */
   .device-tab {
-    margin: 12px 4px 0; white-space: nowrap; color: var(--ink-3);
+    margin: 12px 4px 0; white-space: nowrap; color: rgba(255, 255, 255, 0.7);
     display: flex; align-items: center; gap: 7px; font-size: 13px;
   }
   .tab-state { margin-left: auto; display: flex; }
@@ -171,13 +183,13 @@
   .caption-slot { margin-top: 26px; height: 40px; }
   .caption { display: flex; align-items: baseline; gap: 16px; }
   .caption h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
-  .caption span { font-size: 16px; color: var(--ink-3); }
+  .caption span { font-size: 16px; color: rgba(255, 255, 255, 0.72); }
 
   nav { margin-top: auto; display: flex; justify-content: center; gap: 36px; padding-bottom: 26px; }
   .shortcut { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); border-radius: 14px; padding: 4px; }
   .shortcut:disabled { opacity: 0.45; cursor: default; }
   .shortcut:focus { box-shadow: none; color: var(--accent-ink); }
   .shortcut:focus .round { transform: translateY(-3px) scale(1.06); background: var(--accent-soft); color: var(--accent-ink); box-shadow: 0 0 0 3px var(--ground), 0 0 0 6px var(--accent), 0 10px 20px rgba(0,0,0,.35); }
-  .round { transition: transform var(--t-quick) var(--ease-pop), background-color var(--t-quick) ease-out, box-shadow var(--t-quick) var(--ease-land); width: 60px; height: 60px; border-radius: 50%; background: var(--control); display: flex; align-items: center; justify-content: center; position: relative; color: var(--ink); }
+  .round { transition: transform var(--t-quick) var(--ease-pop), background-color var(--t-quick) ease-out, box-shadow var(--t-quick) var(--ease-land); width: 60px; height: 60px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); display: flex; align-items: center; justify-content: center; position: relative; color: var(--ink); }
   .count { position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; border-radius: 11px; background: var(--accent); color: var(--ground); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 </style>

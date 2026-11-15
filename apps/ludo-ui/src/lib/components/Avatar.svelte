@@ -1,6 +1,8 @@
 <script lang="ts">
+  import AvatarArt from './AvatarArt.svelte';
   import type { Profile } from '../types';
 
+  // Image de profil : image choisie, sinon personnage illustré sur la couleur du profil, sinon initiale.
   let { profile, size = 52, ring = false }: { profile: Profile; size?: number; ring?: boolean } = $props();
 </script>
 
@@ -11,12 +13,14 @@
   style:width="{size}px"
   style:height="{size}px"
   style:font-size="{Math.round(size * 0.42)}px"
-  style:background={profile.accentSoft}
+  style:background={profile.avatarKind ? profile.accent : profile.accentSoft}
   style:color={profile.accentInk}
   style:box-shadow={ring ? `0 0 0 ${Math.max(3, size / 30)}px var(--ground), 0 0 0 ${Math.max(6, size / 15)}px ${profile.accent}` : 'none'}
 >
   {#if profile.avatar}
     <img src={profile.avatar} alt="" />
+  {:else if profile.avatarKind}
+    <AvatarArt kind={profile.avatarKind} />
   {:else}
     {profile.name.slice(0, 1)}
   {/if}
@@ -26,6 +30,7 @@
   .avatar {
     border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
     font-weight: 600; flex-shrink: 0; overflow: hidden;
+    transition: width var(--t-std) var(--ease-pop), height var(--t-std) var(--ease-pop), box-shadow var(--t-std) var(--ease-land);
   }
   img { width: 100%; height: 100%; object-fit: cover; }
 </style>

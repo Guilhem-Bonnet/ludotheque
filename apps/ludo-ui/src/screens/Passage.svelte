@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Ambiance from '../lib/components/Ambiance.svelte';
   import { onMount } from 'svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
@@ -97,6 +98,7 @@
 </script>
 
 <div class="screen" class:launching>
+  <Ambiance art={preparation.game.art} x={14} />
   <main>
     <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero shine={launching} lifting={launching} /></div>
     <div class="side" class:dim={launching}>
@@ -133,7 +135,7 @@
 </div>
 
 <style>
-  .screen { height: 100%; display: flex; flex-direction: column; }
+  .screen { height: 100%; display: flex; flex-direction: column; position: relative; isolation: isolate; }
   main { flex-grow: 1; display: flex; align-items: center; gap: 72px; padding: 0 96px; }
   .art { pointer-events: none; transform-origin: top left; }
   /* Le panneau arrive juste après l'atterrissage de la tuile (follow-through), depuis la droite. */

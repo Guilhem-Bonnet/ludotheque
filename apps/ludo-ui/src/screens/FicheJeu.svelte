@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Ambiance from '../lib/components/Ambiance.svelte';
   import { onMount } from 'svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
@@ -30,6 +31,7 @@
 </script>
 
 <div class="screen">
+  <Ambiance art={game.art} x={14} />
   <main>
     <aside>
       <div class="art"><Tile {game} size={320} big still hero={router.heroGame === game.id} /></div>
@@ -76,7 +78,7 @@
 </div>
 
 <style>
-  .screen { height: 100%; display: flex; flex-direction: column; }
+  .screen { height: 100%; display: flex; flex-direction: column; position: relative; isolation: isolate; }
   main { flex-grow: 1; display: flex; gap: 56px; padding: 44px 56px 0; min-height: 0; }
   aside { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 22px; }
   .art { pointer-events: none; }

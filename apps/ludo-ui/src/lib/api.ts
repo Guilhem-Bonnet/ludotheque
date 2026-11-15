@@ -26,23 +26,23 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 // ——— Source de démonstration (données illustratives, mêmes que les maquettes) ———
 
 const PROFILES: Profile[] = [
-  { id: 'guilhem', name: 'Guilhem', accent: '#4cc3ff', accentSoft: '#1c3546', accentInk: '#8ad8ff', status: 'Dernière partie : Mario Kart 8 Deluxe · Hier' },
-  { id: 'claire', name: 'Claire', accent: '#ff8a5c', accentSoft: '#3a2a26', accentInk: '#ffb08f', status: 'En cours sur Steam Deck', busyElsewhere: true },
+  { id: 'guilhem', name: 'Guilhem', avatarKind: 'renard', accent: '#38b6ff', accentSoft: '#123049', accentInk: '#9ad8ff', status: 'Dernière partie : Mario Kart 8 Deluxe · Hier' },
+  { id: 'claire', name: 'Claire', avatarKind: 'champi', accent: '#34e0a1', accentSoft: '#12352c', accentInk: '#8ff0c8', status: 'En cours sur Steam Deck', busyElsewhere: true },
 ];
 
 const GAMES: Game[] = [
-  { id: 'switch-lm3', title: "Luigi's Mansion 3", short: "Luigi's\nMansion 3", console: 'switch', tile: '#1e3b33', tileInk: '#cff5e4', emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour', playtime: '12 h 40', last: { device: 'Steam Deck', deviceKind: 'deck', when: "Aujourd'hui 20:15" }, version: '1.4.0 · 2 DLC', size: '6,8 Go' },
-  { id: 'switch-mk8', title: 'Mario Kart 8 Deluxe', short: 'Mario Kart 8 Deluxe', console: 'switch', tile: '#2b2346', tileInk: '#e3dcff', emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'envoi_en_attente', playtime: '31 h 05', last: { device: 'Steam Deck', deviceKind: 'deck', when: 'Hier 22:40' }, version: '3.0.1', size: '13,2 Go' },
-  { id: 'n3ds-mm3d', title: "The Legend of Zelda: Majora's Mask 3D", short: "Majora's\nMask 3D", console: '3ds', tile: '#3a2e1b', tileInk: '#f6e3bf', emulator: 'Azahar', install: 'installe', sync: 'a_jour', playtime: '9 h 12', last: { device: 'Steam Deck', deviceKind: 'deck', when: 'Sam. 8 nov.' }, size: '1,1 Go' },
-  { id: 'switch2-pokopia', title: 'Pokopia', short: 'Pokopia', console: 'switch2', tile: '#23344a', tileInk: '#d4e7ff', emulator: 'Lichii build-177', install: 'mise_a_jour', sync: 'a_jour', playtime: '4 h 30', size: '9,7 Go' },
-  { id: 'nds-diamant', title: 'Pokémon Diamant', short: 'Pokémon\nDiamant', console: 'ds', tile: '#22262f', tileInk: '#c9cdd6', emulator: 'melonDS', install: 'non_installe', sync: 'aucune', size: '65,8 Mo' },
-  { id: 'n3ds-nsmb2', title: 'New Super Mario Bros. 2', short: 'New Super\nMario Bros. 2', console: '3ds', tile: '#3a2422', tileInk: '#ffd6cf', emulator: 'Azahar', install: 'installe', sync: 'a_jour', playtime: '6 h 02' },
-  { id: 'wiiu-wwhd', title: 'The Legend of Zelda: The Wind Waker HD', short: 'Wind\nWaker HD', console: 'wiiu', tile: '#173847', tileInk: '#c8ecfa', emulator: 'Cemu', install: 'non_installe', sync: 'aucune' },
-  { id: 'gc-tp', title: 'The Legend of Zelda: Twilight Princess', short: 'Twilight\nPrincess', console: 'gc', tile: '#2a2540', tileInk: '#dcd6ff', emulator: 'Dolphin', install: 'non_installe', sync: 'aucune' },
-  { id: 'switch-botw', title: 'The Legend of Zelda: Breath of the Wild', short: 'Breath of\nthe Wild', console: 'switch', tile: '#24331f', tileInk: '#ddf0cf', emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'conflit', playtime: '41 h 12' },
-  { id: 'switch-epee', title: 'Pokémon Épée', short: 'Pokémon\nÉpée', console: 'switch', tile: '#1f2a44', tileInk: '#d6e1ff', emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
-  { id: 'switch-letsgo', title: "Pokémon : Let's Go, Pikachu", short: "Let's Go\nPikachu", console: 'switch', tile: '#3a3418', tileInk: '#fff1b8', emulator: 'Ryujinx 1.3.3', install: 'non_installe', sync: 'aucune' },
-  { id: 'switch-xc3', title: 'Xenoblade Chronicles 3', short: 'Xenoblade\nChronicles 3', console: 'switch', tile: '#1b2b33', tileInk: '#cde6f0', emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
+  { id: 'switch-lm3', title: "Luigi's Mansion 3", short: "Luigi's\nMansion 3", console: 'switch', tile: '#0a5a78', tileInk: '#ffffff', art: { motif: 'manoir', from: '#22e08f', to: '#0a5a78' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour', playtime: '12 h 40', last: { device: 'Steam Deck', deviceKind: 'deck', when: "Aujourd'hui 20:15" }, version: '1.4.0 · 2 DLC', size: '6,8 Go' },
+  { id: 'switch-mk8', title: 'Mario Kart 8 Deluxe', short: 'Mario Kart 8 Deluxe', console: 'switch', tile: '#ff2e63', tileInk: '#ffffff', art: { motif: 'course', from: '#ff9f1c', to: '#ff2e63' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'envoi_en_attente', playtime: '31 h 05', last: { device: 'Steam Deck', deviceKind: 'deck', when: 'Hier 22:40' }, version: '3.0.1', size: '13,2 Go' },
+  { id: 'n3ds-mm3d', title: "The Legend of Zelda: Majora's Mask 3D", short: "Majora's\nMask 3D", console: '3ds', tile: '#5b2bff', tileInk: '#ffffff', art: { motif: 'lune', from: '#ff5fa8', to: '#5b2bff', ink: '#34138f' }, emulator: 'Azahar', install: 'installe', sync: 'a_jour', playtime: '9 h 12', last: { device: 'Steam Deck', deviceKind: 'deck', when: 'Sam. 8 nov.' }, size: '1,1 Go' },
+  { id: 'switch2-pokopia', title: 'Pokopia', short: 'Pokopia', console: 'switch2', tile: '#9ae6ff', tileInk: '#0b3a26', art: { motif: 'prairie', from: '#2fb8ff', to: '#9ae6ff' }, emulator: 'Lichii build-177', install: 'mise_a_jour', sync: 'a_jour', playtime: '4 h 30', size: '9,7 Go' },
+  { id: 'nds-diamant', title: 'Pokémon Diamant', short: 'Pokémon\nDiamant', console: 'ds', tile: '#3d4dff', tileInk: '#ffffff', art: { motif: 'cristal', from: '#5ee0ff', to: '#3d4dff' }, emulator: 'melonDS', install: 'non_installe', sync: 'aucune', size: '65,8 Mo' },
+  { id: 'n3ds-nsmb2', title: 'New Super Mario Bros. 2', short: 'New Super\nMario Bros. 2', console: '3ds', tile: '#ff5a3c', tileInk: '#ffffff', art: { motif: 'eclair', from: '#ffd23f', to: '#ff5a3c' }, emulator: 'Azahar', install: 'installe', sync: 'a_jour', playtime: '6 h 02' },
+  { id: 'wiiu-wwhd', title: 'The Legend of Zelda: The Wind Waker HD', short: 'Wind\nWaker HD', console: 'wiiu', tile: '#1257d6', tileInk: '#ffffff', art: { motif: 'vagues', from: '#3fd0ff', to: '#1257d6' }, emulator: 'Cemu', install: 'non_installe', sync: 'aucune' },
+  { id: 'gc-tp', title: 'The Legend of Zelda: Twilight Princess', short: 'Twilight\nPrincess', console: 'gc', tile: '#3b2a8a', tileInk: '#ffffff', art: { motif: 'lune', from: '#ff9a3c', to: '#3b2a8a', ink: '#1e1450' }, emulator: 'Dolphin', install: 'non_installe', sync: 'aucune' },
+  { id: 'switch-botw', title: 'The Legend of Zelda: Breath of the Wild', short: 'Breath of\nthe Wild', console: 'switch', tile: '#1a8f8a', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#7fe3c4', to: '#1a8f8a', ink: '#0b4a44' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'conflit', playtime: '41 h 12' },
+  { id: 'switch-epee', title: 'Pokémon Épée', short: 'Pokémon\nÉpée', console: 'switch', tile: '#3a2bd6', tileInk: '#ffffff', art: { motif: 'cristal', from: '#a98bff', to: '#3a2bd6' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
+  { id: 'switch-letsgo', title: "Pokémon : Let's Go, Pikachu", short: "Let's Go\nPikachu", console: 'switch', tile: '#ff9f1c', tileInk: '#3a2400', art: { motif: 'eclair', from: '#ffe14d', to: '#ff9f1c' }, emulator: 'Ryujinx 1.3.3', install: 'non_installe', sync: 'aucune' },
+  { id: 'switch-xc3', title: 'Xenoblade Chronicles 3', short: 'Xenoblade\nChronicles 3', console: 'switch', tile: '#3b3fd6', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#5ad1ff', to: '#3b3fd6', ink: '#1b1f6e' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
 ];
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -69,9 +69,9 @@ const demoApi: LudoApi = {
   },
   async updates() {
     return [
-      { id: 'u1', group: 'jeux', title: 'Pokopia', detail: 'Mise à jour 1.1.0 · 412 Mo', console: 'switch2', tile: '#23344a', action: 'Mettre à jour' },
-      { id: 'u2', group: 'jeux', title: 'Mario Kart 8 Deluxe', detail: 'DLC disponible : Pass circuits additionnels · 640 Mo', console: 'switch', tile: '#2b2346', action: 'Installer' },
-      { id: 'u3', group: 'nouveaux', title: 'The Legend of Zelda: Twilight Princess', detail: 'Ajouté le 14/11 · 889 Mo', console: 'gc', tile: '#2a2540', action: 'Installer' },
+      { id: 'u1', group: 'jeux', title: 'Pokopia', detail: 'Mise à jour 1.1.0 · 412 Mo', console: 'switch2', tile: 'linear-gradient(160deg, #2fb8ff, #45cf78)', action: 'Mettre à jour' },
+      { id: 'u2', group: 'jeux', title: 'Mario Kart 8 Deluxe', detail: 'DLC disponible : Pass circuits additionnels · 640 Mo', console: 'switch', tile: 'linear-gradient(135deg, #ff9f1c, #ff2e63)', action: 'Installer' },
+      { id: 'u3', group: 'nouveaux', title: 'The Legend of Zelda: Twilight Princess', detail: 'Ajouté le 14/11 · 889 Mo', console: 'gc', tile: 'linear-gradient(160deg, #ff9a3c, #3b2a8a)', action: 'Installer' },
       { id: 'u4', group: 'emulateurs', title: 'Ryujinx', detail: '1.3.3 → 1.3.4 · version de référence du foyer', action: 'Mettre à jour' },
     ];
   },
