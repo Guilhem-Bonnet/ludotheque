@@ -9,6 +9,7 @@
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
+  import type { LaunchEvent, LaunchStep } from '../lib/api';
   import type { Preparation } from '../lib/types';
 
   // Écran de passage : n'apparaît que s'il y a quelque chose à faire (téléchargement, synchro).
@@ -72,59 +73,118 @@
   let downloading = $state(false);
   let failed = $state(false);
   let cancelling = $state(false);
-  let dlIndex = -1;
-  let dlLabel = '';
+  /** Lancement réel en cours (téléchargement, sauvegarde, partie, envoi) : B ne quitte pas l'écran. */
+  let busy = $state(false);
+  let phase = $state<'prep' | 'launching' | 'playing' | 'sending'>('prep');
+  /** Étapes d'origine, pour « Réessayer ». */
+  // svelte-ignore state_referenced_locally
+  const initial = preparation.steps.map((x) => ({ ...x }));
+  const dlLabel = preparation.steps.find((x) => x.progress !== undefined)?.label ?? 'Téléchargement…';
+
+  /** Ordre des étapes de `LaunchStep` → position dans la liste. */
+  const index: Record<LaunchStep, number> = { profil: 0, telechargement: 1, sauvegarde: 2, lancement: 3, en_jeu: 4, envoi: 5, termine: 5 };
+  /** Libellé d'une étape en échec. */
+  const failLabel = ['Profil indisponible', 'Téléchargement impossible', 'Sauvegarde impossible à synchroniser', 'Lancement impossible', 'Partie interrompue', 'Envoi de la sauvegarde impossible'];
+
+  /** Applique une étape annoncée par l'app (lancement réel). */
+  function onStep(e: LaunchEvent) {
+    const s = steps[index[e.step]];
+    if (!s) return;
+    const done = e.state === 'fait';
+    s.state = done ? 'fait' : 'en_cours';
+    switch (e.step) {
+      case 'profil':
+        break;
+      case 'telechargement': {
+        const real = s.progress !== undefined;
+        downloading = !done && real;
+        if (done) {
+          if (real) { s.progress = 100; s.label = 'Téléchargement terminé'; s.detail = preparation.game.size ?? undefined; feedback('downloaded'); }
+          else s.label = 'Jeu installé';
+        } else if (real) { s.label = dlLabel; }
+        break;
+      }
+      case 'sauvegarde':
+        s.label = done ? 'Sauvegarde : à jour' : 'Sauvegarde : synchronisation';
+        if (done) s.detail = e.detail;
+        break;
+      case 'lancement':
+        s.label = done ? 'Émulateur lancé' : 'Lancement…';
+        if (!done) { phase = 'launching'; launching = true; feedback('launch'); }
+        break;
+      case 'en_jeu':
+        s.label = done ? 'Partie terminée' : 'En jeu';
+        s.detail = done ? undefined : 'Partie en cours. La sauvegarde partira à la fermeture de l\u2019émulateur.';
+        if (!done) phase = 'playing';
+        break;
+      case 'envoi':
+        s.label = done ? 'Sauvegarde envoyée' : 'Envoi de la sauvegarde…';
+        s.detail = done ? e.detail : undefined;
+        if (!done) { phase = 'sending'; launching = false; }
+        break;
+      case 'termine':
+        break;
+    }
+  }
+
+  /** Une erreur du lancement s'écrit sur l'étape en cours, avec « Réessayer » et « Retour ». */
+  function onFailure(msg: string) {
+    let i = steps.findLastIndex((x) => x.state === 'en_cours');
+    if (i < 0) i = steps.findIndex((x) => x.state !== 'fait');
+    const s = steps[Math.max(i, 0)];
+    s.label = /^En cours sur /.test(msg) ? 'Partie en cours sur un autre appareil' : failLabel[Math.max(i, 0)] ?? 'Échec';
+    s.detail = msg;
+    s.progress = s.progress !== undefined ? 0 : undefined;
+    s.state = 'a_venir';
+    failed = true;
+    launching = false;
+    downloading = false;
+    phase = 'prep';
+    feedback('err');
+    requestAnimationFrame(() => focusFirst());
+  }
 
   /**
-   * Hors démonstration : le téléchargement est réel (progression envoyée par l'app). Renvoie `true`
-   * si tout est en place (ou s'il n'y avait rien à télécharger) ; en cas d'échec l'étape reste
-   * visible avec le message d'erreur et « Réessayer » est proposé ; annulé : retour à l'écran précédent.
+   * Hors démonstration : tout est réel, les étapes viennent de l'app (verrou, téléchargement,
+   * sauvegarde, émulateur, envoi). Conflit : écran de choix. Annulé pendant le téléchargement :
+   * retour à l'écran précédent. Autre échec : l'étape reste visible avec son message.
    */
-  async function download(): Promise<boolean> {
-    if (dlIndex < 0) {
-      dlIndex = steps.findIndex((x) => x.progress !== undefined && x.state !== 'fait');
-      if (dlIndex >= 0) dlLabel = steps[dlIndex].label;
-    }
-    if (dlIndex < 0) return true;
-    const s = steps[dlIndex];
-    s.label = dlLabel;
-    s.state = 'en_cours';
-    s.progress = 0;
-    s.detail = undefined;
+  async function runReal() {
+    steps = initial.map((x) => ({ ...x }));
     failed = false;
     cancelling = false;
-    downloading = true;
+    busy = true;
     try {
-      await api.installGame(preparation.game.id, (p) => {
-        s.progress = Math.round(p * 100);
-      });
-      s.progress = 100;
-      s.label = 'Téléchargement terminé';
-      s.detail = preparation.game.size ?? undefined;
-      s.state = 'fait';
-      feedback('downloaded');
-      return true;
+      const r = await api.launchGame(
+        preparation.profile,
+        preparation.game.id,
+        onStep,
+        (p) => {
+          const s = steps[1];
+          if (s.progress !== undefined) s.progress = Math.round(p * 100);
+        },
+      );
+      if (r.result === 'conflit') {
+        router.replace({ name: 'conflit', conflict: { game: preparation.game, profile: preparation.profile, local: r.local, server: r.server, played: r.played } });
+        return;
+      }
+      for (const st of steps) st.state = 'fait';
+      steps[5].label = 'Sauvegarde envoyée';
+      steps[5].detail = r.detail;
+      phase = 'sending';
+      feedback('saved');
+      await wait(1200);
+      router.reset({ name: 'accueil' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (cancelling || msg === CANCELLED) {
         router.back();
-        return false;
+        return;
       }
-      s.label = 'Téléchargement impossible';
-      s.detail = msg;
-      s.progress = 0;
-      s.state = 'a_venir';
-      failed = true;
-      feedback('err');
-      requestAnimationFrame(() => focusFirst());
-      return false;
+      onFailure(msg);
     } finally {
-      downloading = false;
+      busy = false;
     }
-  }
-
-  async function runReal() {
-    if (await download()) await runSteps();
   }
 
   function cancel() {
@@ -166,13 +226,13 @@
   });
 </script>
 
-<div class="screen" class:launching data-modal={downloading ? "" : undefined}>
+<div class="screen" class:launching data-modal={busy ? "" : undefined}>
   <Ambiance art={preparation.game.art} x={14} />
   <main>
     <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero shine={launching} lifting={launching} /></div>
     <div class="side" class:dim={launching}>
       <div class="head rise" style:--i={1}>
-        <h1>{launching ? 'Lancement' : 'Préparation'}</h1>
+        <h1>{phase === 'playing' ? 'En jeu' : phase === 'sending' ? 'Sauvegarde' : launching ? 'Lancement' : 'Préparation'}</h1>
         <span>{preparation.game.title} · {preparation.game.emulator}</span>
       </div>
       <ol>
@@ -201,7 +261,10 @@
       {#if downloading}
         <button class="act focusable" data-autofocus data-sound="none" disabled={cancelling} onclick={cancel}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
       {:else if failed}
-        <button class="act focusable" data-autofocus onclick={() => void runReal()}>Réessayer</button>
+        <span class="acts">
+          <button class="act focusable" data-autofocus onclick={() => void runReal()}>Réessayer</button>
+          <button class="act focusable" onclick={() => router.back()}>Retour</button>
+        </span>
       {/if}
     </div>
   </main>
@@ -242,6 +305,8 @@
   .act { all: unset; cursor: pointer; align-self: flex-start; margin-left: 42px; padding: 12px 24px; border-radius: 12px; font-size: 16px; font-weight: 600; background: var(--control); color: var(--ink); }
   .act:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   .act:disabled { cursor: default; opacity: 0.8; }
+  .acts { display: flex; gap: 12px; margin-left: 42px; }
+  .acts .act { margin-left: 0; }
   .spin { animation: spin 900ms linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>

@@ -3,7 +3,8 @@
 //! Commandes branchées : `device`, `rumble` (vibrations natives), `profiles`, `saveProfile`,
 //! `history`, `restore`, `sync`, `library`, `recent` (catalogue du serveur), `installGame`,
 //! `installContent`, `uninstallGame` (installation réelle sur l'appareil ; progression par
-//! l'événement `ludo://progression`). Les autres (`updates`, `prepare`) arriveront avec la suite du
+//! l'événement `ludo://progression`), `launchGame` (lancement réel : verrou, sauvegarde, émulateur,
+//! envoi ; étapes par l'événement `ludo://passage`) et `resolveConflict`. Les autres (`updates`, `prepare`) arriveront avec la suite du
 //! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
 pub mod rumble;
@@ -11,9 +12,10 @@ pub mod rumble;
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use ludo_client::api::Client;
 use ludo_client::config::{self, Config};
-use ludo_client::engine::{Engine, SyncOutcome};
+use ludo_client::engine::{Engine, Resolution, SyncOutcome};
 use ludo_client::install::{self, Installer};
 use ludo_client::journal::{Entry, Journal};
+use ludo_client::launch::{self, ConflictInfo, LaunchError, LaunchOutcome, Observer, Step, StepState};
 use ludo_proto::{CatalogGame, FileRole, GameArt, GameFile, LeaseOutcome, Profile, SaveKey, SaveSummary};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -622,7 +624,7 @@ impl<'a> JeuOccupe<'a> {
     pub fn prendre(set: &'a Occupes, game: &str) -> Result<Self, String> {
         let mut g = set.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if g.contains_key(game) {
-            return Err("Une installation de ce jeu est déjà en cours".into());
+            return Err("Une opération sur ce jeu est déjà en cours".into());
         }
         let cancel = Arc::new(AtomicBool::new(false));
         g.insert(game.to_string(), cancel.clone());
@@ -742,11 +744,160 @@ async fn uninstall_game(game: String) -> Result<(), String> {
     .await
 }
 
+/// Événement des étapes d'un lancement (`ludo://passage`).
+pub const EVENT_PASSAGE: &str = "ludo://passage";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PassageEvent {
+    game: String,
+    step: &'static str,
+    state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+/// Relaie les étapes du lancement à l'interface et installe le jeu s'il manque.
+struct PassageObserver {
+    app: tauri::AppHandle,
+    cfg: Config,
+    game: String,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Observer for PassageObserver {
+    fn step(&mut self, step: Step, state: StepState, detail: Option<String>) {
+        let _ = self.app.emit(EVENT_PASSAGE, PassageEvent { game: self.game.clone(), step: step.id(), state: state.id(), detail });
+    }
+
+    fn install(&mut self, game: &CatalogGame) -> Result<(), String> {
+        run_install(&self.app, &self.cfg, game, &install_plan(game, None)?, self.cancel.clone())
+    }
+}
+
+/// Un côté du conflit tel que l'écran « Conflit de sauvegarde » l'affiche (`ConflictSide` de `types.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiSide {
+    device: String,
+    device_kind: &'static str,
+    when: String,
+    playtime: String,
+    delta: String,
+    /// Seulement si mesurable (temps de jeu supérieur des deux côtés) : jamais ici, le temps de
+    /// jeu d'une copie locale non synchronisée n'est connu de personne.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ahead: Option<bool>,
+}
+
+/// Les deux versions en conflit : la copie de cet appareil et la tête du serveur.
+///
+/// Le temps de jeu local n'est pas mesurable (il n'est enregistré qu'à l'envoi) : la carte locale
+/// affiche celui de la dernière version commune, et seul le serveur indique ce qu'il a gagné depuis.
+pub fn ui_conflict(info: &ConflictInfo, local_device: &str, to_local: impl Fn(u64) -> NaiveDateTime, today: NaiveDate) -> (UiSide, UiSide) {
+    let base_playtime = info.base.as_ref().map(|b| b.playtime_s);
+    let local = UiSide {
+        device: device_name(local_device),
+        device_kind: device_kind(local_device),
+        when: "Sur cet appareil".into(),
+        playtime: base_playtime.map_or_else(|| "–".into(), playtime_label),
+        delta: "Modifiée depuis la dernière synchronisation".into(),
+        ahead: None,
+    };
+    let s = &info.server;
+    let server = UiSide {
+        device: device_name(&s.device),
+        device_kind: device_kind(&s.device),
+        when: when_label(to_local(s.created_at), today),
+        playtime: playtime_label(s.playtime_s),
+        delta: match base_playtime {
+            Some(b) => format!("+{} depuis la base", playtime_label(s.playtime_s.saturating_sub(b))),
+            None => "Sans version commune avec cet appareil".into(),
+        },
+        ahead: None,
+    };
+    (local, server)
+}
+
+/// Résultat de `launchGame` (`LaunchResult` de `api.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "result", rename_all = "lowercase")]
+pub enum UiLaunch {
+    /// Partie jouée ; `detail` : « Hors ligne : envoi en attente »…
+    Termine {
+        playtime: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    /// Rien n'est lancé tant que le joueur n'a pas tranché (`played` : le conflit vient de l'envoi
+    /// après la partie, le jeu ne doit pas être relancé).
+    Conflit { local: UiSide, server: UiSide, played: bool },
+}
+
+pub fn launch_error(e: LaunchError) -> String {
+    match e {
+        LaunchError::HeldElsewhere(device) => format!("En cours sur {}", device_name(device.strip_suffix("-ui").unwrap_or(&device))),
+        LaunchError::Failed(msg) => msg,
+    }
+}
+
+/// Lance un jeu pour de vrai (comme `ludo run`) : installation si besoin, sauvegarde, émulateur,
+/// envoi à la fermeture. Les étapes partent sur `ludo://passage`. Conflit : rien n'est lancé.
+#[tauri::command(rename = "launchGame")]
+async fn launch_game(app: tauri::AppHandle, profile: String, game: String) -> Result<UiLaunch, String> {
+    blocking(move || {
+        let busy = JeuOccupe::prendre(&EN_COURS, &game)?;
+        let cfg = load_config()?;
+        let key = SaveKey { profile, game: game.clone() };
+        let mut obs = PassageObserver { app, cfg: cfg.clone(), game, cancel: busy.cancel.clone() };
+        let journal_path = config::journal_path();
+        let env = launch::Env { cfg: &cfg, journal_path: &journal_path, journal_lock: &JOURNAL };
+        match launch::launch(&env, &key, &mut obs).map_err(launch_error)? {
+            LaunchOutcome::Played { after, playtime_s, .. } => Ok(UiLaunch::Termine {
+                playtime: playtime_label(playtime_s),
+                detail: match after {
+                    SyncOutcome::Offline { pending_upload: true } => Some("Hors ligne : envoi en attente".into()),
+                    SyncOutcome::LocalMissing => Some("Dossier de sauvegarde introuvable".into()),
+                    _ => None,
+                },
+            }),
+            LaunchOutcome::Conflict(info) => {
+                let (local, server) = ui_conflict(&info, &cfg.appareil, local_time, Local::now().date_naive());
+                Ok(UiLaunch::Conflit { local, server, played: info.played })
+            }
+        }
+    })
+    .await
+}
+
+/// Applique le choix du joueur (« local » ou « serveur ») ; l'autre version reste dans l'historique
+/// du serveur (écartée). Si le serveur a encore bougé : erreur, le joueur choisit à nouveau.
+#[tauri::command(rename = "resolveConflict")]
+async fn resolve_conflict(profile: String, game: String, choice: String) -> Result<(), String> {
+    blocking(move || {
+        let resolution = match choice.as_str() {
+            "local" => Resolution::KeepLocal,
+            "serveur" => Resolution::KeepServer,
+            _ => return Err("Choix inconnu".to_string()),
+        };
+        let _busy = JeuOccupe::prendre(&EN_COURS, &game)?;
+        let cfg = load_config()?;
+        let journal_path = config::journal_path();
+        let env = launch::Env { cfg: &cfg, journal_path: &journal_path, journal_lock: &JOURNAL };
+        match launch::resolve(&env, &SaveKey { profile, game }, resolution).map_err(launch_error)? {
+            SyncOutcome::Conflict { .. } => Err("La sauvegarde a encore changé sur le serveur : choisir à nouveau".into()),
+            SyncOutcome::Offline { .. } => Err("Serveur injoignable : le choix n'a pas été appliqué".into()),
+            SyncOutcome::LocalMissing => Err("Dossier de sauvegarde introuvable : rien n'a été modifié".into()),
+            _ => Ok(()),
+        }
+    })
+    .await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     rumble::init();
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install])
+        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, resolve_conflict])
         .run(tauri::generate_context!())
         .expect("échec du démarrage de l'interface");
 }
@@ -754,6 +905,37 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conflit_pour_l_interface() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+        let server = ludo_proto::SaveRevision { playtime_s: 3 * 3600 + 23 * 60, ..rev(4, "steam-deck", false) };
+        let base = ludo_proto::SaveRevision { playtime_s: 3 * 3600, ..rev(3, "pc", false) };
+        let info = ConflictInfo { server: server.clone(), base: Some(base), played: false };
+        let (local, srv) = ui_conflict(&info, "pc", |_| at(2026, 11, 15, 14, 2), today);
+        assert_eq!((local.device.as_str(), local.playtime.as_str(), local.ahead), ("PC", "3 h 00", None));
+        assert_eq!(
+            serde_json::to_value(&srv).unwrap(),
+            serde_json::json!({ "device": "Steam Deck", "deviceKind": "deck", "when": "Aujourd'hui 14:02", "playtime": "3 h 23", "delta": "+0 h 23 depuis la base" })
+        );
+        // Sans version commune : pas de delta inventé.
+        let (local, srv) = ui_conflict(&ConflictInfo { server, base: None, played: true }, "pc", |_| at(2026, 11, 15, 14, 2), today);
+        assert_eq!(local.playtime, "–");
+        assert_eq!(srv.delta, "Sans version commune avec cet appareil");
+    }
+
+    #[test]
+    fn erreurs_de_lancement_en_francais() {
+        assert_eq!(launch_error(LaunchError::HeldElsewhere("steam-deck".into())), "En cours sur Steam Deck");
+        assert_eq!(launch_error(LaunchError::HeldElsewhere("pc-ui".into())), "En cours sur PC");
+        assert_eq!(launch_error(LaunchError::Failed("Jeu introuvable".into())), "Jeu introuvable");
+    }
+
+    #[test]
+    fn resultat_du_lancement_serialise() {
+        let r = UiLaunch::Termine { playtime: "1 h 02".into(), detail: None };
+        assert_eq!(serde_json::to_value(&r).unwrap(), serde_json::json!({ "result": "termine", "playtime": "1 h 02" }));
+    }
 
     #[test]
     fn appareils_reconnus() {

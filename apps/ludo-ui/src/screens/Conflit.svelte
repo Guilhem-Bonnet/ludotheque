@@ -3,7 +3,9 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import { feedback } from '../lib/feedback';
+  import { api, isDemo } from '../lib/api';
   import { focusFirst } from '../lib/nav';
+  import { realPreparation } from '../lib/play';
   import { router } from '../lib/router.svelte';
   import type { Conflict, ConflictSide } from '../lib/types';
 
@@ -19,12 +21,33 @@
 
   const sides = $derived<[string, ConflictSide][]>([['local', conflict.local], ['server', conflict.server]]);
 
-  function use(which: string) {
+  let error = $state('');
+
+  /**
+   * Démonstration : la carte choisie se soulève, puis retour. Dans l'app : le choix est appliqué
+   * par l'app (l'autre version reste dans l'historique), puis le jeu se lance, sauf si le conflit
+   * vient de l'envoi après une partie jouée (retour seulement).
+   */
+  async function use(which: string) {
+    error = '';
     chosen = which as 'local' | 'server';
+    if (!isDemo) {
+      try {
+        await api.resolveConflict(conflict.profile, conflict.game.id, which === 'local' ? 'local' : 'serveur');
+      } catch (e) {
+        chosen = null;
+        error = e instanceof Error ? e.message : String(e);
+        feedback('err');
+        requestAnimationFrame(() => focusFirst());
+        return;
+      }
+    }
     // La carte choisie se soulève, l'autre s'efface vers le bas ; puis l'accord « sauvegarde ».
-    // Côté Tauri : commande `resolve` (Utiliser cette sauvegarde), puis lancement.
     setTimeout(() => feedback('saved'), 260);
-    setTimeout(() => router.back(), 1100);
+    setTimeout(() => {
+      if (!isDemo && !conflict.played) router.replace({ name: 'passage', preparation: realPreparation(conflict.game, conflict.profile, router.profile?.name) });
+      else router.back();
+    }, 1100);
   }
 </script>
 
@@ -34,6 +57,7 @@
     <span class="sub">{conflict.game.title} · {router.profile?.name} · L'autre version sera conservée dans l'historique.</span>
   </header>
 
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
   <main>
     {#each sides as [key, side] (key)}
       <button class="card focusable from-{key}" class:chosen={chosen === key} class:dropped={chosen !== null && chosen !== key} onclick={() => use(key)} aria-pressed={chosen === key} disabled={chosen !== null}>
@@ -60,6 +84,7 @@
   .title { display: flex; align-items: center; gap: 14px; }
   h1 { margin: 0; font-size: 34px; font-weight: 600; letter-spacing: -0.01em; }
   .sub { font-size: 17px; color: var(--ink-3); }
+  .error { margin: 16px 72px 0; font-size: 17px; color: var(--conflict); }
   main { flex-grow: 1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; padding: 40px 72px; }
   .card { all: unset; cursor: pointer; box-sizing: border-box; border-radius: 18px; background: var(--surface); padding: 28px; display: flex; flex-direction: column; gap: 22px; }
   .card { transition: transform var(--t-slow) var(--ease-land), opacity var(--t-slow) ease-out, box-shadow var(--t-std) var(--ease-land); }

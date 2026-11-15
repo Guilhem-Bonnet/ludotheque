@@ -99,6 +99,8 @@ export interface Conflict {
   profile: string;
   local: ConflictSide;
   server: ConflictSide;
+  /** Conflit apparu à l'envoi après une partie jouée : le jeu ne se relance pas après le choix. */
+  played?: boolean;
 }
 
 export interface UpdateItem {
