@@ -48,6 +48,9 @@ pub struct Config {
     pub profil_defaut: Option<String>,
     /// Dossier de fiches qui remplace les fiches intégrées.
     pub fiches: Option<PathBuf>,
+    /// Dossier des ROM de cet appareil, même organisation que sur le serveur (`<roms>/switch/…`).
+    /// Absent = aucun jeu considéré comme installé.
+    pub roms: Option<PathBuf>,
     #[serde(default)]
     pub profils: BTreeMap<String, ProfileIds>,
     /// Jeux synchronisés par cet appareil (identifiant ludothèque → émulateur et titre).
@@ -223,6 +226,8 @@ mod tests {
         assert_eq!(ids("guilhem"), vec!["switch-mk8"]);
         // Configuration existante sans section `jeux` : toujours lisible.
         let old: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"").unwrap();
-        assert!(old.jeux.is_empty());
+        assert!(old.jeux.is_empty() && old.roms.is_none());
+        let with: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"\nroms = \"/jeux/roms\"").unwrap();
+        assert_eq!(with.roms, Some(PathBuf::from("/jeux/roms")));
     }
 }

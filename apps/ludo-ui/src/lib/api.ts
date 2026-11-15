@@ -16,6 +16,8 @@ export interface LudoApi {
   restore(profile: string, game: string, rev: number, onstep?: (step: number, progress: number) => void): Promise<void>;
   /** Temps de réponse du serveur en ms (test de connexion des Réglages) ; erreur si injoignable. */
   ping(): Promise<number>;
+  /** Installe une mise à jour ou un DLC sur l'appareil ; `onprogress` reçoit 0 à 1. */
+  installContent(game: string, content: number, onprogress?: (p: number) => void): Promise<void>;
   /** Enregistre le profil (image, nom, préférences) sur le serveur. */
   saveProfile(profile: Profile): Promise<Profile>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
@@ -39,16 +41,16 @@ const PROFILES: Profile[] = [
 ];
 
 const GAMES: Game[] = [
-  { id: 'switch-lm3', title: "Luigi's Mansion 3", short: "Luigi's\nMansion 3", console: 'switch', tile: '#0a5a78', tileInk: '#ffffff', art: { motif: 'manoir', from: '#22e08f', to: '#0a5a78' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour', playtime: '12 h 40', last: { device: 'Steam Deck', deviceKind: 'deck', when: "Aujourd'hui 20:15" }, version: '1.4.0 · 2 DLC', size: '6,8 Go' },
-  { id: 'switch-mk8', title: 'Mario Kart 8 Deluxe', short: 'Mario Kart 8 Deluxe', console: 'switch', tile: '#ff2e63', tileInk: '#ffffff', art: { motif: 'course', from: '#ff9f1c', to: '#ff2e63' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'envoi_en_attente', playtime: '31 h 05', last: { device: 'Steam Deck', deviceKind: 'deck', when: 'Hier 22:40' }, version: '3.0.1', size: '13,2 Go' },
+  { id: 'switch-lm3', title: "Luigi's Mansion 3", short: "Luigi's\nMansion 3", console: 'switch', tile: '#0a5a78', tileInk: '#ffffff', art: { motif: 'manoir', from: '#22e08f', to: '#0a5a78' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour', playtime: '12 h 40', last: { device: 'Steam Deck', deviceKind: 'deck', when: "Aujourd'hui 20:15" }, version: '1.4.0 · 2 DLC', size: '6,8 Go', content: [{ id: 101, role: 'maj', name: 'Mise à jour', size: '412 Mo', installed: true }, { id: 102, role: 'dlc', name: 'Pack multijoueur 1', size: '1,2 Go', installed: true }, { id: 103, role: 'dlc', name: 'Pack multijoueur 2', size: '1,1 Go', installed: false }] },
+  { id: 'switch-mk8', title: 'Mario Kart 8 Deluxe', short: 'Mario Kart 8 Deluxe', console: 'switch', tile: '#ff2e63', tileInk: '#ffffff', art: { motif: 'course', from: '#ff9f1c', to: '#ff2e63' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'envoi_en_attente', playtime: '31 h 05', last: { device: 'Steam Deck', deviceKind: 'deck', when: 'Hier 22:40' }, version: '3.0.1', size: '13,2 Go', content: [{ id: 201, role: 'maj', name: 'Mise à jour', size: '640 Mo', installed: true }, { id: 202, role: 'dlc', name: 'Pass circuits additionnels', size: '2,4 Go', installed: false }] },
   { id: 'n3ds-mm3d', title: "The Legend of Zelda: Majora's Mask 3D", short: "Majora's\nMask 3D", console: '3ds', tile: '#5b2bff', tileInk: '#ffffff', art: { motif: 'lune', from: '#ff5fa8', to: '#5b2bff', ink: '#34138f' }, emulator: 'Azahar', install: 'installe', sync: 'a_jour', playtime: '9 h 12', last: { device: 'Steam Deck', deviceKind: 'deck', when: 'Sam. 8 nov.' }, size: '1,1 Go' },
   { id: 'switch2-pokopia', title: 'Pokopia', short: 'Pokopia', console: 'switch2', tile: '#9ae6ff', tileInk: '#0b3a26', art: { motif: 'prairie', from: '#2fb8ff', to: '#9ae6ff' }, emulator: 'Lichii build-177', install: 'mise_a_jour', sync: 'a_jour', playtime: '4 h 30', size: '9,7 Go' },
   { id: 'nds-diamant', title: 'Pokémon Diamant', short: 'Pokémon\nDiamant', console: 'ds', tile: '#3d4dff', tileInk: '#ffffff', art: { motif: 'cristal', from: '#5ee0ff', to: '#3d4dff' }, emulator: 'melonDS', install: 'non_installe', sync: 'aucune', size: '65,8 Mo' },
   { id: 'n3ds-nsmb2', title: 'New Super Mario Bros. 2', short: 'New Super\nMario Bros. 2', console: '3ds', tile: '#ff5a3c', tileInk: '#ffffff', art: { motif: 'eclair', from: '#ffd23f', to: '#ff5a3c' }, emulator: 'Azahar', install: 'installe', sync: 'a_jour', playtime: '6 h 02' },
   { id: 'wiiu-wwhd', title: 'The Legend of Zelda: The Wind Waker HD', short: 'Wind\nWaker HD', console: 'wiiu', tile: '#1257d6', tileInk: '#ffffff', art: { motif: 'vagues', from: '#3fd0ff', to: '#1257d6' }, emulator: 'Cemu', install: 'non_installe', sync: 'aucune' },
   { id: 'gc-tp', title: 'The Legend of Zelda: Twilight Princess', short: 'Twilight\nPrincess', console: 'gc', tile: '#3b2a8a', tileInk: '#ffffff', art: { motif: 'lune', from: '#ff9a3c', to: '#3b2a8a', ink: '#1e1450' }, emulator: 'Dolphin', install: 'non_installe', sync: 'aucune' },
-  { id: 'switch-botw', title: 'The Legend of Zelda: Breath of the Wild', short: 'Breath of\nthe Wild', console: 'switch', tile: '#1a8f8a', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#7fe3c4', to: '#1a8f8a', ink: '#0b4a44' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'conflit', playtime: '41 h 12' },
-  { id: 'switch-epee', title: 'Pokémon Épée', short: 'Pokémon\nÉpée', console: 'switch', tile: '#3a2bd6', tileInk: '#ffffff', art: { motif: 'cristal', from: '#a98bff', to: '#3a2bd6' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
+  { id: 'switch-botw', title: 'The Legend of Zelda: Breath of the Wild', short: 'Breath of\nthe Wild', console: 'switch', tile: '#1a8f8a', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#7fe3c4', to: '#1a8f8a', ink: '#0b4a44' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'conflit', playtime: '41 h 12', content: [{ id: 301, role: 'maj', name: 'Mise à jour', size: '1,1 Go', installed: true }, { id: 302, role: 'dlc', name: "Pass d'extension", size: '1,9 Go', installed: true }] },
+  { id: 'switch-epee', title: 'Pokémon Épée', short: 'Pokémon\nÉpée', console: 'switch', tile: '#3a2bd6', tileInk: '#ffffff', art: { motif: 'cristal', from: '#a98bff', to: '#3a2bd6' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_recuperer', content: [{ id: 401, role: 'dlc', name: "L'Île solitaire de l'Armure", size: '1,4 Go', installed: false }, { id: 402, role: 'dlc', name: 'Les Terres Enneigées de la Couronne', size: '1,6 Go', installed: false }] },
   { id: 'switch-letsgo', title: "Pokémon : Let's Go, Pikachu", short: "Let's Go\nPikachu", console: 'switch', tile: '#ff9f1c', tileInk: '#3a2400', art: { motif: 'eclair', from: '#ffe14d', to: '#ff9f1c' }, emulator: 'Ryujinx 1.3.3', install: 'non_installe', sync: 'aucune' },
   { id: 'switch-xc3', title: 'Xenoblade Chronicles 3', short: 'Xenoblade\nChronicles 3', console: 'switch', tile: '#3b3fd6', tileInk: '#ffffff', art: { motif: 'montagnes', from: '#5ad1ff', to: '#3b3fd6', ink: '#1b1f6e' }, emulator: 'Ryujinx 1.3.3', install: 'installe', sync: 'a_jour' },
 ];
@@ -95,6 +97,9 @@ const demoApi: LudoApi = {
   async ping() {
     await wait(700);
     return 12;
+  },
+  async installContent(_g, _c, onprogress) {
+    for (let i = 1; i <= 20; i++) { await wait(90); onprogress?.(i / 20); }
   },
   async saveProfile(profile) {
     await wait(120);
@@ -169,7 +174,8 @@ const tauriApi: LudoApi = {
   library: viaTauri('library', (profile) => ({ profile })),
   history: viaTauri('history', (profile, game) => ({ profile, game })),
   updates: viaTauri('updates', () => ({})),
-  sync: viaTauri('sync', (profile) => ({ profile })),
+  // Écriture (envoi des sauvegardes) : une erreur remonte, jamais un faux « à jour » de démonstration.
+  sync: viaTauri('sync', (profile) => ({ profile }), false),
   saveProfile: async (profile) => {
     // Premier enregistrement sur un serveur sans profils : on enregistre aussi les autres profils
     // affichés, sinon « Qui joue ? » ne montrerait plus que celui-ci au prochain démarrage.
@@ -189,6 +195,15 @@ const tauriApi: LudoApi = {
     }
   },
   ping: viaTauri('ping', () => ({})),
+  installContent: async (game, content, onprogress) => {
+    try {
+      await invoke('installContent', { game, content });
+      onprogress?.(1);
+    } catch (e) {
+      if (!commandMissing(e)) throw new Error(String(e));
+      await demoApi.installContent(game, content, onprogress);
+    }
+  },
   restore: async (profile, game, rev, onstep) => {
     try {
       await invoke('restore', { profile, game, rev });

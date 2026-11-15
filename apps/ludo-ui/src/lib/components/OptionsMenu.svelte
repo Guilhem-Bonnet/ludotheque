@@ -35,6 +35,7 @@
   const isSwitch = $derived(game.console === 'switch');
   let syncing = $state(false);
   let synced = $state(false);
+  let failed = $state<string | null>(null);
   let confirmRemove = $state(false);
 
   async function syncGame() {
@@ -42,12 +43,24 @@
     syncing = true;
     feedback('syncStart');
     const tick = setInterval(() => playSound('syncTick'), 900);
-    const lib = await api.sync(profile).finally(() => clearInterval(tick));
+    let lib: Game[];
+    try {
+      lib = await api.sync(profile);
+    } catch {
+      syncing = false;
+      synced = false;
+      failed = 'Serveur injoignable';
+      feedback('err');
+      return;
+    } finally {
+      clearInterval(tick);
+    }
     syncing = false;
     const g = lib.find((x) => x.id === game.id);
-    if (g) onchange({ ...game, sync: g.sync });
-    synced = g?.sync !== 'conflit';
-    feedback(synced ? 'saved' : 'conflict');
+    if (g) onchange({ ...game, sync: g.sync, syncError: g.syncError });
+    failed = g?.syncError ?? null;
+    synced = !failed && g?.sync !== 'conflit';
+    feedback(failed ? 'err' : synced ? 'saved' : 'conflict');
   }
 
   function switchEmulator() {
@@ -91,7 +104,7 @@
       <li>
         <button class="opt focusable" data-sound="none" onclick={syncGame} aria-busy={syncing}>
           <CloudIcon name={synced ? 'cloud-ok' : 'cloud-sync'} busy={syncing} color={synced ? 'var(--ok)' : undefined} />
-          {syncing ? 'Synchronisation…' : synced ? 'Sauvegarde à jour' : 'Synchroniser ce jeu'}
+          {syncing ? 'Synchronisation…' : synced ? 'Sauvegarde à jour' : failed ? `Échec · ${failed}` : 'Synchroniser ce jeu'}
         </button>
       </li>
     {/if}

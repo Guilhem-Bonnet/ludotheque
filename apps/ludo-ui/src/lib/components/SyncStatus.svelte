@@ -21,6 +21,8 @@
     if (busy || n('synchronisation')) return { key: 'sync', icon: 'cloud-sync', color: 'var(--sync)', label: 'Synchronisation…' } as const;
     const conflits = n('conflit');
     if (conflits) return { key: 'conflit', icon: 'conflict', color: 'var(--conflict)', label: conflits > 1 ? `${conflits} conflits de sauvegarde` : 'Conflit de sauvegarde' } as const;
+    const echecs = games.filter((g) => g.syncError).length;
+    if (echecs) return { key: 'attente', icon: 'cloud-off', color: 'var(--pending)', label: echecs > 1 ? `Synchronisation incomplète · ${echecs} jeux` : 'Synchronisation incomplète' } as const;
     const attente = n('envoi_en_attente');
     if (attente) return { key: 'attente', icon: 'cloud-pending', color: 'var(--pending)', label: attente > 1 ? `${attente} envois en attente` : 'Envoi en attente' } as const;
     return { key: 'ok', icon: 'cloud-ok', color: 'var(--ok)', label: 'À jour' } as const;

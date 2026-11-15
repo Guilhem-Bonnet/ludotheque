@@ -3,7 +3,9 @@
 export type Console = 'switch' | 'switch2' | '3ds' | 'ds' | 'wiiu' | 'gc';
 
 /** Les cinq états de synchronisation (conception 10.4), plus l'absence de sauvegarde. */
-export type SyncState = 'a_jour' | 'synchronisation' | 'envoi_en_attente' | 'conflit' | 'hors_ligne' | 'aucune';
+export type SyncState = 'a_jour' | 'synchronisation' | 'envoi_en_attente' | 'conflit' | 'hors_ligne' | 'aucune'
+  /** Sauvegarde sur le serveur jamais récupérée sur cet appareil (téléchargée d'elle-même au lancement). */
+  | 'a_recuperer';
 
 /** Motif d'une jaquette illustrée (dessins originaux, cf. CoverArt.svelte). */
 export type Motif = 'manoir' | 'course' | 'lune' | 'prairie' | 'cristal' | 'vagues' | 'montagnes' | 'eclair';
@@ -41,6 +43,15 @@ export interface LastSession {
 
 export type InstallState = 'installe' | 'non_installe' | 'telechargement' | 'mise_a_jour';
 
+/** Mise à jour ou DLC d'un jeu (vue « Contenu additionnel »). */
+export interface GameContent {
+  id: number;
+  role: 'maj' | 'dlc';
+  name: string;
+  size: string;
+  installed: boolean;
+}
+
 export interface Game {
   id: string;
   title: string;
@@ -56,6 +67,9 @@ export interface Game {
   sync: SyncState;
   playtime?: string;
   last?: LastSession;
+  /** Échec de la dernière synchronisation manuelle de ce jeu (« En cours sur Steam Deck »…). */
+  syncError?: string;
+  content?: GameContent[];
   version?: string;
   size?: string;
 }

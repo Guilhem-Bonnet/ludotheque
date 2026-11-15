@@ -318,3 +318,28 @@ fn profils_par_le_client() {
     let bad = Profile { avatar_kind: Some("dragon".into()), ..p };
     assert!(matches!(client.put_profile(&bad), Err(ludo_client::api::ApiError::Http { status: 400, .. })));
 }
+
+/// Le client lit le catalogue et le résumé des sauvegardes d'un vrai serveur, et déclenche un balayage.
+#[test]
+fn catalogue_et_resume_des_sauvegardes() {
+    let data = tempfile::tempdir().unwrap();
+    let roms = tempfile::tempdir().unwrap();
+    write(&roms.path().join("ds/Pokémon Diamant.nds"), "rom");
+    let store = Store::open(data.path(), Box::new(SystemClock)).unwrap().with_roms(roms.path().to_path_buf());
+    let store = Arc::new(store);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    std::thread::spawn(move || {
+        tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            axum::serve(tokio::net::TcpListener::from_std(listener).unwrap(), ludo_server::router(store)).await.unwrap();
+        });
+    });
+    let client = Client::new(&format!("http://{addr}"));
+    assert!(client.games().unwrap().is_empty());
+    let report = client.rescan().unwrap();
+    assert_eq!((report.games, report.files), (1, 1));
+    let games = client.games().unwrap();
+    assert_eq!((games[0].id.as_str(), games[0].title.as_str()), ("ds-pokemon-diamant", "Pokémon Diamant"));
+    assert!(client.save_summaries("claire").unwrap().is_empty());
+}

@@ -10,7 +10,7 @@
   import { focusFirst } from '../lib/nav';
   import { play } from '../lib/play';
   import { router } from '../lib/router.svelte';
-  import type { Game, SaveRevision } from '../lib/types';
+  import type { Game, GameContent, SaveRevision } from '../lib/types';
 
   let { game }: { game: Game } = $props();
   let history = $state<SaveRevision[]>([]);
@@ -30,9 +30,43 @@
     requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus({ preventScroll: true }));
   }
 
+  /* Onglets : Sauvegardes / Contenu additionnel (mises à jour et DLC), L1 et R1 comme la Bibliothèque. */
+  let tab = $state<'saves' | 'content'>('saves');
+  let content = $state<GameContent[]>(game.content ?? []);
+  let progress = $state<Record<number, number>>({});
+  let justInstalled = $state<number | null>(null);
+  let failedId = $state<number | null>(null);
+
+  function showTab(t: 'saves' | 'content') {
+    if (t === tab || (t === 'content' && content.length === 0)) return;
+    tab = t;
+    feedback('tab');
+  }
+
+  async function install(c: GameContent) {
+    if (c.installed || progress[c.id] !== undefined) return;
+    failedId = null;
+    progress = { ...progress, [c.id]: 0 };
+    try {
+      await api.installContent(game.id, c.id, (p) => (progress = { ...progress, [c.id]: p }));
+      content = content.map((x) => (x.id === c.id ? { ...x, installed: true } : x));
+      justInstalled = c.id;
+      feedback('downloaded');
+    } catch {
+      failedId = c.id;
+      feedback('err');
+    } finally {
+      const { [c.id]: _, ...rest } = progress;
+      progress = rest;
+    }
+  }
+
   onMount(() => {
     api.history(router.profile!.id, game.id).then((h) => (history = h));
     focusFirst();
+    const onTab = (ev: Event) => showTab((ev as CustomEvent<number>).detail > 0 ? 'content' : 'saves');
+    window.addEventListener('ludo:tab', onTab);
+    return () => window.removeEventListener('ludo:tab', onTab);
   });
 
   const installed = $derived(game.install !== 'non_installe');
@@ -56,6 +90,36 @@
     </aside>
 
     <section aria-labelledby="hist">
+      {#if content.length > 0}
+        <div class="tabs" role="tablist">
+          <span class="bumper" aria-hidden="true">L1</span>
+          <button class="tab" role="tab" aria-selected={tab === 'saves'} class:on={tab === 'saves'} onclick={() => showTab('saves')}>Sauvegardes</button>
+          <button class="tab" role="tab" aria-selected={tab === 'content'} class:on={tab === 'content'} onclick={() => showTab('content')}>Contenu additionnel<span class="count">{content.length}</span></button>
+          <span class="bumper" aria-hidden="true">R1</span>
+        </div>
+      {/if}
+      {#if tab === 'content'}
+        <ul class="content" aria-label="Contenu additionnel">
+          {#each content as c, i (c.id)}
+            <li class="rise" style:--i={i}>
+              <button class="row focusable" class:pop={justInstalled === c.id} class:done={c.installed} data-sound="none" aria-disabled={c.installed} onclick={() => install(c)}>
+                <Icon name={c.role === 'maj' ? 'update' : 'download'} size={22} color="var(--ink-2)" />
+                <span class="cname">{c.name}</span>
+                <span class="role">{c.role === 'maj' ? 'Mise à jour' : 'DLC'}</span>
+                <span class="csize">{c.size}</span>
+                {#if c.installed}
+                  <span class="tag ok"><Icon name="check" size={14} color="#8be6b5" />Installé</span>
+                {:else if progress[c.id] !== undefined}
+                  <span class="mini" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress[c.id] * 100)} aria-label="Installation de {c.name}"><span style:width="{progress[c.id] * 100}%"></span></span>
+                {:else}
+                  <span class="restore">{failedId === c.id ? 'Réessayer' : 'Installer'}</span>
+                {/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+        <span class="policy">Mises à jour et DLC installés dans le dossier de contenu externe de l'émulateur, de la même façon sur tous les appareils.</span>
+      {:else}
       <div class="head">
         <h1 id="hist">Historique des sauvegardes</h1>
         {#if game.sync === 'a_jour'}<span class="state"><Icon name="cloud-ok" size={20} color="var(--ok)" />À jour</span>{/if}
@@ -80,12 +144,13 @@
         </ul>
         <span class="policy">20 dernières versions, une par jour sur 30 jours, une par mois ensuite.</span>
       {/if}
+      {/if}
     </section>
   </main>
   {#if restoring}
     <RestoreDialog {game} rev={restoring} profile={router.profile!.id} ondone={restoreDone} onfail={() => { restoring = null; requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus()); }} />
   {/if}
-  <ButtonHints hints={restoring ? [] : [{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Retour' }]} />
+  <ButtonHints hints={restoring ? [] : [{ key: 'A', label: tab === 'content' ? 'Installer' : 'Sélectionner' }, { key: 'B', label: 'Retour' }]} note={content.length > 0 && !restoring ? 'L1 / R1 : Sauvegardes, Contenu additionnel' : undefined} />
 </div>
 
 <style>
@@ -117,4 +182,19 @@
   .restore { margin-left: auto; font-size: 15px; font-weight: 600; padding: 8px 16px; border-radius: var(--radius-control); background: var(--control); color: var(--ink); }
   .row:focus .restore { background: var(--accent); color: var(--ground); }
   .policy, .empty { font-size: 14px; color: var(--ink-4); }
+  .tabs { display: flex; align-items: center; gap: 6px; }
+  .bumper { font-size: 12px; font-weight: 700; color: var(--ink-4); border: 1.5px solid var(--hint); border-radius: 6px; padding: 2px 6px; margin: 0 4px; }
+  .tab { all: unset; cursor: pointer; font-size: 20px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-control); color: var(--ink-3); display: inline-flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out, background-color var(--t-std) var(--ease-land); }
+  .tab.on { color: var(--ground); background: var(--accent); }
+  .count { font-size: 12px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.16); }
+  .tab.on .count { background: rgba(0, 0, 0, 0.18); }
+  .cname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .role { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-3); background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px; }
+  .csize { width: 80px; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  /* Colonne de droite de largeur fixe : rien ne bouge quand « Installer » devient une barre puis « Installé ». */
+  .content .tag, .content .restore, .content .mini { margin-left: 8px; width: 120px; box-sizing: border-box; justify-content: center; text-align: center; flex-shrink: 0; }
+  .content .row.done { cursor: default; }
+  .tag { display: inline-flex; align-items: center; gap: 4px; }
+  .mini { width: 120px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+  .mini span { display: block; height: 100%; background: var(--accent); transition: width 90ms linear; }
 </style>
