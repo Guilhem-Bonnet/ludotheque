@@ -237,3 +237,34 @@ pub struct RescanReport {
     #[serde(default)]
     pub ignored: Vec<String>,
 }
+
+/// Indication de progression d'une conversion côté serveur (corps JSON d'un `202 Accepted` sur
+/// `GET /games/{id}/files/{file_id}?formats=…`). Tous les champs sauf `state` sont indicatifs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConvertProgress {
+    /// `queued` (une autre conversion passe avant) ou `converting`.
+    pub state: String,
+    /// Secondes écoulées depuis la demande.
+    #[serde(default)]
+    pub elapsed_s: u64,
+    /// Octets déjà écrits par la conversion (la taille finale n'est pas connue d'avance).
+    #[serde(default)]
+    pub written_bytes: u64,
+    /// Taille du fichier compressé stocké.
+    #[serde(default)]
+    pub source_bytes: u64,
+    /// Pourcentage annoncé par le convertisseur, s'il en donne un.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub percent: Option<u8>,
+}
+
+/// Formats d'un jeu Switch compressés, et leur équivalent lisible partout.
+pub const CONVERTIBLE: [(&str, &str); 2] = [("nsz", "nsp"), ("xcz", "xci")];
+
+/// Format de sortie d'une conversion pour un fichier stocké en `stored` et un émulateur qui
+/// accepte `accepted` : `None` si le fichier est lisible tel quel, ou non convertible.
+pub fn conversion_target(stored: &str, accepted: &[String]) -> Option<&'static str> {
+    let has = |f: &str| accepted.iter().any(|a| a.eq_ignore_ascii_case(f));
+    let (_, target) = CONVERTIBLE.iter().find(|(from, _)| from.eq_ignore_ascii_case(stored))?;
+    (!has(stored) && has(target)).then_some(*target)
+}

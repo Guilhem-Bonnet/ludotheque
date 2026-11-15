@@ -8,6 +8,7 @@ license.workspace = true
 axum = "0.8.9"
 futures-core = "0.3"
 hex = "0.4.3"
+libc = "0.2"
 ludo-core = { version = "0.1.0", path = "../ludo-core" }
 ludo-proto = { version = "0.1.0", path = "../ludo-proto" }
 rusqlite = { version = "0.42.0", features = ["bundled"] }

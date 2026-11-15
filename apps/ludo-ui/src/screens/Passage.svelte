@@ -4,7 +4,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { api, CANCELLED, isDemo } from '../lib/api';
+  import { api, CANCELLED, isDemo, prepLabel } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
@@ -95,8 +95,10 @@
     cancelling = false;
     downloading = true;
     try {
-      await api.installGame(preparation.game.id, (p) => {
-        s.progress = Math.round(p * 100);
+      await api.installGame(preparation.game.id, (p, prep) => {
+        // Le serveur convertit d'abord le fichier (NSZ → NSP) : l'étape le dit, la barre suit le convertisseur.
+        s.label = prep ? prepLabel(prep) : dlLabel;
+        s.progress = prep ? (prep.percent ?? 0) : Math.round(p * 100);
       });
       s.progress = 100;
       s.label = 'Téléchargement terminé';

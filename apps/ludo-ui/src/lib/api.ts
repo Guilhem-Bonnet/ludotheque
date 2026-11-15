@@ -16,10 +16,10 @@ export interface LudoApi {
   restore(profile: string, game: string, rev: number, onstep?: (step: number, progress: number) => void): Promise<void>;
   /** Temps de réponse du serveur en ms (test de connexion des Réglages) ; erreur si injoignable. */
   ping(): Promise<number>;
-  /** Installe une mise à jour ou un DLC sur l'appareil ; `onprogress` reçoit 0 à 1. */
-  installContent(game: string, content: number, onprogress?: (p: number) => void): Promise<void>;
+  /** Installe une mise à jour ou un DLC sur l'appareil ; `onprogress` reçoit 0 à 1 (et `preparing` tant que le serveur convertit le fichier). */
+  installContent(game: string, content: number, onprogress?: OnProgress): Promise<void>;
   /** Installe un jeu sur l'appareil (jeu de base et mises à jour) ; `onprogress` reçoit 0 à 1. Erreur : message en français. */
-  installGame(game: string, onprogress?: (p: number) => void): Promise<void>;
+  installGame(game: string, onprogress?: OnProgress): Promise<void>;
   /** Annule l'installation en cours d'un jeu (l'appel à `installGame` échoue alors avec « Installation annulée »). */
   cancelInstall(game: string): Promise<void>;
   /** Désinstalle un jeu de l'appareil : fichiers du jeu seulement, jamais les sauvegardes. */
@@ -29,6 +29,23 @@ export interface LudoApi {
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
   prepare(profile: string, game: string): Promise<{ conflict: Conflict } | { preparation: Preparation }>;
 }
+
+/** Le serveur prépare le fichier (conversion NSZ → NSP pour Eden) : « Préparation sur le serveur… ». */
+export interface Preparing {
+  /** Avancement annoncé par le convertisseur (0 à 100), s'il en donne un. */
+  percent?: number;
+  /** En attente d'une autre conversion. */
+  queued: boolean;
+}
+
+/** Libellé de l'étape de préparation sur le serveur. */
+export function prepLabel(p: Preparing): string {
+  if (p.queued) return "File d'attente sur le serveur…";
+  return p.percent !== undefined ? `Préparation sur le serveur… ${p.percent} %` : 'Préparation sur le serveur…';
+}
+
+/** Rappel de progression : `p` de 0 à 1 ; `preparing` n'est présent que pendant la préparation sur le serveur. */
+export type OnProgress = (p: number, preparing?: Preparing) => void;
 
 const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -42,14 +59,17 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 const EVENT_PROGRESSION = 'ludo://progression';
 
 /** Exécute `run` en relayant la progression du jeu `game` à `onprogress` (0 à 1). */
-async function withProgress<T>(game: string, onprogress: ((p: number) => void) | undefined, run: () => Promise<T>): Promise<T> {
+async function withProgress<T>(game: string, onprogress: OnProgress | undefined, run: () => Promise<T>): Promise<T> {
   let unlisten: (() => void) | undefined;
   if (onprogress) {
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      unlisten = await listen<{ game: string; file: number; done: number; total: number }>(EVENT_PROGRESSION, (ev) => {
-        const { game: g, done, total } = ev.payload;
-        if (g === game && total > 0) onprogress(Math.min(1, done / total));
+      unlisten = await listen<{ game: string; file: number; done: number; total: number; prepare?: { percent?: number; queued: boolean } }>(EVENT_PROGRESSION, (ev) => {
+        const { game: g, done, total, prepare } = ev.payload;
+        if (g !== game) return;
+        const p = total > 0 ? Math.min(1, done / total) : 0;
+        if (prepare) onprogress(p, { percent: prepare.percent, queued: prepare.queued });
+        else if (total > 0) onprogress(p);
       });
     } catch {
       // Pas d'écoute possible : l'installation se fait quand même, sans progression.

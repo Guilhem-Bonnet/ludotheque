@@ -5,7 +5,7 @@
   import Icon from '../lib/components/Icon.svelte';
   import RestoreDialog from '../lib/components/RestoreDialog.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { api, CANCELLED } from '../lib/api';
+  import { api, CANCELLED, prepLabel, type Preparing } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { play } from '../lib/play';
@@ -74,6 +74,8 @@
   let installState = $state(game.install);
   const installed = $derived(installState !== 'non_installe');
   let installing = $state<number | null>(null);
+  /** Le serveur convertit le fichier (NSZ → NSP) avant l'envoi. */
+  let preparing = $state<Preparing | null>(null);
   let installError = $state<string | null>(null);
   let confirmRemove = $state(false);
   let removing = $state(false);
@@ -86,7 +88,10 @@
     installError = null;
     installing = 0;
     try {
-      await api.installGame(game.id, (p) => (installing = p));
+      await api.installGame(game.id, (p, prep) => {
+        installing = p;
+        preparing = prep ?? null;
+      });
       installState = 'installe';
       // Les mises à jour du jeu sont installées avec lui ; les DLC restent un choix.
       content = content.map((c) => (c.role === 'maj' ? { ...c, installed: true } : c));
@@ -99,6 +104,7 @@
       }
     } finally {
       installing = null;
+      preparing = null;
       cancelling = false;
       // Le bouton « Annuler » disparaît : le focus revient sur le bouton principal (Installer ou Jouer).
       requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus({ preventScroll: true }));
@@ -149,8 +155,8 @@
       <div class="art"><Tile {game} size={320} big still hero={router.heroGame === game.id} /></div>
       <div class="actions">
         <button class="primary focusable" class:busy={installing !== null} data-autofocus aria-busy={installing !== null} onclick={primary}>
-          {#if installing !== null}<span class="fill" style:width="{installing * 100}%"></span>{/if}
-          <span class="label">{installing !== null ? `Téléchargement… ${Math.round(installing * 100)} %` : installed ? 'Jouer' : installError ? 'Réessayer' : 'Installer'}</span>
+          {#if installing !== null}<span class="fill" class:waiting={preparing !== null} style:width="{preparing ? 100 : installing * 100}%"></span>{/if}
+          <span class="label">{installing !== null ? (preparing ? prepLabel(preparing) : `Téléchargement… ${Math.round(installing * 100)} %`) : installed ? 'Jouer' : installError ? 'Réessayer' : 'Installer'}</span>
         </button>
         {#if installing !== null}
           <button class="secondary focusable" data-sound="none" disabled={cancelling} onclick={cancelInstall}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
@@ -242,6 +248,9 @@
   .primary .label { position: relative; }
   .primary.busy { cursor: progress; }
   /* Progression sur le bouton lui-même : la partie remplie prend la couleur d'accent. */
+  .fill.waiting { animation: attente 1.6s ease-in-out infinite alternate; }
+  @keyframes attente { from { opacity: 0.2; } to { opacity: 0.55; } }
+  @media (prefers-reduced-motion: reduce) { .fill.waiting { animation: none; } }
   .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: 0.55; transition: width 120ms linear; }
   .secondary { font-size: 16px; background: var(--control); color: var(--ink); }
   .secondary.armed { background: rgba(255, 90, 90, 0.16); color: #ff9b9b; }
