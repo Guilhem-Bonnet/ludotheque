@@ -143,12 +143,19 @@ const demoApi: LudoApi = {
  * - lecture (`fallback: true`) : retombe aussi sur la démonstration (serveur éteint, catalogue absent) ;
  * - écriture (restauration, profil) : l'erreur remonte, pour ne jamais afficher un faux succès.
  */
+/**
+ * Commande absente de l'app Rust (pas encore branchée) : seul cas où l'on retombe toujours sur la
+ * démonstration. Motifs exacts de Tauri 2 (« Command xyz not found », refus d'autorisation), pour
+ * ne jamais confondre avec une erreur réseau comme « host not found ».
+ */
+const commandMissing = (e: unknown) => /^Command \S+ not found$| not allowed( on |\. (Plugin|Command) not found)/.test(String(e));
+
 function viaTauri<K extends keyof LudoApi>(cmd: K, args: (...a: Parameters<LudoApi[K]>) => Record<string, unknown>, fallback = true): LudoApi[K] {
   return (async (...a: Parameters<LudoApi[K]>) => {
     try {
       return await invoke(cmd, args(...a));
     } catch (e) {
-      const missing = /not found|unknown command|not allowed/i.test(String(e));
+      const missing = commandMissing(e);
       if (!missing && !fallback) throw new Error(String(e));
       return (demoApi[cmd] as (...x: unknown[]) => unknown)(...a);
     }
@@ -163,14 +170,31 @@ const tauriApi: LudoApi = {
   history: viaTauri('history', (profile, game) => ({ profile, game })),
   updates: viaTauri('updates', () => ({})),
   sync: viaTauri('sync', (profile) => ({ profile })),
-  saveProfile: viaTauri('saveProfile', (profile) => ({ profile }), false),
+  saveProfile: async (profile) => {
+    // Premier enregistrement sur un serveur sans profils : on enregistre aussi les autres profils
+    // affichés, sinon « Qui joue ? » ne montrerait plus que celui-ci au prochain démarrage.
+    try {
+      await invoke('profiles');
+    } catch (e) {
+      if (commandMissing(e)) return demoApi.saveProfile(profile);
+      if (/aucun profil/.test(String(e))) {
+        for (const p of PROFILES) if (p.id !== profile.id) await invoke('saveProfile', { profile: p });
+      }
+    }
+    try {
+      return await invoke<Profile>('saveProfile', { profile });
+    } catch (e) {
+      if (commandMissing(e)) return demoApi.saveProfile(profile);
+      throw new Error(String(e));
+    }
+  },
   ping: viaTauri('ping', () => ({})),
   restore: async (profile, game, rev, onstep) => {
     try {
       await invoke('restore', { profile, game, rev });
       onstep?.(2, 1);
     } catch (e) {
-      if (!/not found|unknown command|not allowed/i.test(String(e))) throw new Error(String(e));
+      if (!commandMissing(e)) throw new Error(String(e));
       await demoApi.restore(profile, game, rev, onstep);
     }
   },
