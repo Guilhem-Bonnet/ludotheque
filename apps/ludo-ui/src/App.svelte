@@ -13,6 +13,8 @@
   import QuiJoue from './screens/QuiJoue.svelte';
 
   let device = $state<DeviceInfo | null>(null);
+  // Le fondu d'accent n'est activé qu'après le premier affichage (sinon l'accent part du bleu par défaut).
+  let accentAnim = $state(false);
 
   // L'interface est dessinée pour 1280×800 (Steam Deck) et s'agrandit d'un bloc sur une TV (1920×1080 → ×1,35).
   let scale = $state(1);
@@ -49,11 +51,12 @@
       const mine = profiles.find((p) => p.id === d.defaultProfile);
       if (mine) {
         router.profile = mine;
-        router.reset({ name: 'accueil' });
+        router.start({ name: 'accueil' });
       } else {
-        router.reset({ name: 'qui-joue' });
+        router.start({ name: 'qui-joue' });
       }
       if (isDemo) openDemoScreen(profiles);
+      setTimeout(() => (accentAnim = true), 600);
     });
     return () => window.removeEventListener('ludo:back', onBack);
   });
@@ -63,6 +66,7 @@
 
 <div
   class="app"
+  class:accent-anim={accentAnim}
   style:zoom={scale}
   style:--z={scale}
   style:--accent={p?.accent ?? '#4cc3ff'}
@@ -70,6 +74,9 @@
   style:--accent-ink={p?.accentInk ?? '#8ad8ff'}
   data-demo={isDemo ? '' : undefined}
 >
+  {#if isDemo}
+    <p class="demo-hint">Démo · flèches pour se déplacer · Entrée = A · Échap = B · Q / E = L1 / R1 · Y pour les détails</p>
+  {/if}
   {#if device}
     {#key router.screen}
       {#if router.screen.name === 'qui-joue'}
@@ -92,5 +99,22 @@
 </div>
 
 <style>
-  .app { height: calc(100vh / var(--z, 1)); }
+  .app {
+    height: calc(100vh / var(--z, 1));
+    position: relative;
+    isolation: isolate;
+  }
+  /* L'accent se fond vers la couleur du nouveau joueur (propriétés enregistrées dans app.css). */
+  .app.accent-anim { transition: --accent var(--t-slow) var(--ease-calm), --accent-soft var(--t-slow) var(--ease-calm), --accent-ink var(--t-slow) var(--ease-calm); }
+  /* Couche d'ambiance : une lueur très douce de la couleur du joueur, qui dérive lentement en haut à gauche. */
+  .app::before {
+    content: ''; position: absolute; inset: -20% 40% 40% -20%; z-index: -1; pointer-events: none;
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 9%, transparent), transparent);
+    animation: drift 16s var(--ease-calm) infinite alternate;
+  }
+  .demo-hint {
+    position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 5; margin: 0;
+    font-size: 11px; color: var(--ink-4); background: rgba(21, 23, 28, 0.85); padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  }
+  @keyframes drift { from { transform: translate(0, 0); } to { transform: translate(6%, 4%); } }
 </style>

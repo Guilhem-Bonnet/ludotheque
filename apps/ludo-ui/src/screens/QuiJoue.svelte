@@ -4,6 +4,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import { api } from '../lib/api';
+  import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
   import type { DeviceInfo, Profile } from '../lib/types';
@@ -19,9 +20,15 @@
     });
   });
 
+  let chosen = $state<string | null>(null);
+
   function choose(p: Profile) {
+    // L'avatar choisi grandit, les autres s'effacent, l'accent de l'interface se teinte de sa couleur,
+    // puis l'accueil arrive. Son « arrivée du profil ».
+    chosen = p.id;
     router.profile = p;
-    router.reset({ name: 'accueil' });
+    feedback('arrive');
+    setTimeout(() => router.reset({ name: 'accueil' }), 520);
   }
 </script>
 
@@ -34,11 +41,15 @@
   </header>
 
   <main>
-    <h1>Qui joue ?</h1>
+    <h1 class="rise" style:--i={0}>Qui joue ?</h1>
     <div class="profiles">
       {#each profiles as p, i (p.id)}
         <button
-          class="profile focusable"
+          class="profile focusable rise"
+          style:--i={i + 1}
+          class:chosen={chosen === p.id}
+          class:faded={chosen !== null && chosen !== p.id}
+          data-sound="none"
           data-autofocus={i === 0 ? '' : undefined}
           onfocus={() => (focused = i)}
           onclick={() => choose(p)}
@@ -66,6 +77,10 @@
   .profiles { display: flex; gap: 64px; align-items: center; }
   .profile { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 20px; border-radius: 24px; }
   .profile:focus { box-shadow: none; }
+  .profile :global(.avatar) { transition: width var(--t-std) var(--ease-pop), height var(--t-std) var(--ease-pop), box-shadow var(--t-std) var(--ease-land), transform var(--t-slow) var(--ease-pop); }
+  .profile.chosen :global(.avatar) { transform: scale(1.08); }
+  .profile { transition: opacity var(--t-std) ease-out, transform var(--t-std) var(--ease-land); }
+  .profile.faded { opacity: 0; transform: translateY(10px); }
   .label { display: flex; flex-direction: column; align-items: center; gap: 8px; }
   .name { font-size: 24px; font-weight: 600; }
   .name.dim { font-size: 21px; font-weight: 500; color: var(--ink-2); }

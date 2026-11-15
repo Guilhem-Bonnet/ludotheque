@@ -4,6 +4,7 @@
   import Icon from '../lib/components/Icon.svelte';
   import Tile from '../lib/components/Tile.svelte';
   import { api } from '../lib/api';
+  import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { play } from '../lib/play';
   import { router } from '../lib/router.svelte';
@@ -11,6 +12,14 @@
 
   let { game }: { game: Game } = $props();
   let history = $state<SaveRevision[]>([]);
+  let restored = $state<number | null>(null);
+
+  function restore(r: SaveRevision) {
+    // La version restaurée devient « Actuelle » (une nouvelle révision côté serveur) ; accord « sauvegarde ».
+    restored = r.rev;
+    feedback('saved');
+    history = history.map((h) => ({ ...h, current: h.rev === r.rev }));
+  }
 
   onMount(() => {
     api.history(router.profile!.id, game.id).then((h) => (history = h));
@@ -23,7 +32,7 @@
 <div class="screen">
   <main>
     <aside>
-      <div class="art"><Tile {game} size={320} big still /></div>
+      <div class="art"><Tile {game} size={320} big still hero={router.heroGame === game.id} /></div>
       <div class="actions">
         <button class="primary focusable" data-autofocus onclick={() => play(game)}>{installed ? 'Jouer' : 'Installer'}</button>
         {#if installed}<button class="secondary focusable">Désinstaller</button>{/if}
@@ -46,8 +55,8 @@
       {:else}
         <ul>
           {#each history as r (r.rev)}
-            <li>
-              <button class="row focusable" disabled={r.current}>
+            <li class="rise" style:--i={history.indexOf(r)}>
+              <button class="row focusable" class:pop={restored === r.rev} disabled={r.current} data-sound="none" onclick={() => restore(r)}>
                 <Icon name={r.deviceKind} size={24} color="var(--ink-2)" />
                 <span class="dev">{r.device}</span>
                 <span class="when">{r.when}</span>

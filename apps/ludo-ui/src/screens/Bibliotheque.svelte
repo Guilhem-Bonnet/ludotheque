@@ -3,6 +3,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Tile from '../lib/components/Tile.svelte';
   import { api } from '../lib/api';
+  import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
   import type { Console, DeviceInfo, Game } from '../lib/types';
@@ -17,6 +18,7 @@
   let games = $state<Game[]>([]);
   let tab = $state(0);
   let filter = $state<'tous' | 'installes' | 'non_installes'>('tous');
+  let slide = $state<'left' | 'right'>('right');
 
   onMount(() => {
     api.library(router.profile!.id).then((g) => {
@@ -24,7 +26,11 @@
       focusFirst();
     });
     const onTab = (ev: Event) => {
-      tab = (tab + (ev as CustomEvent<number>).detail + TABS.length) % TABS.length;
+      const d = (ev as CustomEvent<number>).detail;
+      slide = d > 0 ? 'right' : 'left';
+      tab = (tab + d + TABS.length) % TABS.length;
+      feedback('tab');
+      focusFirst();
     };
     window.addEventListener('ludo:tab', onTab);
     return () => window.removeEventListener('ludo:tab', onTab);
@@ -76,19 +82,21 @@
     </div>
   </header>
 
-  <main>
+  {#key `${tab}-${filter}`}
+  <main class="grid-{slide}">
     {#if shown.length === 0}
       <p class="empty">Aucun jeu pour ce filtre</p>
     {/if}
     {#each shown as g, i (g.id)}
       {@const st = stateOf(g)}
-      <div class="cell">
+      <div class="cell" style:--i={Math.min(i, 8)}>
         <Tile game={g} size={168} autofocus={i === 0} onclick={() => router.go({ name: 'fiche', game: g })} />
         <span class="t">{g.title}</span>
         <span class="s" style:color={st[1]}>{st[0]}</span>
       </div>
     {/each}
   </main>
+  {/key}
 
   <ButtonHints hints={[{ key: 'A', label: 'Ouvrir' }, { key: 'X', label: 'Installer' }, { key: 'B', label: 'Retour' }]} />
 </div>
@@ -107,6 +115,12 @@
   .pill { all: unset; cursor: pointer; font-size: 14px; padding: 7px 14px; border-radius: 999px; border: 1.5px solid var(--hint); color: var(--ink-2); }
   .pill[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
   main { flex-grow: 1; overflow-y: auto; padding: 26px 48px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 28px 20px; align-content: start; }
+  /* Changement d'onglet : la grille glisse du côté de l'onglet choisi, cellules en cascade de 25 ms. */
+  @keyframes grid-from-right { from { opacity: 0; transform: translateX(24px); } }
+  @keyframes grid-from-left { from { opacity: 0; transform: translateX(-24px); } }
+  .grid-right .cell { animation: grid-from-right var(--t-std) var(--ease-land) both; animation-delay: calc(var(--i) * 25ms); }
+  .grid-left .cell { animation: grid-from-left var(--t-std) var(--ease-land) both; animation-delay: calc(var(--i) * 25ms); }
+  .tab { transition: background-color var(--t-quick) ease-out, color var(--t-quick) ease-out; }
   .cell { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
   .t { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .s { font-size: 13px; margin-top: -6px; }

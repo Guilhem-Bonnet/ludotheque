@@ -1,10 +1,16 @@
-// Navigation à la manette et au clavier.
+// Navigation à la manette et au clavier, avec retour sensoriel.
 //
-// - Croix / stick gauche / flèches : focus spatial vers l'élément `.focusable` le plus proche.
-// - A / Entrée : clic natif sur l'élément en focus.
+// - Croix / stick gauche / flèches : focus spatial vers l'élément `.focusable` le plus proche
+//   (son « move » + vibration légère) ; au bord, petite poussée visuelle sans son.
+// - A / Entrée : l'élément s'enfonce puis rebondit, son « ok » (sauf `data-sound="none"` ou
+//   `data-sound="<nom>"`), puis clic natif.
 // - B / Échap / Retour arrière : événement `ludo:back`.
 // - X, Y : événement `ludo:action` (detail = 'x' | 'y').
 // - L1 / R1 (Q / E au clavier) : événement `ludo:tab` (detail = -1 | 1).
+
+import { feedback } from './feedback';
+import { replay } from './motion';
+import { unlock, type SoundName } from './sound';
 
 type Dir = 'up' | 'down' | 'left' | 'right';
 
@@ -22,10 +28,8 @@ export function neighbour(from: DOMRect, candidates: { el: HTMLElement; r: DOMRe
   let best: HTMLElement | null = null;
   let bestScore = Infinity;
   for (const { el, r } of candidates) {
-    const x = r.left + r.width / 2;
-    const y = r.top + r.height / 2;
-    const dx = x - cx;
-    const dy = y - cy;
+    const dx = r.left + r.width / 2 - cx;
+    const dy = r.top + r.height / 2 - cy;
     const ok =
       (dir === 'right' && r.left >= from.right - 4) ||
       (dir === 'left' && r.right <= from.left + 4) ||
@@ -55,14 +59,30 @@ export function move(dir: Dir) {
   if (next) {
     next.focus();
     next.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    feedback('move');
+  } else {
+    replay(active, `nudge-${dir}`, 200);
   }
+}
+
+/** Appui sur A : enfoncement, son, puis action. */
+export function press(el: HTMLElement | null) {
+  if (!el || el.hasAttribute('disabled')) {
+    if (el) feedback('err');
+    return;
+  }
+  el.classList.add('is-pressed');
+  setTimeout(() => el.classList.remove('is-pressed'), 90);
+  const s = el.dataset.sound;
+  if (s !== 'none') feedback((s as SoundName) || 'ok');
+  setTimeout(() => el.click(), 60);
 }
 
 /** Met le focus sur `[data-autofocus]`, sinon sur le premier élément navigable. */
 export function focusFirst() {
   requestAnimationFrame(() => {
     const el = document.querySelector<HTMLElement>('[data-autofocus]') ?? focusables()[0];
-    el?.focus();
+    el?.focus({ preventScroll: true });
   });
 }
 
@@ -75,6 +95,8 @@ const KEYS: Record<string, () => void> = {
   ArrowDown: () => move('down'),
   ArrowLeft: () => move('left'),
   ArrowRight: () => move('right'),
+  Enter: () => press(document.activeElement as HTMLElement | null),
+  ' ': () => press(document.activeElement as HTMLElement | null),
   Escape: () => emit('ludo:back'),
   Backspace: () => emit('ludo:back'),
   x: () => emit('ludo:action', 'x'),
@@ -85,7 +107,7 @@ const KEYS: Record<string, () => void> = {
 
 // Boutons de la manette standard (Gamepad API) : 0 A, 1 B, 2 X, 3 Y, 4 L1, 5 R1, 12-15 croix.
 const PAD: Record<number, () => void> = {
-  0: () => (document.activeElement as HTMLElement | null)?.click(),
+  0: () => press(document.activeElement as HTMLElement | null),
   1: () => emit('ludo:back'),
   2: () => emit('ludo:action', 'x'),
   3: () => emit('ludo:action', 'y'),
@@ -99,12 +121,14 @@ const PAD: Record<number, () => void> = {
 
 export function installNav() {
   window.addEventListener('keydown', (ev) => {
+    unlock();
     const handler = KEYS[ev.key];
     if (handler) {
       ev.preventDefault();
       handler();
     }
   });
+  window.addEventListener('pointerdown', unlock, { once: true });
 
   const pressed = new Set<string>();
   let stickHeld: Dir | null = null;
@@ -116,6 +140,7 @@ export function installNav() {
         const id = `${pad.index}:${i}`;
         if (b.pressed && !pressed.has(id)) {
           pressed.add(id);
+          unlock();
           PAD[i]?.();
         } else if (!b.pressed) pressed.delete(id);
       });

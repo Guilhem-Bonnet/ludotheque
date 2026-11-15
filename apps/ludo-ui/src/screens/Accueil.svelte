@@ -1,5 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
+  import { feedback } from '../lib/feedback';
+  import { reducedMotion } from '../lib/motion';
   import Avatar from '../lib/components/Avatar.svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
@@ -31,7 +35,11 @@
     });
     const onAction = (ev: Event) => {
       const g = games[focused];
-      if ((ev as CustomEvent).detail === 'y' && g) router.go({ name: 'fiche', game: g });
+      if ((ev as CustomEvent).detail === 'y' && g) {
+        feedback('ok');
+        router.heroGame = g.id;
+        router.go({ name: 'fiche', game: g });
+      }
     };
     window.addEventListener('ludo:action', onAction);
     return () => {
@@ -45,7 +53,7 @@
 </script>
 
 <div class="screen">
-  <header>
+  <header class="rise" style:--i={0}>
     <div class="who">
       <Avatar profile={router.profile!} size={52} ring />
       <div class="who-text">
@@ -67,8 +75,8 @@
     <div class="row">
       {#each games as game, i (game.id)}
         <!-- Une seule tuile par jeu : elle grandit au focus sans être recréée (le focus reste dessus). -->
-        <div class="slot" class:focused={i === focused}>
-          <Tile {game} size={i === focused ? 272 : 232} big={i === focused} autofocus={i === 0} onfocus={() => (focused = i)} onclick={() => play(game)} />
+        <div class="slot rise" class:focused={i === focused} style:--i={i}>
+          <Tile {game} size={i === focused ? 272 : 232} big={i === focused} hero={router.heroGame === game.id} autofocus={i === 0} onfocus={() => (focused = i)} onclick={() => play(game)} />
           {#if i === focused && game.last}
             <div class="device-tab">
               <Icon name={game.last.deviceKind} size={22} color="var(--accent-ink)" />
@@ -85,14 +93,19 @@
     </div>
 
     {#if current}
-      <div class="caption">
-        <h1>{current.title}</h1>
-        {#if current.playtime}<span>{current.playtime} de jeu</span>{/if}
+      <!-- Le titre change avec la tuile : l'ancien s'efface, le nouveau monte de 8 px. -->
+      <div class="caption-slot">
+        {#key current.id}
+          <div class="caption" in:fly={{ y: 8, duration: reducedMotion() ? 0 : 220, easing: cubicOut }}>
+            <h1>{current.title}</h1>
+            {#if current.playtime}<span>{current.playtime} de jeu</span>{/if}
+          </div>
+        {/key}
       </div>
     {/if}
   </section>
 
-  <nav aria-label="Raccourcis">
+  <nav aria-label="Raccourcis" class="rise" style:--i={6}>
     <button class="shortcut focusable" onclick={() => router.go({ name: 'bibliotheque' })}>
       <span class="round"><Icon name="grid" size={26} /></span>Bibliothèque
     </button>
@@ -138,13 +151,16 @@
     @keyframes tab-out { from { transform: translateY(-18px); opacity: 0; } to { transform: none; opacity: 1; } }
   }
 
-  .caption { margin-top: 26px; display: flex; align-items: baseline; gap: 16px; }
+  .caption-slot { margin-top: 26px; height: 40px; }
+  .caption { display: flex; align-items: baseline; gap: 16px; }
   .caption h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
   .caption span { font-size: 16px; color: var(--ink-3); }
 
   nav { margin-top: auto; display: flex; justify-content: center; gap: 36px; padding-bottom: 26px; }
   .shortcut { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); border-radius: 14px; padding: 4px; }
   .shortcut:disabled { opacity: 0.45; cursor: default; }
-  .round { width: 60px; height: 60px; border-radius: 50%; background: var(--control); display: flex; align-items: center; justify-content: center; position: relative; color: var(--ink); }
+  .shortcut:focus { box-shadow: none; color: var(--accent-ink); }
+  .shortcut:focus .round { transform: translateY(-3px) scale(1.06); background: var(--accent-soft); color: var(--accent-ink); box-shadow: 0 0 0 3px var(--ground), 0 0 0 6px var(--accent), 0 10px 20px rgba(0,0,0,.35); }
+  .round { transition: transform var(--t-quick) var(--ease-pop), background-color var(--t-quick) ease-out, box-shadow var(--t-quick) var(--ease-land); width: 60px; height: 60px; border-radius: 50%; background: var(--control); display: flex; align-items: center; justify-content: center; position: relative; color: var(--ink); }
   .count { position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; border-radius: 11px; background: var(--accent); color: var(--ground); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 </style>

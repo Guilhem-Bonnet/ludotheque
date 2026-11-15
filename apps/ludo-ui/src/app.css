@@ -59,8 +59,65 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 0 0 3px var(--ground), 0 0 0 6px var(--accent);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .focusable { transition: transform 160ms cubic-bezier(.16, 1, .3, 1), box-shadow 120ms ease-out; }
+/* ———————————————————————————————————————————————————————————————
+   Charte d'animation (15/11/2026) — caractère « doux et joueur ».
+   - Courbe signature (80 % des mouvements) : --ease-land, atterrissage doux.
+   - Rebond léger (~4 %) réservé aux petits éléments : --ease-pop (focus, réussite).
+   - Sortie : --ease-exit (accélère en partant). Ambiance : --ease-calm (sinus).
+   - Trois durées : rapide 120 ms, standard 240 ms, lente 420 ms. Entrées 30 à 50 % plus longues que les sorties.
+   - Chaque événement = animation + son + vibration (feedback.ts), sur la même image.
+   ——————————————————————————————————————————————————————————————— */
+:root {
+  --ease-land: cubic-bezier(.2, .8, .2, 1);
+  --ease-pop: cubic-bezier(.34, 1.3, .64, 1);
+  --ease-exit: cubic-bezier(.4, 0, 1, 1);
+  --ease-calm: cubic-bezier(.45, 0, .55, 1);
+  --t-quick: 120ms;
+  --t-std: 240ms;
+  --t-slow: 420ms;
+}
+
+/* L'accent du profil se fond d'une couleur à l'autre quand on change de joueur. */
+@property --accent { syntax: '<color>'; inherits: true; initial-value: #4cc3ff; }
+@property --accent-soft { syntax: '<color>'; inherits: true; initial-value: #1c3546; }
+@property --accent-ink { syntax: '<color>'; inherits: true; initial-value: #8ad8ff; }
+
+.focusable { transition: transform var(--t-quick) var(--ease-pop), box-shadow var(--t-quick) var(--ease-land), background-color var(--t-quick) ease-out, color var(--t-quick) ease-out; }
+
+/* Appui sur A : l'élément s'enfonce, puis revient avec un léger rebond. */
+.is-pressed { transform: scale(0.96) !important; transition-duration: 70ms !important; }
+
+/* Bord atteint : petite poussée dans la direction, sans son (seulement un toucher de vibration). */
+@keyframes nudge-x { 30% { transform: translateX(var(--nudge, 5px)); } 100% { transform: none; } }
+@keyframes nudge-y { 30% { transform: translateY(var(--nudge, 5px)); } 100% { transform: none; } }
+.nudge-right { --nudge: 5px; animation: nudge-x 180ms var(--ease-land); }
+.nudge-left { --nudge: -5px; animation: nudge-x 180ms var(--ease-land); }
+.nudge-down { --nudge: 5px; animation: nudge-y 180ms var(--ease-land); }
+.nudge-up { --nudge: -5px; animation: nudge-y 180ms var(--ease-land); }
+
+/* Entrée commune : monte de 12 px en se posant (utilisée en cascade de 40 ms). */
+@keyframes rise-in { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+.rise { animation: rise-in var(--t-slow) var(--ease-land) both; animation-delay: calc(var(--i, 0) * 40ms); }
+
+/* Coche qui se dessine (états réussis). */
+@keyframes draw { from { stroke-dashoffset: var(--len, 24); } to { stroke-dashoffset: 0; } }
+.draw path:last-child { stroke-dasharray: var(--len, 24); animation: draw 360ms var(--ease-land) 80ms both; }
+
+/* Réussite : petit « pop » de l'élément. */
+@keyframes pop { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+.pop { animation: pop 320ms var(--ease-pop); }
+
+/* Transitions d'écran (View Transitions) : aller = vers la gauche, retour = vers la droite. */
+@keyframes screen-in { from { opacity: 0; transform: translateX(var(--from, 28px)); } }
+@keyframes screen-out { to { opacity: 0; transform: translateX(var(--to, -18px)); } }
+::view-transition-old(root) { animation: screen-out 200ms var(--ease-exit) both; }
+::view-transition-new(root) { animation: screen-in 320ms var(--ease-land) both; }
+:root[data-dir='back'] { --from: -28px; --to: 18px; }
+::view-transition-group(hero-tile) { animation-duration: 420ms; animation-timing-function: var(--ease-land); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; transition-duration: 1ms !important; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
 }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
