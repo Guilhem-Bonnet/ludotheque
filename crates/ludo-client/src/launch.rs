@@ -189,6 +189,16 @@ fn head_playtime(client: &Client, key: &SaveKey) -> Option<u64> {
     client.head(key).ok().map(|h| h.map_or(0, |h| h.playtime_s))
 }
 
+/// ROM de base présente sur l'appareil : le fichier du catalogue, ou sa version convertie par le
+/// serveur (NSZ → NSP, XCZ → XCI) pour un émulateur qui ne lit pas les formats compressés (Eden).
+pub fn installed_rom(roms: &Path, catalog_rel: &str) -> Option<PathBuf> {
+    let original = roms.join(catalog_rel);
+    if original.exists() {
+        return Some(original);
+    }
+    crate::install::converted_rel(catalog_rel).map(|r| roms.join(r)).filter(|p| p.exists())
+}
+
 /// Retrouve la ROM de base d'un jeu sans le catalogue (serveur injoignable) : fichier `nsp`/`xci`
 /// dont le nom contient `[<identifiant du titre>]`, hors dossier des mises à jour et DLC.
 pub fn find_rom_offline(roms: &Path, title_id: &str) -> Option<PathBuf> {
@@ -277,17 +287,18 @@ fn play(
         Ok(games) => {
             let game = games.into_iter().find(|g| g.id == key.game).ok_or_else(|| fail("Jeu introuvable sur le serveur"))?;
             let base = game.files.iter().find(|f| f.role == FileRole::Base).ok_or_else(|| fail("Aucun fichier de base pour ce jeu sur le serveur"))?;
-            let rom = roms.join(&base.path);
-            if rom.exists() {
-                obs.step(Step::Telechargement, StepState::Fait, Some("Jeu installé".into()));
-            } else {
-                obs.install(&game).map_err(LaunchError::Failed)?;
-                if !rom.exists() {
-                    return Err(fail("Le jeu n'est pas présent après l'installation"));
+            match installed_rom(&roms, &base.path) {
+                Some(rom) => {
+                    obs.step(Step::Telechargement, StepState::Fait, Some("Jeu installé".into()));
+                    rom
                 }
-                obs.step(Step::Telechargement, StepState::Fait, None);
+                None => {
+                    obs.install(&game).map_err(LaunchError::Failed)?;
+                    let rom = installed_rom(&roms, &base.path).ok_or_else(|| fail("Le jeu n'est pas présent après l'installation"))?;
+                    obs.step(Step::Telechargement, StepState::Fait, None);
+                    rom
+                }
             }
-            rom
         }
         Err(ApiError::Offline(_)) => {
             let rom = find_rom_offline(&roms, &conf.title_id).ok_or_else(|| fail("Jeu non installé et serveur injoignable"))?;
@@ -445,4 +456,25 @@ pub fn send(env: &Env, key: &SaveKey, playtime_s: u64) -> Result<Settled, Launch
         SyncOutcome::Conflict { server } => Settled::Conflict(conflict_info(env, &client, key, server, true)),
         o => Settled::Done(o),
     })
+}
+
+#[cfg(test)]
+mod tests_rom_convertie {
+    use super::installed_rom;
+
+    #[test]
+    fn version_convertie_trouvee() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("switch")).unwrap();
+        // Catalogue : NSZ ; appareil (Eden) : NSP converti par le serveur.
+        std::fs::write(d.path().join("switch/Jeu [0100000000010000].nsp"), b"x").unwrap();
+        assert_eq!(
+            installed_rom(d.path(), "switch/Jeu [0100000000010000].nsz"),
+            Some(d.path().join("switch/Jeu [0100000000010000].nsp"))
+        );
+        // L'original présent a la priorité ; rien d'installé : None.
+        std::fs::write(d.path().join("switch/Jeu [0100000000010000].nsz"), b"y").unwrap();
+        assert_eq!(installed_rom(d.path(), "switch/Jeu [0100000000010000].nsz"), Some(d.path().join("switch/Jeu [0100000000010000].nsz")));
+        assert_eq!(installed_rom(d.path(), "switch/Autre.nsz"), None);
+    }
 }
