@@ -73,6 +73,10 @@ pub enum LaunchError {
     HeldElsewhere(String),
     #[error("{0}")]
     Failed(String),
+    /// La partie est jouée mais l'envoi de la sauvegarde a échoué : il se réessaie sans relancer le
+    /// jeu (`send`), avec ce temps de jeu cumulé.
+    #[error("{message}")]
+    SendFailed { message: String, playtime_s: u64, exit_ok: bool },
 }
 
 fn fail(e: impl std::fmt::Display) -> LaunchError {
@@ -144,6 +148,27 @@ fn take_lease<'a>(client: &'a Client, key: &'a SaveKey, device: &str) -> Result<
     }
 }
 
+/// Pose `stop` à la destruction : le fil de renouvellement s'arrête même si la partie panique.
+struct StopOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for StopOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Identifiant sous lequel l'app prend le verrou d'une partie : distinct de celui de `ludo run`
+/// (`<appareil>`) et de celui des opérations de l'interface (`<appareil>-ui`), pour que deux
+/// lancements sur le même appareil s'excluent.
+pub fn app_device(appareil: &str) -> String {
+    format!("{appareil}-app")
+}
+
+/// Appareil lisible d'un identifiant de verrou (sans suffixe `-app` ni `-ui`).
+pub fn holder_device(id: &str) -> &str {
+    id.strip_suffix("-app").or_else(|| id.strip_suffix("-ui")).unwrap_or(id)
+}
+
 /// Le verrou expire au bout de 120 s : il est renouvelé tant que la partie dure.
 const HEARTBEAT: Duration = Duration::from_secs(40);
 
@@ -158,29 +183,35 @@ fn heartbeat(client: &Client, key: &SaveKey, device: &str, stop: &AtomicBool) {
     }
 }
 
-/// Temps de jeu cumulé de la tête du serveur (0 si absent ou injoignable).
-fn head_playtime(client: &Client, key: &SaveKey) -> u64 {
-    client.head(key).ok().flatten().map_or(0, |h| h.playtime_s)
+/// Temps de jeu cumulé de la tête du serveur : `Some(0)` s'il n'y a pas encore de tête, `None` si
+/// le serveur est injoignable (valeur inconnue, à ne jamais confondre avec 0).
+fn head_playtime(client: &Client, key: &SaveKey) -> Option<u64> {
+    client.head(key).ok().map(|h| h.map_or(0, |h| h.playtime_s))
 }
 
 /// Retrouve la ROM de base d'un jeu sans le catalogue (serveur injoignable) : fichier `nsp`/`xci`
 /// dont le nom contient `[<identifiant du titre>]`, hors dossier des mises à jour et DLC.
 pub fn find_rom_offline(roms: &Path, title_id: &str) -> Option<PathBuf> {
     let tag = format!("[{}]", title_id.to_lowercase());
+    let mut found: Vec<(u8, String, PathBuf)> = Vec::new();
     for console in std::fs::read_dir(roms).ok()?.flatten() {
         let Ok(files) = std::fs::read_dir(console.path()) else { continue };
         for f in files.flatten() {
             let p = f.path();
             let name = f.file_name().to_string_lossy().to_lowercase();
-            if p.is_file() && name.contains(&tag) && (name.ends_with(".nsp") || name.ends_with(".xci")) {
-                return Some(p);
+            // Les mises à jour et DLC vivent dans un sous-dossier (`MAJ-DLC`), jamais des fichiers directs.
+            let rank = if name.ends_with(".nsp") { 0 } else if name.ends_with(".xci") { 1 } else { continue };
+            if p.is_file() && name.contains(&tag) {
+                found.push((rank, p.to_string_lossy().into_owned(), p));
             }
         }
     }
-    None
+    // Choix déterministe : .nsp avant .xci, puis ordre des noms.
+    found.sort();
+    found.into_iter().next().map(|(_, _, p)| p)
 }
 
-fn conflict_info(env: &Env, client: &Client, key: &SaveKey, server: SaveRevision, played: bool) -> ConflictInfo {
+pub fn conflict_info(env: &Env, client: &Client, key: &SaveKey, server: SaveRevision, played: bool) -> ConflictInfo {
     let base_rev = env.locked(|j| Ok(j.get(key).base_rev)).unwrap_or(0);
     let base = (base_rev > 0).then(|| client.history(key).ok().and_then(|h| h.into_iter().find(|r| r.rev == base_rev))).flatten();
     ConflictInfo { server, base, played }
@@ -213,17 +244,17 @@ pub fn launch(env: &Env, key: &SaveKey, obs: &mut dyn Observer) -> Result<Launch
     // Adaptateur impossible à construire : erreur avant de toucher au serveur.
     let prepared = config::prepare(cfg, &conf.emulateur, &key.profile, &conf.title_id).map_err(fail)?;
     let client = Client::new(&cfg.serveur);
-    let lease = take_lease(&client, key, &cfg.appareil)?;
+    let device = app_device(&cfg.appareil);
+    let lease = take_lease(&client, key, &device)?;
     obs.step(Step::Profil, StepState::Fait, None);
 
     let stop = AtomicBool::new(false);
     let result = std::thread::scope(|s| {
+        let _stop = StopOnDrop(&stop);
         if lease.is_some() {
-            s.spawn(|| heartbeat(&client, key, &cfg.appareil, &stop));
+            s.spawn(|| heartbeat(&client, key, &device, &stop));
         }
-        let r = play(env, &client, key, conf, &prepared, obs);
-        stop.store(true, Ordering::SeqCst);
-        r
+        play(env, &client, key, conf, &prepared, obs)
     });
     drop(lease);
     result
@@ -266,15 +297,11 @@ fn play(
         Err(e) => return Err(fail(e)),
     };
 
-    // Synchronisation avant : le temps de jeu reste celui du serveur.
+    // Synchronisation avant : le temps de jeu reste celui du serveur (inconnu = 0, relu après la partie).
     obs.step(Step::Sauvegarde, StepState::EnCours, None);
-    let base_playtime = head_playtime(client, key);
-    let sync = |playtime_s: u64| -> Result<SyncOutcome, LaunchError> {
-        env.locked(|journal| {
-            let mut engine = Engine { client, journal, device: cfg.appareil.clone(), emulator: conf.emulateur.clone(), playtime_s };
-            engine.sync(key, prepared.layout.as_ref()).map_err(fail)
-        })
-    };
+    let known_playtime = head_playtime(client, key);
+    let base_playtime = known_playtime.unwrap_or(0);
+    let sync = |playtime_s: u64| sync_save(env, client, key, conf, prepared, playtime_s);
     let before = sync(base_playtime)?;
     match &before {
         SyncOutcome::Conflict { server } => return Ok(LaunchOutcome::Conflict(conflict_info(env, client, key, server.clone(), false))),
@@ -283,38 +310,98 @@ fn play(
     }
     obs.step(Step::Sauvegarde, StepState::Fait, outcome_detail(&before));
 
-    // Émulateur.
+    // Émulateur, dans son propre groupe de processus (il peut être terminé proprement si l'app s'arrête).
     obs.step(Step::Lancement, StepState::EnCours, None);
     let argv = config::launch_command(prepared, &rom).map_err(fail)?;
     let (bin, args) = argv.split_first().ok_or_else(|| fail("commande de lancement vide"))?;
-    let mut child = std::process::Command::new(bin)
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| fail(format!("Échec du lancement de l'émulateur : {e}")))?;
+    let mut cmd = std::process::Command::new(bin);
+    cmd.args(args).stdin(std::process::Stdio::null());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd.spawn().map_err(|e| fail(format!("Échec du lancement de l'émulateur : {e}")))?;
+    let _running = Running::register(child.id());
     let started = Instant::now();
     obs.step(Step::Lancement, StepState::Fait, None);
     obs.step(Step::EnJeu, StepState::EnCours, None);
     let status = child.wait().map_err(|e| fail(format!("Émulateur : attente impossible : {e}")))?;
     let elapsed_s = started.elapsed().as_secs();
+    drop(_running);
+    let exit_ok = status.success();
     obs.step(Step::EnJeu, StepState::Fait, None);
 
     // Synchronisation après, même si l'émulateur a terminé en erreur : la sauvegarde peut être valide.
+    // Le temps de jeu de départ était peut-être inconnu (hors ligne) : la tête est relue maintenant,
+    // et jamais un temps inférieur à celui de la tête connue n'est envoyé.
     obs.step(Step::Envoi, StepState::EnCours, None);
-    let playtime_s = base_playtime + elapsed_s;
-    let after = sync(playtime_s)?;
+    let base_now = head_playtime(client, key).map_or(base_playtime, |h| h.max(base_playtime));
+    let playtime_s = base_now + elapsed_s;
+    let after = match sync(playtime_s) {
+        Ok(a) => a,
+        Err(e) => return Err(LaunchError::SendFailed { message: e.to_string(), playtime_s, exit_ok }),
+    };
     if let SyncOutcome::Conflict { server } = &after {
         return Ok(LaunchOutcome::Conflict(conflict_info(env, client, key, server.clone(), true)));
     }
     obs.step(Step::Envoi, StepState::Fait, outcome_detail(&after));
     obs.step(Step::Termine, StepState::Fait, None);
-    Ok(LaunchOutcome::Played { before, after, playtime_s, elapsed_s, exit_ok: status.success() })
+    Ok(LaunchOutcome::Played { before, after, playtime_s, elapsed_s, exit_ok })
+}
+
+fn sync_save(env: &Env, client: &Client, key: &SaveKey, conf: &config::GameConf, prepared: &config::Prepared, playtime_s: u64) -> Result<SyncOutcome, LaunchError> {
+    env.locked(|journal| {
+        let mut engine = Engine { client, journal, device: env.cfg.appareil.clone(), emulator: conf.emulateur.clone(), playtime_s };
+        engine.sync(key, prepared.layout.as_ref()).map_err(fail)
+    })
+}
+
+/// Groupes de processus des émulateurs en cours (un par partie).
+static RUNNING: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+struct Running(u32);
+
+impl Running {
+    fn register(pid: u32) -> Self {
+        RUNNING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(pid);
+        Self(pid)
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|p| *p != self.0);
+    }
+}
+
+/// Une partie est-elle en cours (émulateur lancé par ce processus) ?
+pub fn game_running() -> bool {
+    !RUNNING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty()
+}
+
+/// Termine proprement (SIGTERM) les émulateurs en cours : à appeler quand l'app s'arrête pour de
+/// bon. La sauvegarde reste locale ; elle sera synchronisée au prochain lancement.
+pub fn terminate_running() {
+    #[cfg(unix)]
+    for pid in RUNNING.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter() {
+        if let Ok(pgid) = i32::try_from(*pid) {
+            // SAFETY : kill(2) sur le groupe de processus créé pour cet émulateur (pgid = pid).
+            unsafe { libc::kill(-pgid, libc::SIGTERM) };
+        }
+    }
+}
+
+/// Suite d'un choix de conflit ou d'un renvoi de sauvegarde.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Settled {
+    Done(SyncOutcome),
+    /// Le conflit demeure (ou la tête a bougé depuis l'affichage) : à retrancher avec cette version.
+    Conflict(ConflictInfo),
 }
 
 /// Applique le choix du joueur après un conflit (`Engine::resolve` : l'autre version est archivée
-/// comme écartée côté serveur). Le verrou est pris sous `<appareil>-ui` : une partie en cours,
-/// même ici, refuse l'opération.
-pub fn resolve(env: &Env, key: &SaveKey, choice: Resolution) -> Result<SyncOutcome, LaunchError> {
+/// comme écartée côté serveur). Le choix porte sur la version du serveur affichée (`shown_rev`) : si
+/// la tête a changé depuis, rien n'est appliqué et le conflit à jour est renvoyé.
+/// Le verrou est pris sous `<appareil>-ui` : une partie en cours, même ici, refuse l'opération.
+pub fn resolve(env: &Env, key: &SaveKey, choice: Resolution, shown_rev: u64) -> Result<Settled, LaunchError> {
     let cfg = env.cfg;
     let conf = cfg
         .jeux
@@ -324,13 +411,38 @@ pub fn resolve(env: &Env, key: &SaveKey, choice: Resolution) -> Result<SyncOutco
     let prepared = config::prepare(cfg, &conf.emulateur, &key.profile, &conf.title_id).map_err(fail)?;
     let client = Client::new(&cfg.serveur);
     let ui_device = format!("{}-ui", cfg.appareil);
-    let _lease = take_lease(&client, key, &ui_device).map_err(|e| match e {
-        LaunchError::HeldElsewhere(d) => LaunchError::HeldElsewhere(d.strip_suffix("-ui").unwrap_or(&d).to_string()),
-        other => other,
-    })?;
-    let playtime_s = head_playtime(&client, key);
-    env.locked(|journal| {
+    let _lease = take_lease(&client, key, &ui_device)?;
+    if let Some(head) = client.head(key).map_err(fail)? {
+        if head.rev != shown_rev {
+            return Ok(Settled::Conflict(conflict_info(env, &client, key, head, false)));
+        }
+    }
+    let playtime_s = head_playtime(&client, key).unwrap_or(0);
+    let out = env.locked(|journal| {
         let mut engine = Engine { client: &client, journal, device: cfg.appareil.clone(), emulator: conf.emulateur.clone(), playtime_s };
         engine.resolve(key, prepared.layout.as_ref(), choice).map_err(fail)
+    })?;
+    Ok(match out {
+        SyncOutcome::Conflict { server } => Settled::Conflict(conflict_info(env, &client, key, server, false)),
+        o => Settled::Done(o),
+    })
+}
+
+/// Renvoie la sauvegarde d'une partie déjà jouée, sans relancer le jeu (après un échec d'envoi).
+/// Le temps de jeu n'est jamais inférieur à celui de la tête du serveur.
+pub fn send(env: &Env, key: &SaveKey, playtime_s: u64) -> Result<Settled, LaunchError> {
+    let cfg = env.cfg;
+    let conf = cfg
+        .jeux
+        .get(&key.game)
+        .filter(|g| g.concerns(&key.profile))
+        .ok_or_else(|| fail("Jeu non configuré sur cet appareil pour ce profil"))?;
+    let prepared = config::prepare(cfg, &conf.emulateur, &key.profile, &conf.title_id).map_err(fail)?;
+    let client = Client::new(&cfg.serveur);
+    let _lease = take_lease(&client, key, &app_device(&cfg.appareil))?;
+    let playtime_s = head_playtime(&client, key).map_or(playtime_s, |h| h.max(playtime_s));
+    Ok(match sync_save(env, &client, key, conf, &prepared, playtime_s)? {
+        SyncOutcome::Conflict { server } => Settled::Conflict(conflict_info(env, &client, key, server, true)),
+        o => Settled::Done(o),
     })
 }

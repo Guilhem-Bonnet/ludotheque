@@ -14,8 +14,11 @@ export interface LaunchEvent {
 
 /** Fin d'un lancement : partie jouée et sauvegarde envoyée, ou conflit à trancher (rien n'a été lancé sauf si `played`). */
 export type LaunchResult =
-  | { result: 'termine'; playtime: string; detail?: string }
-  | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean };
+  | { result: 'termine'; playtime: string; detail?: string; emulatorError?: boolean }
+  | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean; rev: number };
+
+/** Suite d'un choix de conflit : appliqué, ou conflit à retrancher (le serveur a changé depuis l'affichage). */
+export type ResolveResult = { result: 'fait' } | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean; rev: number };
 
 export interface LudoApi {
   device(): Promise<DeviceInfo>;
@@ -46,7 +49,11 @@ export interface LudoApi {
    */
   launchGame(profile: string, game: string, onstep?: (e: LaunchEvent) => void, onprogress?: (p: number) => void): Promise<LaunchResult>;
   /** Tranche un conflit : « local » garde la sauvegarde de cet appareil, « serveur » prend celle du serveur ; l'autre reste dans l'historique. */
-  resolveConflict(profile: string, game: string, choice: 'local' | 'serveur'): Promise<void>;
+  resolveConflict(profile: string, game: string, choice: 'local' | 'serveur', rev: number): Promise<ResolveResult>;
+  /** Renvoie la sauvegarde d'une partie déjà jouée dont l'envoi a échoué, sans relancer le jeu. */
+  retrySend(profile: string, game: string): Promise<LaunchResult>;
+  /** Appelé quand la fermeture de la fenêtre est refusée parce qu'une partie est en cours ; renvoie la fonction d'arrêt de l'écoute. */
+  onCloseRefused(cb: () => void): Promise<() => void>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
   prepare(profile: string, game: string): Promise<{ conflict: Conflict } | { preparation: Preparation }>;
 }
@@ -227,6 +234,14 @@ const demoApi: LudoApi = {
   },
   async resolveConflict() {
     await wait(150);
+    return { result: 'fait' };
+  },
+  async retrySend() {
+    await wait(400);
+    return { result: 'termine', playtime: '12 h 41' };
+  },
+  async onCloseRefused() {
+    return () => {};
   },
   async prepare(profile, gameId) {
     await wait(150);
@@ -362,12 +377,28 @@ const tauriApi: LudoApi = {
       return demoApi.launchGame(profile, game, onstep, onprogress);
     }
   },
-  resolveConflict: async (profile, game, choice) => {
+  resolveConflict: async (profile, game, choice, rev) => {
     try {
-      await invoke('resolveConflict', { profile, game, choice });
+      return await invoke<ResolveResult>('resolveConflict', { profile, game, choice, rev });
     } catch (e) {
       if (!commandMissing(e)) throw new Error(String(e));
-      await demoApi.resolveConflict(profile, game, choice);
+      return demoApi.resolveConflict(profile, game, choice, rev);
+    }
+  },
+  retrySend: async (profile, game) => {
+    try {
+      return await invoke<LaunchResult>('retrySend', { profile, game });
+    } catch (e) {
+      if (!commandMissing(e)) throw new Error(String(e));
+      return demoApi.retrySend(profile, game);
+    }
+  },
+  onCloseRefused: async (cb) => {
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      return await listen('ludo://fermeture-refusee', () => cb());
+    } catch {
+      return () => {};
     }
   },
   prepare: viaTauri('prepare', (profile, game) => ({ profile, game })),

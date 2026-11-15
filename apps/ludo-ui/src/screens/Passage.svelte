@@ -9,7 +9,7 @@
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
-  import type { LaunchEvent, LaunchStep } from '../lib/api';
+  import type { LaunchEvent, LaunchResult, LaunchStep } from '../lib/api';
   import type { Preparation } from '../lib/types';
 
   // Écran de passage : n'apparaît que s'il y a quelque chose à faire (téléchargement, synchro).
@@ -75,6 +75,12 @@
   let cancelling = $state(false);
   /** Lancement réel en cours (téléchargement, sauvegarde, partie, envoi) : B ne quitte pas l'écran. */
   let busy = $state(false);
+  /** Partie jouée dont l'envoi a échoué : « Réessayer l'envoi » ne relance pas le jeu. */
+  let sendOnly = $state(false);
+  /** Partie terminée par une erreur de l'émulateur : il ne reste que « Retour ». */
+  let ended = $state(false);
+  /** Fermeture de la fenêtre refusée pendant la partie. */
+  let closeNote = $state(false);
   let phase = $state<'prep' | 'launching' | 'playing' | 'sending'>('prep');
   /** Étapes d'origine, pour « Réessayer ». */
   // svelte-ignore state_referenced_locally
@@ -131,12 +137,15 @@
   function onFailure(msg: string) {
     let i = steps.findLastIndex((x) => x.state === 'en_cours');
     if (i < 0) i = steps.findIndex((x) => x.state !== 'fait');
-    const s = steps[Math.max(i, 0)];
-    s.label = /^En cours sur /.test(msg) ? 'Partie en cours sur un autre appareil' : failLabel[Math.max(i, 0)] ?? 'Échec';
+    i = Math.max(i, 0);
+    const s = steps[i];
+    s.label = /^En cours sur /.test(msg) ? 'Partie en cours sur un autre appareil' : failLabel[i] ?? 'Échec';
     s.detail = msg;
     s.progress = s.progress !== undefined ? 0 : undefined;
     s.state = 'a_venir';
     failed = true;
+    // La partie est jouée : seul l'envoi se réessaie, jamais le lancement du jeu.
+    sendOnly = i === 5;
     launching = false;
     downloading = false;
     phase = 'prep';
@@ -144,37 +153,54 @@
     requestAnimationFrame(() => focusFirst());
   }
 
-  /**
-   * Hors démonstration : tout est réel, les étapes viennent de l'app (verrou, téléchargement,
-   * sauvegarde, émulateur, envoi). Conflit : écran de choix. Annulé pendant le téléchargement :
-   * retour à l'écran précédent. Autre échec : l'étape reste visible avec son message.
-   */
+  /** Fin d'un lancement ou d'un renvoi : conflit à trancher, ou sauvegarde envoyée (retour à l'accueil). */
+  async function finish(r: LaunchResult) {
+    if (r.result === 'conflit') {
+      router.replace({ name: 'conflit', conflict: { game: preparation.game, profile: preparation.profile, local: r.local, server: r.server, played: r.played, rev: r.rev } });
+      return;
+    }
+    for (const st of steps) st.state = 'fait';
+    phase = 'sending';
+    launching = false;
+    if (r.emulatorError) {
+      // Sortie en erreur : la sauvegarde est synchronisée, mais ce n'est pas un succès à fêter.
+      steps[4].label = 'Partie terminée';
+      steps[5].label = 'L\u2019émulateur s\u2019est arrêté avec une erreur · sauvegarde synchronisée';
+      steps[5].detail = r.detail;
+      steps[5].state = 'a_venir';
+      ended = true;
+      feedback('err');
+      requestAnimationFrame(() => focusFirst());
+      return;
+    }
+    steps[5].label = 'Sauvegarde envoyée';
+    steps[5].detail = r.detail;
+    feedback('saved');
+    await wait(1200);
+    router.reset({ name: 'accueil' });
+  }
+
+  /** Lancement réel, ou seulement le renvoi de la sauvegarde (`sendOnly`, partie déjà jouée). */
   async function runReal() {
-    steps = initial.map((x) => ({ ...x }));
     failed = false;
     cancelling = false;
     busy = true;
     try {
-      const r = await api.launchGame(
-        preparation.profile,
-        preparation.game.id,
-        onStep,
-        (p) => {
-          const s = steps[1];
-          if (s.progress !== undefined) s.progress = Math.round(p * 100);
-        },
-      );
-      if (r.result === 'conflit') {
-        router.replace({ name: 'conflit', conflict: { game: preparation.game, profile: preparation.profile, local: r.local, server: r.server, played: r.played } });
-        return;
+      if (sendOnly) {
+        steps[5].label = 'Envoi de la sauvegarde…';
+        steps[5].detail = undefined;
+        steps[5].state = 'en_cours';
+        phase = 'sending';
+        await finish(await api.retrySend(preparation.profile, preparation.game.id));
+      } else {
+        steps = initial.map((x) => ({ ...x }));
+        await finish(
+          await api.launchGame(preparation.profile, preparation.game.id, onStep, (p) => {
+            const s = steps[1];
+            if (s.progress !== undefined) s.progress = Math.round(p * 100);
+          }),
+        );
       }
-      for (const st of steps) st.state = 'fait';
-      steps[5].label = 'Sauvegarde envoyée';
-      steps[5].detail = r.detail;
-      phase = 'sending';
-      feedback('saved');
-      await wait(1200);
-      router.reset({ name: 'accueil' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (cancelling || msg === CANCELLED) {
@@ -222,7 +248,11 @@
     else void runReal();
     // B pendant le téléchargement : annuler (l'écran se déclare « modal » le temps du transfert).
     window.addEventListener('ludo:modal-back', cancel);
-    return () => window.removeEventListener('ludo:modal-back', cancel);
+    const unlisten = isDemo ? Promise.resolve(() => {}) : api.onCloseRefused(() => { closeNote = true; });
+    return () => {
+      window.removeEventListener('ludo:modal-back', cancel);
+      void unlisten.then((u) => u());
+    };
   });
 </script>
 
@@ -262,10 +292,13 @@
         <button class="act focusable" data-autofocus data-sound="none" disabled={cancelling} onclick={cancel}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
       {:else if failed}
         <span class="acts">
-          <button class="act focusable" data-autofocus onclick={() => void runReal()}>Réessayer</button>
+          <button class="act focusable" data-autofocus onclick={() => void runReal()}>{sendOnly ? 'Réessayer l\u2019envoi' : 'Réessayer'}</button>
           <button class="act focusable" onclick={() => router.back()}>Retour</button>
         </span>
+      {:else if ended}
+        <button class="act focusable" data-autofocus onclick={() => router.reset({ name: 'accueil' })}>Retour</button>
       {/if}
+      {#if closeNote && busy}<p class="note" role="status">Partie en cours : fermer le jeu d\u2019abord</p>{/if}
     </div>
   </main>
   <ButtonHints note="Sauvegardes conservées sur le serveur" hints={[{ key: 'B', label: 'Annuler' }]} />
@@ -305,6 +338,7 @@
   .act { all: unset; cursor: pointer; align-self: flex-start; margin-left: 42px; padding: 12px 24px; border-radius: 12px; font-size: 16px; font-weight: 600; background: var(--control); color: var(--ink); }
   .act:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   .act:disabled { cursor: default; opacity: 0.8; }
+  .note { margin: 0 0 0 42px; font-size: 15px; color: var(--ink-3); }
   .acts { display: flex; gap: 12px; margin-left: 42px; }
   .acts .act { margin-left: 0; }
   .spin { animation: spin 900ms linear infinite; }

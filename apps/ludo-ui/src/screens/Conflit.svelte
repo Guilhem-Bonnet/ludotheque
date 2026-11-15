@@ -10,7 +10,10 @@
   import type { Conflict, ConflictSide } from '../lib/types';
 
   // Conflit de sauvegarde : deux cartes, aucune présélectionnée ; l'autre version reste dans l'historique.
-  let { conflict }: { conflict: Conflict } = $props();
+  let { conflict: initial }: { conflict: Conflict } = $props();
+  // Copie locale : le conflit est remplacé par une version à jour si le serveur a changé entre-temps.
+  // svelte-ignore state_referenced_locally
+  let conflict = $state(initial);
   let chosen = $state<'local' | 'server' | null>(null);
 
   onMount(() => {
@@ -33,7 +36,16 @@
     chosen = which as 'local' | 'server';
     if (!isDemo) {
       try {
-        await api.resolveConflict(conflict.profile, conflict.game.id, which === 'local' ? 'local' : 'serveur');
+        const r = await api.resolveConflict(conflict.profile, conflict.game.id, which === 'local' ? 'local' : 'serveur', conflict.rev ?? 0);
+        if (r.result === 'conflit') {
+          // Le serveur a changé depuis l'affichage : rien n'a été appliqué, le conflit à jour est réaffiché.
+          conflict = { ...conflict, local: r.local, server: r.server, played: r.played, rev: r.rev };
+          chosen = null;
+          error = 'La sauvegarde a changé sur un autre appareil';
+          feedback('err');
+          requestAnimationFrame(() => focusFirst());
+          return;
+        }
       } catch (e) {
         chosen = null;
         error = e instanceof Error ? e.message : String(e);
