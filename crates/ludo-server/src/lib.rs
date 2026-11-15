@@ -64,7 +64,8 @@ pub fn router(store: Arc<Store>) -> Router {
         .route("/api/v1/saves/{profile}/{game}/{rev}", get(get_blob))
         .route("/api/v1/leases/{profile}/{game}", post(post_lease).delete(delete_lease))
         .route("/api/v1/profiles", get(get_profiles))
-        .route("/api/v1/profiles/{id}", put(put_profile))
+        // Un profil tient en quelques centaines d'octets : limite propre à cette route (16 Kio).
+        .route("/api/v1/profiles/{id}", put(put_profile).layer(DefaultBodyLimit::max(16 * 1024)))
         .layer(DefaultBodyLimit::max(MAX_SAVE_BYTES))
         .with_state(store)
 }

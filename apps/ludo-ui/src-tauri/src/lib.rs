@@ -196,18 +196,20 @@ async fn restore(profile: String, game: String, rev: u64) -> Result<(), String> 
     blocking(move || {
         let cfg = load_config()?;
         let client = Client::new(&cfg.serveur);
-        // Jeu configuré mais adaptateur impossible à construire : erreur avant de toucher au serveur.
-        let prepared = match cfg.jeux.get(&game) {
+        // Jeu configuré pour ce profil seulement (même règle que `sync`) ; adaptateur impossible à
+        // construire : erreur avant de toucher au serveur.
+        let conf = cfg.jeux.get(&game).filter(|g| g.concerns(&profile));
+        let prepared = match conf {
             Some(g) => Some(config::prepare(&cfg, &g.emulateur, &profile, &g.title_id).map_err(|e| e.to_string())?),
             None => None,
         };
-        let _guard = JOURNAL.lock().map_err(|e| e.to_string())?;
+        let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
         let mut engine = Engine {
             client: &client,
             journal: &mut journal,
             device: cfg.appareil.clone(),
-            emulator: cfg.jeux.get(&game).map(|g| g.emulateur.clone()).unwrap_or_default(),
+            emulator: conf.map(|g| g.emulateur.clone()).unwrap_or_default(),
             playtime_s: 0,
         };
         let key = SaveKey { profile, game };
@@ -236,7 +238,7 @@ type GameSync = (String, Result<SyncOutcome, String>);
 /// Synchronise chaque jeu configuré pour ce profil.
 fn sync_profile(cfg: &Config, profile: &str) -> Result<Vec<GameSync>, String> {
     let client = Client::new(&cfg.serveur);
-    let _guard = JOURNAL.lock().map_err(|e| e.to_string())?;
+    let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for (id, g) in cfg.games_for(profile) {

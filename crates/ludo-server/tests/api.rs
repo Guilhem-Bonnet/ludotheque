@@ -356,3 +356,15 @@ fn profils_persistent_apres_redemarrage() {
     let s = Store::open(dir.path(), Box::new(TestClock(Arc::new(AtomicU64::new(2))))).unwrap();
     assert_eq!(s.profiles().unwrap(), vec![p]);
 }
+
+#[tokio::test]
+async fn profil_trop_gros_refuse() {
+    // La route des profils a sa propre limite (16 Kio), bien en dessous de celle des sauvegardes.
+    let a = app();
+    let mut body = profile_json("claire", "Claire", "champi");
+    body["status"] = serde_json::Value::String("x".repeat(20 * 1024));
+    let (s, _) = call(&a, put_profile_req("claire", body)).await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
+    let (_, b) = call(&a, get("/api/v1/profiles")).await;
+    assert_eq!(b, b"[]");
+}
