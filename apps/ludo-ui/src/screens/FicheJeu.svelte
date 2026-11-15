@@ -100,6 +100,8 @@
     } finally {
       installing = null;
       cancelling = false;
+      // Le bouton « Annuler » disparaît : le focus revient sur le bouton principal (Installer ou Jouer).
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus({ preventScroll: true }));
     }
   }
 
