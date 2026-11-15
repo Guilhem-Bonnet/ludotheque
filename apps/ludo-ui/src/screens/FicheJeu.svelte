@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
+  import RestoreDialog from '../lib/components/RestoreDialog.svelte';
   import Tile from '../lib/components/Tile.svelte';
   import { api } from '../lib/api';
   import { feedback } from '../lib/feedback';
@@ -15,11 +16,18 @@
   let history = $state<SaveRevision[]>([]);
   let restored = $state<number | null>(null);
 
+  let restoring = $state<SaveRevision | null>(null);
+
+  /** Restaurer : fenêtre de chargement, puis la version devient « Actuelle » (nouvelle révision côté serveur). */
   function restore(r: SaveRevision) {
-    // La version restaurée devient « Actuelle » (une nouvelle révision côté serveur) ; accord « sauvegarde ».
+    restoring = r;
+  }
+  function restoreDone() {
+    const r = restoring!;
+    restoring = null;
     restored = r.rev;
-    feedback('saved');
     history = history.map((h) => ({ ...h, current: h.rev === r.rev }));
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus({ preventScroll: true }));
   }
 
   onMount(() => {
@@ -58,7 +66,7 @@
         <ul>
           {#each history as r (r.rev)}
             <li class="rise" style:--i={history.indexOf(r)}>
-              <button class="row focusable" class:pop={restored === r.rev} disabled={r.current} data-sound="none" onclick={() => restore(r)}>
+              <button class="row focusable" class:pop={restored === r.rev} disabled={r.current} data-sound="ok" onclick={() => restore(r)}>
                 <Icon name={r.deviceKind} size={24} color="var(--ink-2)" />
                 <span class="dev">{r.device}</span>
                 <span class="when">{r.when}</span>
@@ -74,7 +82,10 @@
       {/if}
     </section>
   </main>
-  <ButtonHints hints={[{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Retour' }]} />
+  {#if restoring}
+    <RestoreDialog {game} rev={restoring} profile={router.profile!.id} ondone={restoreDone} />
+  {/if}
+  <ButtonHints hints={restoring ? [] : [{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Retour' }]} />
 </div>
 
 <style>

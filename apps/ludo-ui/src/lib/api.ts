@@ -12,6 +12,10 @@ export interface LudoApi {
   updates(): Promise<UpdateItem[]>;
   /** Synchronisation demandée à la main : envoie et récupère tout, puis renvoie la bibliothèque à jour. */
   sync(profile: string): Promise<Game[]>;
+  /** Restaure une version de sauvegarde : elle devient la version actuelle (nouvelle révision). `onstep` suit l'avancement. */
+  restore(profile: string, game: string, rev: number, onstep?: (step: number, progress: number) => void): Promise<void>;
+  /** Enregistre le profil (image, nom, préférences) sur le serveur. */
+  saveProfile(profile: Profile): Promise<Profile>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
   prepare(profile: string, game: string): Promise<{ conflict: Conflict } | { preparation: Preparation }>;
 }
@@ -77,6 +81,19 @@ const demoApi: LudoApi = {
       { id: 'u4', group: 'emulateurs', title: 'Ryujinx', detail: '1.3.3 → 1.3.4 · version de référence du foyer', action: 'Mettre à jour' },
     ];
   },
+  async restore(_p, _g, _r, onstep) {
+    // Démo : téléchargement de la version (≈1,2 s), puis remplacement local (≈0,6 s).
+    for (let i = 1; i <= 12; i++) { await wait(100); onstep?.(0, i / 12); }
+    onstep?.(1, 0);
+    await wait(600);
+    onstep?.(2, 1);
+  },
+  async saveProfile(profile) {
+    await wait(120);
+    const i = PROFILES.findIndex((p) => p.id === profile.id);
+    if (i >= 0) PROFILES[i] = { ...profile };
+    return { ...profile };
+  },
   async sync() {
     await wait(1800);
     // Démo : les envois en attente partent ; un conflit reste à trancher (il demande un choix).
@@ -134,6 +151,10 @@ const tauriApi: LudoApi = {
   history: viaTauri('history', (profile, game) => ({ profile, game })),
   updates: viaTauri('updates', () => ({})),
   sync: viaTauri('sync', (profile) => ({ profile })),
+  saveProfile: viaTauri('saveProfile', (profile) => ({ profile })),
+  restore: async (profile, game, rev, onstep) => {
+    try { await invoke('restore', { profile, game, rev }); onstep?.(2, 1); } catch { await demoApi.restore(profile, game, rev, onstep); }
+  },
   prepare: viaTauri('prepare', (profile, game) => ({ profile, game })),
 };
 

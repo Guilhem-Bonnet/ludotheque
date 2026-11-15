@@ -28,6 +28,8 @@ export interface Profile {
   /** Texte secondaire sous l'avatar (« Dernière partie : … », « En cours sur Steam Deck »). */
   status?: string;
   busyElsewhere?: boolean;
+  /** Préférences du profil (suivent la personne sur tous ses appareils). */
+  prefs?: { sons: boolean; vibrations: boolean };
 }
 
 export interface LastSession {

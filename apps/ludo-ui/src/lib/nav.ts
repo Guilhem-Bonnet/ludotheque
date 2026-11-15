@@ -15,7 +15,10 @@ import { unlock, type SoundName } from './sound';
 type Dir = 'up' | 'down' | 'left' | 'right';
 
 function focusables(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('.focusable')].filter((el) => {
+  // Un menu ouvert (`[data-modal]`) garde le focus : seuls ses éléments sont navigables.
+  const modals = document.querySelectorAll<HTMLElement>('[data-modal]');
+  const scope: ParentNode = modals.length ? modals[modals.length - 1] : document;
+  return [...scope.querySelectorAll<HTMLElement>('.focusable')].filter((el) => {
     const r = el.getBoundingClientRect();
     return r.width > 0 && r.height > 0 && !el.hasAttribute('disabled');
   });
@@ -103,7 +106,9 @@ export function press(el: HTMLElement | null) {
 /** Met le focus sur `[data-autofocus]`, sinon sur le premier élément navigable. */
 export function focusFirst() {
   requestAnimationFrame(() => {
-    const el = document.querySelector<HTMLElement>('[data-autofocus]') ?? focusables()[0];
+    const modals = document.querySelectorAll<HTMLElement>('[data-modal]');
+    const scope: ParentNode = modals.length ? modals[modals.length - 1] : document;
+    const el = scope.querySelector<HTMLElement>('[data-autofocus]') ?? focusables()[0];
     el?.focus({ preventScroll: true });
   });
 }
@@ -149,6 +154,12 @@ const PAD: Record<number, () => void> = {
 export function installNav() {
   window.addEventListener('keydown', (ev) => {
     unlock();
+    // Saisie de texte (nom du profil) : les touches tapent ; Échap quitte le champ sans revenir en arrière.
+    const t = ev.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
+      if (ev.key === 'Escape') { ev.preventDefault(); t.blur(); t.closest<HTMLElement>('.field')?.focus(); }
+      return;
+    }
     const handler = KEYS[ev.key];
     if (handler) {
       ev.preventDefault();

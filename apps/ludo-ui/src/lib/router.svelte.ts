@@ -11,7 +11,8 @@ export type Screen =
   | { name: 'fiche'; game: Game }
   | { name: 'mises-a-jour' }
   | { name: 'passage'; preparation: Preparation }
-  | { name: 'conflit'; conflict: Conflict };
+  | { name: 'conflit'; conflict: Conflict }
+  | { name: 'profil' };
 
 class Router {
   screen = $state<Screen>({ name: 'accueil' });

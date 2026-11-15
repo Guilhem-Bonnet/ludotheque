@@ -48,8 +48,14 @@ function rumble(steps: Rumble[]) {
   }
 }
 
+let rumbleOn = true;
+/** Préférence du profil : vibrations de la manette activées ou non. */
+export function setRumble(on: boolean) {
+  rumbleOn = on;
+}
+
 export function feedback(event: SoundName) {
   play(event);
   const r = RUMBLE[event];
-  if (r) rumble(r);
+  if (r && rumbleOn) rumble(r);
 }

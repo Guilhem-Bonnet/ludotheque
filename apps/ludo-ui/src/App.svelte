@@ -11,6 +11,7 @@
   import FicheJeu from './screens/FicheJeu.svelte';
   import MisesAJour from './screens/MisesAJour.svelte';
   import Passage from './screens/Passage.svelte';
+  import Profil from './screens/Profil.svelte';
   import QuiJoue from './screens/QuiJoue.svelte';
 
   let device = $state<DeviceInfo | null>(null);
@@ -55,6 +56,7 @@
     const byId = (id: string) => games.find((g) => g.id === id) ?? games[0];
     if (ecran === 'bibliotheque') router.go({ name: 'bibliotheque' });
     else if (ecran === 'maj') router.go({ name: 'mises-a-jour' });
+else if (ecran === 'profil') router.go({ name: 'profil' });
     else if (ecran === 'fiche') router.go({ name: 'fiche', game: byId('switch-lm3') });
     else if (ecran === 'passage' || ecran === 'conflit') {
       const r = await api.prepare(router.profile.id, ecran === 'conflit' ? 'switch-botw' : 'nds-diamant');
@@ -67,7 +69,11 @@
     installNav();
     rescale();
     window.addEventListener('resize', rescale);
-    const onBack = () => router.back();
+    // B : un menu ouvert se referme d'abord ; sinon, écran précédent.
+    const onBack = () => {
+      if (document.querySelector('[data-modal]')) window.dispatchEvent(new CustomEvent('ludo:modal-back'));
+      else router.back();
+    };
     window.addEventListener('ludo:back', onBack);
 
     Promise.all([api.device(), api.profiles()]).then(([d, profiles]) => {
@@ -118,6 +124,8 @@
         <Passage preparation={router.screen.preparation} />
       {:else if router.screen.name === 'conflit'}
         <Conflit conflict={router.screen.conflict} />
+      {:else if router.screen.name === 'profil' && router.profile}
+        <Profil {device} />
       {/if}
       </div>
     {/key}

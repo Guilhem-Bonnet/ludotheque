@@ -10,6 +10,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import SyncStatus from '../lib/components/SyncStatus.svelte';
+  import OptionsMenu from '../lib/components/OptionsMenu.svelte';
   import Tile from '../lib/components/Tile.svelte';
   import { api } from '../lib/api';
   import { focusFirst } from '../lib/nav';
@@ -41,7 +42,13 @@
     });
     const onAction = (ev: Event) => {
       const g = games[focused];
-      if ((ev as CustomEvent).detail === 'y' && g) {
+      const onTile = (document.activeElement as HTMLElement | null)?.classList.contains('tile');
+      if ((ev as CustomEvent).detail === 'x' && g && onTile && !options) {
+        feedback('ok');
+        options = g;
+        return;
+      }
+      if ((ev as CustomEvent).detail === 'y' && g && !options) {
         feedback('ok');
         router.heroGame = g.id;
         router.go({ name: 'fiche', game: g });
@@ -55,6 +62,23 @@
   });
 
   let launching = $state<string | null>(null);
+
+  /* Menu Options du jeu sélectionné (X). */
+  let options = $state<Game | null>(null);
+  function tileOf(id: string) {
+    return document.querySelector<HTMLElement>(`.slot.focused .tile`) ?? document.querySelector<HTMLElement>('.tile');
+  }
+  function closeOptions() {
+    options = null;
+    feedback('back');
+    requestAnimationFrame(() => tileOf('')?.focus({ preventScroll: true }));
+  }
+  function changeGame(g: Game) {
+    games = games.map((x) => (x.id === g.id ? g : x));
+    all = all.map((x) => (x.id === g.id ? g : x));
+    options = g;
+  }
+  let profileFocused = $state(false);
 
   /* Synchronisation manuelle (A sur le nuage de l'en-tête). */
   let syncing = $state(false);
@@ -89,13 +113,13 @@
 <div class="screen">
   <Ambiance art={current?.art} x={lightX} key={current?.id} />
   <header class="rise" style:--i={0}>
-    <div class="who pill">
+    <button class="who pill focusable" aria-label="Profil de {router.profile!.name}" onclick={() => router.go({ name: 'profil' })} onfocus={() => (profileFocused = true)} onblur={() => (profileFocused = false)}>
       <Avatar profile={router.profile!} size={46} />
       <div class="who-text">
         <span class="name">{router.profile!.name}</span>
         <span class="device">{device.name}</span>
       </div>
-    </div>
+    </button>
     <div class="status">
       <SyncStatus games={all} {offline} busy={syncing} onclick={syncNow} onfocus={() => (syncFocused = true)} onblur={() => (syncFocused = false)} />
       <span class="clock">{clock}</span>
@@ -161,8 +185,18 @@
     </button>
   </nav>
 
-  {#if syncFocused}
+  {#if options}
+    <OptionsMenu game={options} profile={router.profile!.id} onclose={closeOptions}
+      onplay={() => { const g = options!; options = null; const el = tileOf(g.id); if (el) launch(g, el); }}
+      ondetails={() => { const g = options!; options = null; router.heroGame = g.id; router.go({ name: 'fiche', game: g }); }}
+      onchange={changeGame} />
+  {/if}
+  {#if options}
+    <ButtonHints hints={[{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Fermer' }]} />
+  {:else if syncFocused}
     <ButtonHints hints={[{ key: 'A', label: 'Synchroniser' }]} />
+  {:else if profileFocused}
+    <ButtonHints hints={[{ key: 'A', label: 'Profil' }]} />
   {:else}
     <ButtonHints hints={[{ key: 'A', label: 'Jouer' }, { key: 'Y', label: 'Détails' }, { key: 'X', label: 'Options' }]} />
   {/if}
@@ -172,7 +206,8 @@
   .screen { height: 100%; display: flex; flex-direction: column; overflow: hidden; position: relative; isolation: isolate; }
   /* Pastilles translucides (reprises de la direction B). */
   .pill { background: rgba(255, 255, 255, 0.1); }
-  .who.pill { padding: 5px 20px 5px 5px; border-radius: 40px; gap: 12px; }
+  .who.pill { all: unset; cursor: pointer; display: flex; align-items: center; padding: 5px 20px 5px 5px; border-radius: 40px; gap: 12px; background: rgba(255, 255, 255, 0.1); transition: background-color var(--t-quick) ease-out, transform var(--t-quick) var(--ease-pop), box-shadow var(--t-std) var(--ease-land); }
+  .who.pill.focusable:focus { background: rgba(255, 255, 255, 0.2); transform: translateY(-2px); box-shadow: 0 0 0 3px var(--accent), 0 8px 18px rgba(0, 0, 0, 0.3); }
   .clock { font-weight: 600; color: var(--ink); }
   header { display: flex; align-items: center; justify-content: space-between; padding: 28px 48px 0; }
   .who { display: flex; align-items: center; gap: 14px; }

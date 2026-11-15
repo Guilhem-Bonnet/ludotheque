@@ -1,0 +1,85 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { fade, scale } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
+  import Icon from './Icon.svelte';
+  import { api } from '../api';
+  import { feedback } from '../feedback';
+  import { reducedMotion } from '../motion';
+  import { play as playSound } from '../sound';
+  import type { Game, SaveRevision } from '../types';
+
+  // Restauration d'une sauvegarde : fenêtre de chargement (on ne joue pas pendant qu'on remplace la
+  // sauvegarde). Étapes cochées une à une, barre continue, sons de synchronisation, accord à la fin.
+  let { game, rev, profile, ondone }: { game: Game; rev: SaveRevision; profile: string; ondone: () => void } = $props();
+
+  let step = $state(0);
+  let progress = $state(0);
+  const steps = ['Téléchargement de la version', 'Remplacement de la sauvegarde locale', 'Sauvegarde restaurée'];
+
+  onMount(() => {
+    feedback('syncStart');
+    const tick = setInterval(() => playSound('syncTick'), 900);
+    api.restore(profile, game.id, rev.rev, (s, p) => { step = s; progress = s === 0 ? p : 1; })
+      .finally(() => clearInterval(tick))
+      .then(() => {
+        step = 2;
+        feedback('saved');
+        setTimeout(ondone, 900);
+      });
+    // B pendant la restauration : rien (l'opération doit aller au bout pour ne rien perdre).
+    const block = () => feedback('err');
+    window.addEventListener('ludo:modal-back', block);
+    return () => window.removeEventListener('ludo:modal-back', block);
+  });
+
+  const d = (ms: number) => (reducedMotion() ? 0 : ms);
+</script>
+
+<div class="backdrop" transition:fade={{ duration: d(200) }} aria-hidden="true"></div>
+<div class="card" data-modal role="dialog" aria-label="Restauration de la sauvegarde" aria-live="polite"
+  in:scale={{ start: 0.94, duration: d(320), easing: cubicOut }} out:fade={{ duration: d(180) }}>
+  <h2>Restauration de la sauvegarde</h2>
+  <p class="sub">{game.title} · {rev.device} · {rev.when} · {rev.playtime}</p>
+  <ol>
+    {#each steps as label, i (label)}
+      <li class:done={i < step || step === 2} class:now={i === step && step < 2}>
+        <span class="mark">
+          {#if i < step || step === 2}<span class="check"><Icon name="check" size={14} color="#0b0f14" /></span>
+          {:else if i === step}<span class="spinner"></span>
+          {:else}<span class="dot"></span>{/if}
+        </span>
+        {label}
+      </li>
+    {/each}
+  </ol>
+  <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress * 100)}>
+    <span style:width="{progress * 100}%"></span>
+  </div>
+  <p class="note">{step === 2 ? 'Version actuelle sur tous les appareils' : "L'ancienne version reste dans l'historique"}</p>
+</div>
+
+<style>
+  .backdrop { position: absolute; inset: 0; z-index: 10; background: rgba(5, 8, 12, 0.6); backdrop-filter: blur(4px); }
+  .card {
+    position: absolute; left: 50%; top: 50%; width: 520px; margin: -170px 0 0 -260px; z-index: 11; box-sizing: border-box;
+    background: #161a22; border-radius: 20px; padding: 30px 32px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  h2 { margin: 0; font-size: 22px; font-weight: 600; }
+  .sub { margin: 0; font-size: 14px; color: var(--ink-3); }
+  ol { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  li { display: flex; align-items: center; gap: 12px; font-size: 16px; color: var(--ink-4); transition: color var(--t-std) ease-out; }
+  li.now { color: var(--ink); font-weight: 500; }
+  li.done { color: var(--ink-2); }
+  .mark { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
+  .check { width: 22px; height: 22px; border-radius: 50%; background: var(--ok); display: inline-flex; align-items: center; justify-content: center; animation: pop 320ms var(--ease-pop); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, 0.25); }
+  .spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.18); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+  .bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; margin-top: 6px; }
+  .bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 160ms linear; }
+  .note { margin: 0; font-size: 13px; color: var(--ink-4); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pop { from { transform: scale(0.5); } to { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } .check { animation: none; } }
+</style>
