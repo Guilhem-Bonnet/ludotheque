@@ -1,0 +1,20 @@
+# Ryujinx (Ryubing) — émulateur Switch par défaut (décision du 14/11/2026).
+# Chemins relevés par la session PC le 14/11 (mesurés sur le PC et le Deck).
+id        = "ryujinx"
+consoles  = ["switch"]
+formats   = ["nsp", "xci"]
+lancement = "{bin} --fullscreen --profile {profil_nom} {rom}"
+profils   = "natifs"
+# Ryujinx range les sauvegardes par index (bis/user/save/<index>/), relié au jeu par saveMeta :
+# la traduction vers la forme neutre (title_id) est faite par l'adaptateur Ryujinx de `ludo`.
+sauvegardes = "{data}/bis/user/save"
+exclusions  = ["*.tmp", "Config.json", "logs/", "games/"]
+systeme     = ["system/prod.keys", "system/title.keys"]
+
+[appareil.pc]
+bin  = "flatpak run io.github.ryubing.Ryujinx"
+data = "~/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx"
+
+[appareil.deck]
+bin  = "~/Applications/publish/Ryujinx"
+data = "~/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx"

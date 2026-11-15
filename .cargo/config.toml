@@ -1,0 +1,3 @@
+# Les artefacts de compilation ne vont JAMAIS sur /mnt/Travail (disque déjà saturé une fois par un target/).
+[build]
+target-dir = "/home/guilhem/.cache/cargo-target/ludotheque"

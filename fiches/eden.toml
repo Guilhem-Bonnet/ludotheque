@@ -1,0 +1,21 @@
+# Eden — émulateur Switch en second, seul disponible sur la Thor (Android).
+id        = "eden"
+consoles  = ["switch"]
+formats   = ["nsp", "xci"]
+lancement = "{bin} -f -u {profil_index} -g {rom}"
+profils   = "natifs"
+sauvegardes = "{data}/nand/user/save/0000000000000000/{profil_uuid}/{title_id}"
+exclusions  = ["*.tmp"]
+systeme     = ["keys/prod.keys", "keys/title.keys"]
+
+[appareil.pc]
+bin  = "flatpak run dev.eden_emu.eden"
+data = "~/.var/app/dev.eden_emu.eden/data/eden"
+
+[appareil.deck]
+bin  = "~/Applications/Eden.AppImage"
+data = "~/Emulation/storage/eden"
+
+[appareil.thor]
+bin  = "dev.eden.eden_emulator"
+data = "/sdcard/Android/data/dev.eden.eden_emulator/files"
