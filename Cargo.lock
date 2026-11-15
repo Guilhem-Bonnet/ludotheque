@@ -2198,11 +2198,13 @@ dependencies = [
  "axum",
  "clap",
  "hex",
+ "libc",
  "ludo-core",
  "ludo-proto",
  "ludo-server",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2239,6 +2241,7 @@ name = "ludo-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures-core",
  "hex",
  "http-body-util",
  "ludo-core",

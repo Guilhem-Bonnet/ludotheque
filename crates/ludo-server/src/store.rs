@@ -48,8 +48,6 @@ pub enum StoreError {
     NotFound,
     #[error("chemin refusé : {0}")]
     Forbidden(String),
-    #[error("dossier : non téléchargeable en un seul fichier")]
-    IsDirectory,
 }
 
 /// Horloge injectable (les tests avancent le temps sans dormir).
@@ -619,9 +617,6 @@ impl Store {
             .optional()?
         }
         .ok_or(StoreError::NotFound)?;
-        if file.format == "dir" {
-            return Err(StoreError::IsDirectory);
-        }
         Ok((safe_join(root, &file.path)?, file))
     }
 }

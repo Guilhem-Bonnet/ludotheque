@@ -4,7 +4,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { isDemo } from '../lib/api';
+  import { api, isDemo } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
@@ -68,6 +68,36 @@
     }
   }
 
+  /**
+   * Hors démonstration : le téléchargement est réel (progression envoyée par l'app). Les étapes
+   * suivantes (sauvegarde, lancement) restent à brancher avec le lancement des émulateurs ; en cas
+   * d'échec, l'étape reste visible avec le message d'erreur.
+   */
+  async function runReal() {
+    const i = steps.findIndex((s) => s.progress !== undefined && s.state !== 'fait');
+    if (i < 0) return;
+    const s = steps[i];
+    s.state = 'en_cours';
+    s.progress = 0;
+    s.detail = undefined;
+    try {
+      await api.installGame(preparation.game.id, (p) => {
+        s.progress = Math.round(p * 100);
+      });
+      s.progress = 100;
+      s.label = 'Téléchargement terminé';
+      s.detail = preparation.game.size ?? undefined;
+      s.state = 'fait';
+      feedback('downloaded');
+    } catch (e) {
+      s.label = 'Téléchargement impossible';
+      s.detail = e instanceof Error ? e.message : String(e);
+      s.progress = undefined;
+      s.state = 'a_venir';
+      feedback('err');
+    }
+  }
+
   /** Vol de la tuile depuis l'accueil (FLIP), avec un léger arc vers le haut à mi-course. */
   function flyIn() {
     const from = router.heroRect;
@@ -94,6 +124,7 @@
     focusFirst();
     feedback('loading');
     if (isDemo) void runDemo();
+    else void runReal();
   });
 </script>
 

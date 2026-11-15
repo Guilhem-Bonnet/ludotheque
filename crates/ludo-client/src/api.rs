@@ -26,6 +26,8 @@ const MAX_DOWNLOAD: u64 = 1024 * 1024 * 1024;
 
 pub struct Client {
     agent: Agent,
+    /// Agent des téléchargements de jeux : pas de délai global (une ROM pèse jusqu'à 15 Go).
+    download_agent: Agent,
     base: String,
 }
 
@@ -38,7 +40,14 @@ impl Client {
             .timeout_global(Some(Duration::from_secs(600)))
             .build()
             .into();
-        Self { agent, base: base.trim_end_matches('/').to_string() }
+        let download_agent: Agent = Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_secs(3)))
+            .timeout_recv_response(Some(Duration::from_secs(60)))
+            .timeout_global(None)
+            .build()
+            .into();
+        Self { agent, download_agent, base: base.trim_end_matches('/').to_string() }
     }
 
     fn url(&self, path: &str) -> String {
@@ -170,6 +179,21 @@ impl Client {
         let mut r = self.agent.post(self.url("catalog/rescan")).send_empty()?;
         match r.status().as_u16() {
             200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
+    /// Ouvre le téléchargement d'un fichier du catalogue, à partir de l'octet `from` (en-tête
+    /// `Range`). Statuts rendus tels quels : 200 (fichier entier, ou tar d'un dossier), 206 (reprise)
+    /// et 416 (reprise impossible) ; tout autre statut est une erreur.
+    pub fn download(&self, game: &str, file_id: u64, from: u64) -> Result<ureq::http::Response<ureq::Body>, ApiError> {
+        let mut req = self.download_agent.get(self.url(&format!("games/{game}/files/{file_id}")));
+        if from > 0 {
+            req = req.header("Range", format!("bytes={from}-"));
+        }
+        let mut r = req.call()?;
+        match r.status().as_u16() {
+            200 | 206 | 416 => Ok(r),
             s => Err(Self::fail(s, &mut r)),
         }
     }

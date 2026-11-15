@@ -245,15 +245,12 @@ async fn telechargement_refuse_les_evasions_et_les_cas_invalides() {
         assert_eq!(s, StatusCode::FORBIDDEN);
         assert!(!String::from_utf8_lossy(&b).contains("secret\n"));
     }
-    // Fichier disparu : 404. Fichier inconnu, jeu inconnu, dossier Wii U : 404 / 404 / 422.
+    // Fichier disparu : 404. Fichier inconnu, jeu inconnu : 404.
     std::fs::remove_file(&target).ok();
     assert_eq!(call(&a, Request::get(&uri).body(Body::empty()).unwrap()).await.0, StatusCode::NOT_FOUND);
     assert_eq!(call(&a, Request::get("/api/v1/games/switch-lm3/files/99999").body(Body::empty()).unwrap()).await.0, StatusCode::NOT_FOUND);
     assert_eq!(call(&a, Request::get("/api/v1/games/inconnu/files/1").body(Body::empty()).unwrap()).await.0, StatusCode::NOT_FOUND);
     let games = catalog(&a).await;
-    let wiiu = &find(&games, "wiiu-wind-waker-hd").files[0];
-    let uri = format!("/api/v1/games/wiiu-wind-waker-hd/files/{}", wiiu.id);
-    assert_eq!(call(&a, Request::get(uri).body(Body::empty()).unwrap()).await.0, StatusCode::UNPROCESSABLE_ENTITY);
     // Un fichier d'un autre jeu n'est pas servi sous l'identifiant d'un jeu étranger.
     let lm3 = &find(&games, "switch-lm3").files[0];
     let uri = format!("/api/v1/games/ds-pokemon-diamant/files/{}", lm3.id);
@@ -366,4 +363,65 @@ async fn resume_des_sauvegardes_d_un_profil() {
     );
     let (s, _, b) = call(&a, Request::get("/api/v1/saves/personne").body(Body::empty()).unwrap()).await;
     assert_eq!((s, b.as_slice()), (StatusCode::OK, b"[]".as_slice()));
+}
+
+/// Entrées (nom, contenu) d'un tar ; les dossiers ont un contenu vide.
+fn tar_entries(data: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut ar = tar::Archive::new(data);
+    ar.entries()
+        .unwrap()
+        .map(|e| {
+            let mut e = e.unwrap();
+            let name = e.path().unwrap().to_string_lossy().into_owned();
+            let mut v = Vec::new();
+            std::io::Read::read_to_end(&mut e, &mut v).unwrap();
+            (name, v)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn dossier_servi_en_tar_a_la_volee() {
+    let a = app();
+    a.store.rescan().unwrap();
+    // Un lien symbolique vers l'extérieur ne doit jamais entrer dans l'archive.
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path().join("secret.txt"), a.roms.path().join("wiiu/Wind Waker HD/lien")).unwrap();
+    let games = catalog(&a).await;
+    let wiiu = &find(&games, "wiiu-wind-waker-hd").files[0];
+    let uri = format!("/api/v1/games/wiiu-wind-waker-hd/files/{}", wiiu.id);
+    // Le Range est ignoré : réponse 200 complète.
+    let req = Request::get(&uri).header(header::RANGE, "bytes=10-20").body(Body::empty()).unwrap();
+    let (s, h, b) = call(&a, req).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(h[header::CONTENT_TYPE], "application/x-tar");
+    assert_eq!(h["x-ludo-archive"], "tar");
+    assert_eq!(h["x-ludo-total-bytes"], "100");
+    assert!(h.get(header::CONTENT_RANGE).is_none());
+    let entries = tar_entries(&b);
+    let names: Vec<_> = entries.iter().map(|(n, _)| n.trim_end_matches('/')).collect();
+    assert_eq!(names, vec!["code", "code/app.rpx", "content", "content/a.bin"]);
+    assert_eq!(entries[1].1, vec![11; 70]);
+    assert_eq!(entries[3].1, vec![12; 30]);
+    assert!(!String::from_utf8_lossy(&b).contains("secret"));
+}
+
+#[test]
+fn liste_tar_sans_liens_ni_evasion() {
+    let root = tempfile::tempdir().unwrap();
+    put(root.path(), "d/a.bin", &[1; 5]);
+    put(root.path(), "d/sous/b.bin", &[2; 7]);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("x"), "x").unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(outside.path(), root.path().join("d/dossier-lien")).unwrap();
+        std::os::unix::fs::symlink(outside.path().join("x"), root.path().join("d/fichier-lien")).unwrap();
+    }
+    let (entries, total) = ludo_server::list_tar_entries(&root.path().join("d")).unwrap();
+    let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["a.bin", "sous", "sous/b.bin"]);
+    assert_eq!(total, 12);
 }

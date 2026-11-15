@@ -69,7 +69,64 @@
     return () => window.removeEventListener('ludo:tab', onTab);
   });
 
-  const installed = $derived(game.install !== 'non_installe');
+  /* Installation du jeu : l'état local suit les appels réels (la fiche ne recharge pas la bibliothèque). */
+  // svelte-ignore state_referenced_locally
+  let installState = $state(game.install);
+  const installed = $derived(installState !== 'non_installe');
+  let installing = $state<number | null>(null);
+  let installError = $state<string | null>(null);
+  let confirmRemove = $state(false);
+  let removing = $state(false);
+
+  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+  async function installGame() {
+    if (installing !== null) return;
+    installError = null;
+    installing = 0;
+    try {
+      await api.installGame(game.id, (p) => (installing = p));
+      installState = 'installe';
+      // Les mises à jour du jeu sont installées avec lui ; les DLC restent un choix.
+      content = content.map((c) => (c.role === 'maj' ? { ...c, installed: true } : c));
+      feedback('downloaded');
+    } catch (e) {
+      installError = message(e);
+      feedback('err');
+    } finally {
+      installing = null;
+    }
+  }
+
+  /** Désinstaller : le premier appui arme la confirmation, le second supprime les fichiers du jeu (jamais les sauvegardes). */
+  async function uninstall() {
+    if (removing || installing !== null) return;
+    if (!confirmRemove) {
+      confirmRemove = true;
+      feedback('err');
+      return;
+    }
+    confirmRemove = false;
+    removing = true;
+    installError = null;
+    try {
+      await api.uninstallGame(game.id);
+      installState = 'non_installe';
+      content = content.map((c) => ({ ...c, installed: false }));
+      feedback('saved');
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus({ preventScroll: true }));
+    } catch (e) {
+      installError = message(e);
+      feedback('err');
+    } finally {
+      removing = false;
+    }
+  }
+
+  function primary() {
+    if (installed) void play(game);
+    else void installGame();
+  }
 </script>
 
 <div class="screen">
@@ -78,9 +135,15 @@
     <aside>
       <div class="art"><Tile {game} size={320} big still hero={router.heroGame === game.id} /></div>
       <div class="actions">
-        <button class="primary focusable" data-autofocus onclick={() => play(game)}>{installed ? 'Jouer' : 'Installer'}</button>
-        {#if installed}<button class="secondary focusable">Désinstaller</button>{/if}
+        <button class="primary focusable" class:busy={installing !== null} data-autofocus aria-busy={installing !== null} onclick={primary}>
+          {#if installing !== null}<span class="fill" style:width="{installing * 100}%"></span>{/if}
+          <span class="label">{installing !== null ? `Téléchargement… ${Math.round(installing * 100)} %` : installed ? 'Jouer' : installError ? 'Réessayer' : 'Installer'}</span>
+        </button>
+        {#if installed}
+          <button class="secondary focusable" class:armed={confirmRemove} data-sound="none" disabled={removing} onclick={uninstall} onblur={() => (confirmRemove = false)}>{removing ? 'Suppression…' : confirmRemove ? 'Confirmer : désinstaller' : 'Désinstaller'}</button>
+        {/if}
       </div>
+      {#if installError}<p class="error" role="alert">{installError}</p>{/if}
       <dl>
         <dt>Émulateur</dt><dd>{game.emulator}</dd>
         {#if game.version}<dt>Version</dt><dd>{game.version}</dd>{/if}
@@ -160,8 +223,15 @@
   .art { pointer-events: none; }
   .actions { display: flex; gap: 12px; }
   .primary, .secondary { all: unset; cursor: pointer; flex-grow: 1; text-align: center; padding: 14px 0; border-radius: 12px; }
-  .primary { font-size: 18px; font-weight: 600; background: var(--ink); color: var(--ground); }
+  .primary { position: relative; overflow: hidden; font-size: 18px; font-weight: 600; background: var(--ink); color: var(--ground); }
+  .primary .label { position: relative; }
+  .primary.busy { cursor: progress; }
+  /* Progression sur le bouton lui-même : la partie remplie prend la couleur d'accent. */
+  .fill { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: 0.55; transition: width 120ms linear; }
   .secondary { font-size: 16px; background: var(--control); color: var(--ink); }
+  .secondary.armed { background: rgba(255, 90, 90, 0.16); color: #ff9b9b; }
+  .secondary:disabled { cursor: default; opacity: 0.8; }
+  .error { margin: 0; font-size: 14px; color: #ff9b9b; }
   dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 18px; font-size: 15px; }
   dt { color: var(--ink-4); }
   dd { margin: 0; }

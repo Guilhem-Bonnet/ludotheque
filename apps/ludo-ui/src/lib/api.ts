@@ -18,6 +18,10 @@ export interface LudoApi {
   ping(): Promise<number>;
   /** Installe une mise à jour ou un DLC sur l'appareil ; `onprogress` reçoit 0 à 1. */
   installContent(game: string, content: number, onprogress?: (p: number) => void): Promise<void>;
+  /** Installe un jeu sur l'appareil (jeu de base et mises à jour) ; `onprogress` reçoit 0 à 1. Erreur : message en français. */
+  installGame(game: string, onprogress?: (p: number) => void): Promise<void>;
+  /** Désinstalle un jeu de l'appareil : fichiers du jeu seulement, jamais les sauvegardes. */
+  uninstallGame(game: string): Promise<void>;
   /** Enregistre le profil (image, nom, préférences) sur le serveur. */
   saveProfile(profile: Profile): Promise<Profile>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
@@ -32,6 +36,29 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 }
 
 
+/** Événement de progression émis par l'app Rust pendant une installation (cumul de tous les fichiers). */
+const EVENT_PROGRESSION = 'ludo://progression';
+
+/** Exécute `run` en relayant la progression du jeu `game` à `onprogress` (0 à 1). */
+async function withProgress<T>(game: string, onprogress: ((p: number) => void) | undefined, run: () => Promise<T>): Promise<T> {
+  let unlisten: (() => void) | undefined;
+  if (onprogress) {
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      unlisten = await listen<{ game: string; file: number; done: number; total: number }>(EVENT_PROGRESSION, (ev) => {
+        const { game: g, done, total } = ev.payload;
+        if (g === game && total > 0) onprogress(Math.min(1, done / total));
+      });
+    } catch {
+      // Pas d'écoute possible : l'installation se fait quand même, sans progression.
+    }
+  }
+  try {
+    return await run();
+  } finally {
+    unlisten?.();
+  }
+}
 
 // ——— Source de démonstration (données illustratives, mêmes que les maquettes) ———
 
@@ -100,6 +127,16 @@ const demoApi: LudoApi = {
   },
   async installContent(_g, _c, onprogress) {
     for (let i = 1; i <= 20; i++) { await wait(90); onprogress?.(i / 20); }
+  },
+  async installGame(game, onprogress) {
+    for (let i = 1; i <= 24; i++) { await wait(90); onprogress?.(i / 24); }
+    const g = GAMES.find((x) => x.id === game);
+    if (g) g.install = 'installe';
+  },
+  async uninstallGame(game) {
+    await wait(300);
+    const g = GAMES.find((x) => x.id === game);
+    if (g) g.install = 'non_installe';
   },
   async saveProfile(profile) {
     await wait(120);
@@ -197,11 +234,28 @@ const tauriApi: LudoApi = {
   ping: viaTauri('ping', () => ({})),
   installContent: async (game, content, onprogress) => {
     try {
-      await invoke('installContent', { game, content });
+      await withProgress(game, onprogress, () => invoke('installContent', { game, content }));
       onprogress?.(1);
     } catch (e) {
       if (!commandMissing(e)) throw new Error(String(e));
       await demoApi.installContent(game, content, onprogress);
+    }
+  },
+  installGame: async (game, onprogress) => {
+    try {
+      await withProgress(game, onprogress, () => invoke('installGame', { game }));
+      onprogress?.(1);
+    } catch (e) {
+      if (!commandMissing(e)) throw new Error(String(e));
+      await demoApi.installGame(game, onprogress);
+    }
+  },
+  uninstallGame: async (game) => {
+    try {
+      await invoke('uninstallGame', { game });
+    } catch (e) {
+      if (!commandMissing(e)) throw new Error(String(e));
+      await demoApi.uninstallGame(game);
     }
   },
   restore: async (profile, game, rev, onstep) => {
