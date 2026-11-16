@@ -4,8 +4,12 @@
 À lancer sur le PC (le serveur n'a volontairement aucun accès Internet) :
 - Switch : blawar/titledb (FR.fr.json) : nom français, icône officielle, par identifiant de titre ;
 - 3DS, DS, GameCube, Wii U : libretro-thumbnails (Named_Boxarts), retrouvées par le nom du fichier ROM.
-Les images sont téléchargées UNE fois dans un dossier de cache local, puis envoyées au serveur
-(`PUT /api/v1/games/{id}/cover`). Le serveur les garde dans son volume de données.
+Deux images par jeu : la jaquette (`PUT /api/v1/games/{id}/cover`) et le fond grand format
+(`PUT /api/v1/games/{id}/background`, serveur >= 0.4.0) : bannière titledb (Switch), capture
+d'écran libretro Named_Snaps (3DS, DS…). Images choisies à la main (jeux sans base publique, comme
+la Switch 2) : `<manuel>/<id>.cover.(jpg|png|webp)` et `<manuel>/<id>.background.(…)`, prioritaires.
+Les images sont téléchargées UNE fois dans un dossier de cache local, puis envoyées au serveur,
+qui les garde dans son volume de données.
 
 Usage (bibliothèque standard seulement) :
     scripts/visuels.py                          # essai à blanc : tableau des correspondances, rien n'est écrit
@@ -326,7 +330,8 @@ def analyser(jeux, cache, avec_images):
     lignes = []
     for j in jeux:
         entree = fichier_base(j)
-        ligne = {"jeu": j, "entree": entree, "nom": None, "source_nom": "", "image": None, "source_image": "", "note": ""}
+        ligne = {"jeu": j, "entree": entree, "nom": None, "source_nom": "", "image": None, "source_image": "", "note": "",
+                 "fond": None, "source_fond": ""}
         c = j["console"]
         tid = (j.get("title_id") or "").lower()
         if j["id"] in NOMS_PAR_ID:
@@ -345,6 +350,10 @@ def analyser(jeux, cache, avec_images):
                         ligne.update(image=dest, source_image="titledb icône")
                     else:
                         ligne["note"] = "icône : téléchargement échoué"
+                    if f.get("bannerUrl"):
+                        fond = os.path.join(cache, "switch", tid + ".banniere.jpg")
+                        if telecharger(f["bannerUrl"], fond):
+                            ligne.update(fond=fond, source_fond="titledb bannière")
                 else:
                     ligne.update(source_image="titledb icône (non téléchargée)")
         if ligne["nom"] is None:
@@ -363,12 +372,35 @@ def analyser(jeux, cache, avec_images):
                             ligne.update(image=dest, source_image=f"libretro {methode} : {fichier}")
                         else:
                             ligne["note"] = "boxart : téléchargement échoué"
+                        # Fond : capture d'écran du même jeu (même nom de fichier dans Named_Snaps),
+                        # sinon écran-titre (Named_Titles).
+                        for dossier in ("Named_Snaps", "Named_Titles"):
+                            fond = os.path.join(cache, c, hashlib.sha1((dossier + fichier).encode()).hexdigest()[:16] + ".png")
+                            url_f = f"{LIBRETRO}/{urllib.parse.quote(SYSTEMES[c])}/{dossier}/{urllib.parse.quote(fichier)}"
+                            if telecharger(url_f, fond):
+                                ligne.update(fond=fond, source_fond=f"libretro {methode} {dossier}")
+                                break
                     else:
                         ligne.update(source_image=f"libretro {methode} : {fichier} (non téléchargée)")
                 else:
                     ligne["note"] = "aucune boxart libretro"
         lignes.append(ligne)
     return lignes
+
+
+def appliquer_manuel(lignes, dossier):
+    """Images choisies à la main : `<dossier>/<id>.cover.*` et `<dossier>/<id>.background.*` remplacent
+    celles des bases publiques (jeux absents des bases, comme la Switch 2)."""
+    if not dossier or not os.path.isdir(dossier):
+        return
+    fichiers = os.listdir(dossier)
+    for l in lignes:
+        jid = l["jeu"]["id"]
+        for sorte, cle, source in (("cover", "image", "source_image"), ("background", "fond", "source_fond")):
+            choix = sorted(f for f in fichiers if f.startswith(f"{jid}.{sorte}.") and f.rsplit(".", 1)[-1].lower() in ("jpg", "jpeg", "png", "webp"))
+            if choix:
+                l[cle] = os.path.join(dossier, choix[0])
+                l[source] = f"manuel : {choix[0]}"
 
 
 def ecrire_catalogue(lignes, chemin):
@@ -387,40 +419,43 @@ def ecrire_catalogue(lignes, chemin):
 
 
 def envoyer_images(serveur, lignes, forcer, approchants):
-    envoyes = deja = echecs = douteux = 0
-    for l in lignes:
-        j, img = l["jeu"], l["image"]
-        if not img:
-            continue
-        # Correspondance approchante (suite, portage, sous-titre) : risque de mauvaise jaquette,
-        # envoyée seulement sur demande explicite après relecture de l'essai à blanc.
-        if "approchant" in (l.get("source_image") or "") and not approchants:
-            log(f"  {j['id']} : correspondance approchante, non envoyée (--approchants pour l'envoyer)")
-            douteux += 1
-            continue
-        if j.get("cover") and not forcer:
-            deja += 1
-            continue
-        with open(img, "rb") as f:
-            data = f.read()
-        if len(data) > MAX_IMAGE:
-            log(f"  {j['id']} : image trop lourde ({len(data)} octets), ignorée")
-            echecs += 1
-            continue
-        mime = "image/png" if data[:4] == b"\x89PNG" else "image/webp" if data[8:12] == b"WEBP" else "image/jpeg"
-        try:
-            with requete(f"{serveur.rstrip('/')}/api/v1/games/{urllib.parse.quote(j['id'])}/cover", "PUT", data, {"Content-Type": mime}):
-                envoyes += 1
-        except urllib.error.HTTPError as e:
-            echecs += 1
-            log(f"  {j['id']} : PUT refusé ({e.code})")
-            if e.code in (404, 405) and envoyes == 0:
-                log("Le serveur ne connaît pas encore les images (version < 0.3.0) : abandon.")
-                break
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
-            echecs += 1
-            log(f"  {j['id']} : {e}")
-    print(f"Images : {envoyes} envoyées, {deja} déjà présentes, {douteux} approchantes écartées, {echecs} en échec")
+    """Envoie jaquettes et fonds manquants (`--forcer` : tous). Une sorte refusée par le serveur
+    (version trop ancienne : 404 ou 405 dès le premier envoi) est abandonnée seule."""
+    for sorte, cle, source, deja_la in (("cover", "image", "source_image", "cover"), ("background", "fond", "source_fond", "background")):
+        envoyes = deja = echecs = douteux = 0
+        for l in lignes:
+            j, img = l["jeu"], l[cle]
+            if not img:
+                continue
+            # Correspondance approchante (suite, portage, sous-titre) : risque de mauvaise image,
+            # envoyée seulement sur demande explicite après relecture de l'essai à blanc.
+            if "approchant" in (l.get(source) or "") and not approchants:
+                log(f"  {j['id']} : {sorte} par correspondance approchante, non envoyée (--approchants pour l'envoyer)")
+                douteux += 1
+                continue
+            if j.get(deja_la) and not forcer:
+                deja += 1
+                continue
+            with open(img, "rb") as f:
+                data = f.read()
+            if len(data) > MAX_IMAGE:
+                log(f"  {j['id']} : {sorte} trop lourde ({len(data)} octets), ignorée")
+                echecs += 1
+                continue
+            mime = "image/png" if data[:4] == b"\x89PNG" else "image/webp" if data[8:12] == b"WEBP" else "image/jpeg"
+            try:
+                with requete(f"{serveur.rstrip('/')}/api/v1/games/{urllib.parse.quote(j['id'])}/{sorte}", "PUT", data, {"Content-Type": mime}):
+                    envoyes += 1
+            except urllib.error.HTTPError as e:
+                echecs += 1
+                log(f"  {j['id']} : PUT {sorte} refusé ({e.code})")
+                if e.code in (404, 405) and envoyes == 0:
+                    log(f"Le serveur ne connaît pas encore « {sorte} » (version trop ancienne) : abandon de cette sorte.")
+                    break
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                echecs += 1
+                log(f"  {j['id']} : {e}")
+        print(f"{sorte} : {envoyes} envoyées, {deja} déjà présentes, {douteux} approchantes écartées, {echecs} en échec")
 
 
 def main():
@@ -433,27 +468,32 @@ def main():
     ap.add_argument("--forcer", action="store_true", help="renvoie aussi les images déjà présentes")
     ap.add_argument("--rescan", action="store_true", help="POST /api/v1/catalog/rescan à la fin")
     ap.add_argument("--sans-telechargement", action="store_true", help="ne télécharge aucune image (listes seulement)")
+    ap.add_argument("--manuel", default=os.path.expanduser("~/.local/share/ludotheque/visuels-manuels"),
+                    help="dossier d'images choisies à la main (<id>.cover.jpg, <id>.background.jpg)")
     ap.add_argument("--json", metavar="FICHIER", help="écrit le tableau des correspondances en JSON")
     a = ap.parse_args()
 
     jeux = lire_catalogue(a.serveur)
     log(f"{len(jeux)} jeux lus sur {a.serveur}")
     lignes = analyser(jeux, a.cache, not a.sans_telechargement)
+    appliquer_manuel(lignes, a.manuel)
 
-    print(f"{'console':8} {'jeu (id inchangé)':56} {'nom':46} {'source du nom':22} image")
+    print(f"{'console':8} {'jeu (id inchangé)':56} {'nom':46} {'source du nom':22} image / fond")
     for l in lignes:
         j = l["jeu"]
         img = ("OUI  " + l["source_image"]) if l["source_image"] else ("NON  " + l["note"])
-        print(f"{j['console']:8} {j['id'][:56]:56} {l['nom'][:46]:46} {l['source_nom'][:22]:22} {img}")
+        fond = l["source_fond"] or "pas de fond"
+        print(f"{j['console']:8} {j['id'][:56]:56} {l['nom'][:46]:46} {l['source_nom'][:22]:22} {img} | {fond}")
     resume = {}
     for l in lignes:
-        r = resume.setdefault(l["jeu"]["console"], [0, 0, 0])
+        r = resume.setdefault(l["jeu"]["console"], [0, 0, 0, 0])
         r[0] += 1
         r[1] += 1 if l["nom"] else 0
-        r[2] += 1 if l["source_image"] else 0
-    print("\nRésumé  console  jeux  noms  images")
-    for c, (n, nm, im) in sorted(resume.items()):
-        print(f"        {c:8} {n:4} {nm:5} {im:6}")
+        r[2] += 1 if l["image"] or (l["source_image"] and "non téléchargée" in l["source_image"]) else 0
+        r[3] += 1 if l["fond"] else 0
+    print("\nRésumé  console  jeux  noms  images  fonds")
+    for c, (n, nm, im, fo) in sorted(resume.items()):
+        print(f"        {c:8} {n:4} {nm:5} {im:6} {fo:5}")
 
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:

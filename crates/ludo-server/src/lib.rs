@@ -19,6 +19,8 @@
 //!   `?formats=nsp,xci` : formats lus par l'émulateur ; un NSZ / XCZ non accepté est converti par le
 //!   serveur (cache `LUDO_CACHE`) : `202` + `Retry-After` + JSON tant que ce n'est pas prêt, `503` sans clés
 //! - `PUT    /games/{id}/cover`                      image du jeu (png, jpeg ou webp, 5 Mo au plus, octets magiques vérifiés)
+//! - `PUT    /games/{id}/background`                 image de fond, grand format (mêmes règles)
+//! - `GET    /games/{id}/background`                 image de fond (ETag, `Cache-Control`)
 //! - `GET    /games/{id}/cover`                      image du jeu (ETag, `Cache-Control` ; 304 sur `If-None-Match`)
 //! - `POST   /catalog/rescan`                         nouveau balayage du dossier des ROM
 //!
@@ -38,7 +40,7 @@ use convert::{Converter, Outcome};
 use ludo_proto::{LeaseOutcome, LeaseRequest, Profile, PushOutcome, PushParams, SaveKey};
 use serde::Deserialize;
 use std::sync::Arc;
-use store::{Store, StoreError};
+use store::{ImageKind, Store, StoreError};
 
 /// Taille maximale d'une archive de sauvegarde (certaines sauvegardes Switch pèsent des centaines de Mo).
 pub const MAX_SAVE_BYTES: usize = 1024 * 1024 * 1024;
@@ -93,6 +95,7 @@ pub fn router_with(store: Arc<Store>, converter: Option<Arc<Converter>>) -> Rout
         .route("/api/v1/games", get(get_games))
         .route("/api/v1/games/{id}/files/{file_id}", get(get_game_file))
         .route("/api/v1/games/{id}/cover", get(get_cover).put(put_cover).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
+        .route("/api/v1/games/{id}/background", get(get_background).put(put_background).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
         .route("/api/v1/catalog/rescan", post(post_rescan))
         .route("/api/v1/profiles", get(get_profiles))
         // Un profil tient en quelques centaines d'octets : limite propre à cette route (16 Kio).
@@ -191,12 +194,28 @@ async fn get_games(State(s): State<AppState>) -> Result<Response, StoreError> {
 }
 
 async fn put_cover(State(s): State<AppState>, Path(id): Path<String>, body: Bytes) -> Result<Response, StoreError> {
-    blocking(move || s.put_cover(&id, &body)).await?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+    put_image(s, ImageKind::Cover, id, body).await
 }
 
 async fn get_cover(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Response, StoreError> {
-    let (path, mime, v) = blocking(move || s.cover_info(&id).ok_or(StoreError::NotFound)).await?;
+    get_image(s, ImageKind::Cover, id, headers).await
+}
+
+async fn put_background(State(s): State<AppState>, Path(id): Path<String>, body: Bytes) -> Result<Response, StoreError> {
+    put_image(s, ImageKind::Background, id, body).await
+}
+
+async fn get_background(State(s): State<AppState>, Path(id): Path<String>, headers: HeaderMap) -> Result<Response, StoreError> {
+    get_image(s, ImageKind::Background, id, headers).await
+}
+
+async fn put_image(s: AppState, kind: ImageKind, id: String, body: Bytes) -> Result<Response, StoreError> {
+    blocking(move || s.put_image(kind, &id, &body)).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn get_image(s: AppState, kind: ImageKind, id: String, headers: HeaderMap) -> Result<Response, StoreError> {
+    let (path, mime, v) = blocking(move || s.image_info(kind, &id).ok_or(StoreError::NotFound)).await?;
     let etag = format!("\"{v}\"");
     // L'URL porte déjà `?v=` : l'image ne change pas sous une même URL, le cache peut la garder longtemps.
     let cache = "public, max-age=86400";

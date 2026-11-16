@@ -150,7 +150,7 @@
 </script>
 
 <div class="screen">
-  <Ambiance art={current?.art} cover={current?.cover} x={lightX} key={current?.id} />
+  <Ambiance art={current?.art} cover={current?.cover} background={current?.background} x={lightX} key={current?.id} />
   <header class="rise" style:--i={0}>
     <button class="who pill focusable" aria-label="Profil de {router.profile!.name}" onclick={() => router.go({ name: 'profil' })} onfocus={() => (profileFocused = true)} onblur={() => (profileFocused = false)}>
       <Avatar profile={router.profile!} size={46} />
