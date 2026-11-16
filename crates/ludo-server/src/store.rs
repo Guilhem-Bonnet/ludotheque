@@ -13,8 +13,9 @@
 use crate::catalog;
 use ludo_core::snapshot::{archive_hash, validate_archive, SnapshotError};
 use ludo_proto::{
-    CatalogGame, FileRole, GameArt, GameFile, Lease, LeaseOutcome, Profile, RescanReport, SaveSummary, ProfilePrefs, PushOutcome, PushParams, SaveKey, SaveRevision, AVATAR_KINDS, LEASE_TTL_S,
-    PROFILE_NAME_MAX,
+    CatalogGame, FileRole, GameArt, GameFile, Lease, LeaseOutcome, Profile, ProfilePrefs,
+    PushOutcome, PushParams, RescanReport, SaveKey, SaveRevision, SaveSummary, AVATAR_KINDS,
+    LEASE_TTL_S, PROFILE_NAME_MAX,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::io::Write;
@@ -60,12 +61,19 @@ pub trait Clock: Send + Sync {
 pub struct SystemClock;
 impl Clock for SystemClock {
     fn now(&self) -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
     }
 }
 
 /// Formats d'image acceptés : extension de stockage et type MIME servi.
-const COVER_TYPES: &[(&str, &str)] = &[("png", "image/png"), ("jpg", "image/jpeg"), ("webp", "image/webp")];
+const COVER_TYPES: &[(&str, &str)] = &[
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("webp", "image/webp"),
+];
 
 /// Taille maximale d'une image de jeu (5 Mo).
 pub const MAX_COVER_BYTES: usize = 5 * 1024 * 1024;
@@ -97,7 +105,8 @@ pub struct Store {
 pub fn valid_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
         && !s.starts_with('.')
         && s != "history"
 }
@@ -216,30 +225,50 @@ fn is_invisible(c: char) -> bool {
 pub fn normalize_profile(id: &str, p: &Profile) -> Result<Profile, StoreError> {
     check(id)?;
     if p.id != id {
-        return Err(StoreError::InvalidProfile(format!("identifiant {} différent de la route {id}", p.id)));
+        return Err(StoreError::InvalidProfile(format!(
+            "identifiant {} différent de la route {id}",
+            p.id
+        )));
     }
     let name = p.name.trim();
     let len = name.chars().count();
     if len == 0 || len > PROFILE_NAME_MAX {
-        return Err(StoreError::InvalidProfile(format!("nom de 1 à {PROFILE_NAME_MAX} caractères attendu")));
+        return Err(StoreError::InvalidProfile(format!(
+            "nom de 1 à {PROFILE_NAME_MAX} caractères attendu"
+        )));
     }
     if name.chars().any(char::is_control) {
-        return Err(StoreError::InvalidProfile("caractère de contrôle dans le nom".into()));
+        return Err(StoreError::InvalidProfile(
+            "caractère de contrôle dans le nom".into(),
+        ));
     }
     if name.chars().any(is_invisible) {
-        return Err(StoreError::InvalidProfile("caractère invisible dans le nom".into()));
+        return Err(StoreError::InvalidProfile(
+            "caractère invisible dans le nom".into(),
+        ));
     }
     if let Some(kind) = &p.avatar_kind {
         if !AVATAR_KINDS.contains(&kind.as_str()) {
-            return Err(StoreError::InvalidProfile(format!("personnage inconnu : {kind}")));
+            return Err(StoreError::InvalidProfile(format!(
+                "personnage inconnu : {kind}"
+            )));
         }
     }
-    for (field, value) in [("accent", &p.accent), ("accentSoft", &p.accent_soft), ("accentInk", &p.accent_ink)] {
+    for (field, value) in [
+        ("accent", &p.accent),
+        ("accentSoft", &p.accent_soft),
+        ("accentInk", &p.accent_ink),
+    ] {
         if !is_hex_color(value) {
-            return Err(StoreError::InvalidProfile(format!("{field} : couleur #rrggbb attendue")));
+            return Err(StoreError::InvalidProfile(format!(
+                "{field} : couleur #rrggbb attendue"
+            )));
         }
     }
-    Ok(Profile { name: name.to_string(), ..p.clone() })
+    Ok(Profile {
+        name: name.to_string(),
+        ..p.clone()
+    })
 }
 
 fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
@@ -250,11 +279,15 @@ fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         accent: r.get(3)?,
         accent_soft: r.get(4)?,
         accent_ink: r.get(5)?,
-        prefs: ProfilePrefs { sons: r.get::<_, i64>(6)? != 0, vibrations: r.get::<_, i64>(7)? != 0 },
+        prefs: ProfilePrefs {
+            sons: r.get::<_, i64>(6)? != 0,
+            vibrations: r.get::<_, i64>(7)? != 0,
+        },
     })
 }
 
-const PROFILE_COLS: &str = "id, name, avatar_kind, accent, accent_soft, accent_ink, sons, vibrations";
+const PROFILE_COLS: &str =
+    "id, name, avatar_kind, accent, accent_soft, accent_ink, sons, vibrations";
 
 fn row_to_file(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<GameFile> {
     let role: String = r.get(at + 1)?;
@@ -301,11 +334,25 @@ impl Store {
     pub fn open(data_dir: &Path, clock: Box<dyn Clock>) -> Result<Self, StoreError> {
         std::fs::create_dir_all(data_dir.join("blobs"))?;
         std::fs::create_dir_all(data_dir.join("covers"))?;
+        // Restes d'un envoi d'image interrompu (disque plein, arrêt) : jamais lus, on les balaie.
+        for e in std::fs::read_dir(data_dir.join("covers"))?.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') && name.ends_with(".tmp") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
         let db = Connection::open(data_dir.join("ludotheque.db"))?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         db.execute_batch(SCHEMA)?;
-        Ok(Self { db: Mutex::new(db), blobs: data_dir.join("blobs"), covers: data_dir.join("covers"), clock, roms: None })
+        Ok(Self {
+            db: Mutex::new(db),
+            blobs: data_dir.join("blobs"),
+            covers: data_dir.join("covers"),
+            clock,
+            roms: None,
+        })
     }
 
     /// Indique le dossier des ROM (catalogue, téléchargements). Le balayage se lance avec [`Store::rescan`].
@@ -370,7 +417,12 @@ impl Store {
     }
 
     /// Envoi d'une sauvegarde : compare-and-swap sur la tête, ou archivage d'une version écartée.
-    pub fn push(&self, key: &SaveKey, p: &PushParams, data: &[u8]) -> Result<PushOutcome, StoreError> {
+    pub fn push(
+        &self,
+        key: &SaveKey,
+        p: &PushParams,
+        data: &[u8],
+    ) -> Result<PushOutcome, StoreError> {
         check_key(key)?;
         check(&p.device)?;
         if validate_archive(data)? == 0 {
@@ -392,11 +444,15 @@ impl Store {
         if !p.discarded {
             if let Some(h) = &head {
                 if h.hash == hash {
-                    return Ok(PushOutcome::Unchanged { revision: h.clone() });
+                    return Ok(PushOutcome::Unchanged {
+                        revision: h.clone(),
+                    });
                 }
             }
             if head_rev != p.base_rev {
-                return Ok(PushOutcome::Conflict { head: head.expect("tête présente si différente de la base") });
+                return Ok(PushOutcome::Conflict {
+                    head: head.expect("tête présente si différente de la base"),
+                });
             }
         }
 
@@ -432,7 +488,12 @@ impl Store {
     }
 
     /// Prise ou renouvellement du verrou souple « partie en cours ».
-    pub fn acquire_lease(&self, key: &SaveKey, device: &str, force: bool) -> Result<LeaseOutcome, StoreError> {
+    pub fn acquire_lease(
+        &self,
+        key: &SaveKey,
+        device: &str,
+        force: bool,
+    ) -> Result<LeaseOutcome, StoreError> {
         check_key(key)?;
         check(device)?;
         let now = self.clock.now();
@@ -448,7 +509,11 @@ impl Store {
         if let Some((holder, exp)) = current {
             if holder != device && exp > now && !force {
                 return Ok(LeaseOutcome::HeldElsewhere {
-                    lease: Lease { key: key.clone(), device: holder, expires_at: exp },
+                    lease: Lease {
+                        key: key.clone(),
+                        device: holder,
+                        expires_at: exp,
+                    },
                 });
             }
         }
@@ -459,7 +524,13 @@ impl Store {
             params![key.profile, key.game, device, expires_at as i64],
         )?;
         tx.commit()?;
-        Ok(LeaseOutcome::Granted { lease: Lease { key: key.clone(), device: device.into(), expires_at } })
+        Ok(LeaseOutcome::Granted {
+            lease: Lease {
+                key: key.clone(),
+                device: device.into(),
+                expires_at,
+            },
+        })
     }
 
     /// Libère le verrou s'il appartient à cet appareil.
@@ -476,7 +547,9 @@ impl Store {
     /// Profils du foyer, dans l'ordre de leur création.
     pub fn profiles(&self) -> Result<Vec<Profile>, StoreError> {
         let db = self.db.lock().expect("verrou base");
-        let mut st = db.prepare(&format!("SELECT {PROFILE_COLS} FROM profiles ORDER BY rowid"))?;
+        let mut st = db.prepare(&format!(
+            "SELECT {PROFILE_COLS} FROM profiles ORDER BY rowid"
+        ))?;
         let rows = st.query_map([], row_to_profile)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
@@ -492,7 +565,9 @@ impl Store {
             let names = st.query_map(params![p.id], |r| r.get::<_, String>(0))?;
             for n in names {
                 if n?.to_lowercase() == wanted {
-                    return Err(StoreError::InvalidProfile("nom déjà utilisé par un autre profil".into()));
+                    return Err(StoreError::InvalidProfile(
+                        "nom déjà utilisé par un autre profil".into(),
+                    ));
                 }
             }
         }
@@ -545,7 +620,10 @@ impl Store {
     /// restent stables tant que le chemin ne change pas.
     pub fn rescan(&self) -> Result<RescanReport, StoreError> {
         let root = self.roms.as_ref().ok_or(StoreError::NoRoms)?;
-        let catalog::ScanResult { games: scanned, ignored } = catalog::scan(root)?;
+        let catalog::ScanResult {
+            games: scanned,
+            ignored,
+        } = catalog::scan(root)?;
         let mut db = self.db.lock().expect("verrou base");
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         // Un balayage vide ne remplace jamais un catalogue existant : partage des ROM non monté,
@@ -560,12 +638,21 @@ impl Store {
             }
         }
         let ids: Vec<&str> = scanned.iter().map(|g| g.id.as_str()).collect();
-        let paths: std::collections::HashSet<&str> = scanned.iter().flat_map(|g| g.files.iter().map(|f| f.path.as_str())).collect();
-        let old_games: Vec<String> = tx.prepare("SELECT id FROM games")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        let paths: std::collections::HashSet<&str> = scanned
+            .iter()
+            .flat_map(|g| g.files.iter().map(|f| f.path.as_str()))
+            .collect();
+        let old_games: Vec<String> = tx
+            .prepare("SELECT id FROM games")?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
         for id in old_games.iter().filter(|id| !ids.contains(&id.as_str())) {
             tx.execute("DELETE FROM games WHERE id=?1", params![id])?;
         }
-        let old_files: Vec<String> = tx.prepare("SELECT path FROM files")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        let old_files: Vec<String> = tx
+            .prepare("SELECT path FROM files")?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
         for p in old_files.iter().filter(|p| !paths.contains(p.as_str())) {
             tx.execute("DELETE FROM files WHERE path=?1", params![p])?;
         }
@@ -590,14 +677,21 @@ impl Store {
             }
         }
         tx.commit()?;
-        Ok(RescanReport { games: scanned.len(), files, ignored })
+        Ok(RescanReport {
+            games: scanned.len(),
+            files,
+            ignored,
+        })
     }
 
     /// Catalogue des jeux, triés par titre, avec leurs fichiers.
     pub fn games(&self) -> Result<Vec<CatalogGame>, StoreError> {
         let db = self.db.lock().expect("verrou base");
-        let mut by_game: std::collections::HashMap<String, Vec<GameFile>> = std::collections::HashMap::new();
-        let mut st = db.prepare("SELECT game, id, role, path, format, size, mtime FROM files ORDER BY role, path")?;
+        let mut by_game: std::collections::HashMap<String, Vec<GameFile>> =
+            std::collections::HashMap::new();
+        let mut st = db.prepare(
+            "SELECT game, id, role, path, format, size, mtime FROM files ORDER BY role, path",
+        )?;
         let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, row_to_file(r, 1)?)))?;
         for row in rows {
             let (game, file) = row?;
@@ -614,7 +708,12 @@ impl Store {
                 title: r.get(2)?,
                 short: r.get(3)?,
                 title_id: r.get(4)?,
-                art: GameArt { motif: r.get(5)?, from: r.get(6)?, to: r.get(7)?, ink: r.get(8)? },
+                art: GameArt {
+                    motif: r.get(5)?,
+                    from: r.get(6)?,
+                    to: r.get(7)?,
+                    ink: r.get(8)?,
+                },
                 cover: None,
                 catalogued: r.get::<_, i64>(9)? != 0,
                 files: Vec::new(),
@@ -623,18 +722,28 @@ impl Store {
         let mut games: Vec<CatalogGame> = rows.collect::<Result<_, _>>()?;
         for g in &mut games {
             g.files = by_game.remove(&g.id).unwrap_or_default();
-            g.cover = self.cover_info(&g.id).map(|(_, _, v)| format!("/api/v1/games/{}/cover?v={v}", g.id));
+            g.cover = self
+                .cover_info(&g.id)
+                .map(|(_, _, v)| format!("/api/v1/games/{}/cover?v={v}", g.id));
         }
         Ok(games)
     }
 
     /// Image du jeu : (chemin, type MIME, jeton de version `taille-date` en hexadécimal).
     pub fn cover_info(&self, game: &str) -> Option<(PathBuf, &'static str, String)> {
+        // Id validé ici aussi : la route GET passe l'id décodé (`%2F..` compris) tel quel.
+        if !valid_id(game) {
+            return None;
+        }
         for (ext, mime) in COVER_TYPES {
             let path = self.covers.join(format!("{game}.{ext}"));
             if let Ok(m) = std::fs::metadata(&path) {
                 if m.is_file() {
-                    let mtime = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis());
+                    let mtime = m
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map_or(0, |d| d.as_millis());
                     return Some((path, mime, format!("{:x}-{mtime:x}", m.len())));
                 }
             }
@@ -647,30 +756,54 @@ impl Store {
     pub fn put_cover(&self, game: &str, data: &[u8]) -> Result<(), StoreError> {
         check(game)?;
         let Some((ext, _)) = sniff_cover(data) else {
-            return Err(StoreError::InvalidCover("format d'image non reconnu (png, jpeg ou webp attendu)".into()));
+            return Err(StoreError::InvalidCover(
+                "format d'image non reconnu (png, jpeg ou webp attendu)".into(),
+            ));
         };
         if data.len() > MAX_COVER_BYTES {
-            return Err(StoreError::InvalidCover(format!("image trop lourde (plus de {} Mo)", MAX_COVER_BYTES / 1_000_000)));
+            return Err(StoreError::InvalidCover(format!(
+                "image trop lourde (plus de {} Mo)",
+                MAX_COVER_BYTES / 1_000_000
+            )));
         }
-        let known = self.db.lock().expect("verrou base").query_row("SELECT 1 FROM games WHERE id=?1", params![game], |_| Ok(())).optional()?;
+        let known = self
+            .db
+            .lock()
+            .expect("verrou base")
+            .query_row("SELECT 1 FROM games WHERE id=?1", params![game], |_| Ok(()))
+            .optional()?;
         if known.is_none() {
             return Err(StoreError::NotFound);
         }
-        let tmp = self.covers.join(format!(".{game}.tmp"));
-        std::fs::write(&tmp, data)?;
+        // Nom temporaire unique : deux envois simultanés du même jeu n'écrivent jamais le même fichier.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = self
+            .covers
+            .join(format!(".{game}.{}.{n}.tmp", std::process::id()));
+        let written = std::fs::write(&tmp, data)
+            .and_then(|()| std::fs::rename(&tmp, self.covers.join(format!("{game}.{ext}"))));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+        // Les autres formats ne partent qu'une fois la nouvelle image en place.
         for (other, _) in COVER_TYPES {
             if *other != ext {
                 let _ = std::fs::remove_file(self.covers.join(format!("{game}.{other}")));
             }
         }
-        std::fs::rename(&tmp, self.covers.join(format!("{game}.{ext}")))?;
         sync_dir(&self.covers)?;
         Ok(())
     }
 
     /// Emplacement sur le disque d'un fichier du catalogue, vérifié : le chemin résolu doit rester
     /// sous la racine des ROM (liens symboliques et `..` compris). Renvoie aussi la fiche du fichier.
-    pub fn file_location(&self, game: &str, file_id: u64) -> Result<(PathBuf, GameFile), StoreError> {
+    pub fn file_location(
+        &self,
+        game: &str,
+        file_id: u64,
+    ) -> Result<(PathBuf, GameFile), StoreError> {
         check(game)?;
         let root = self.roms.as_ref().ok_or(StoreError::NoRoms)?;
         let file = {

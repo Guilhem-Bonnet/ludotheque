@@ -386,11 +386,17 @@ def ecrire_catalogue(lignes, chemin):
         f.write("\n".join(morceaux))
 
 
-def envoyer_images(serveur, lignes, forcer):
-    envoyes = deja = echecs = 0
+def envoyer_images(serveur, lignes, forcer, approchants):
+    envoyes = deja = echecs = douteux = 0
     for l in lignes:
         j, img = l["jeu"], l["image"]
         if not img:
+            continue
+        # Correspondance approchante (suite, portage, sous-titre) : risque de mauvaise jaquette,
+        # envoyée seulement sur demande explicite après relecture de l'essai à blanc.
+        if "approchant" in (l.get("source_image") or "") and not approchants:
+            log(f"  {j['id']} : correspondance approchante, non envoyée (--approchants pour l'envoyer)")
+            douteux += 1
             continue
         if j.get("cover") and not forcer:
             deja += 1
@@ -414,7 +420,7 @@ def envoyer_images(serveur, lignes, forcer):
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             echecs += 1
             log(f"  {j['id']} : {e}")
-    print(f"Images : {envoyes} envoyées, {deja} déjà présentes, {echecs} en échec")
+    print(f"Images : {envoyes} envoyées, {deja} déjà présentes, {douteux} approchantes écartées, {echecs} en échec")
 
 
 def main():
@@ -423,6 +429,7 @@ def main():
     ap.add_argument("--cache", default=os.path.expanduser("~/.cache/ludotheque-visuels"))
     ap.add_argument("--catalogue", metavar="FICHIER", help="écrit ce catalogue.toml")
     ap.add_argument("--envoyer-images", action="store_true", help="envoie les images au serveur (PUT)")
+    ap.add_argument("--approchants", action="store_true", help="envoie aussi les images trouvées par correspondance approchante (relire l'essai à blanc d'abord)")
     ap.add_argument("--forcer", action="store_true", help="renvoie aussi les images déjà présentes")
     ap.add_argument("--rescan", action="store_true", help="POST /api/v1/catalog/rescan à la fin")
     ap.add_argument("--sans-telechargement", action="store_true", help="ne télécharge aucune image (listes seulement)")
@@ -457,7 +464,7 @@ def main():
         ecrire_catalogue(lignes, a.catalogue)
         print(f"Catalogue écrit : {a.catalogue} (à copier à la racine des ROM du serveur)")
     if a.envoyer_images:
-        envoyer_images(a.serveur, lignes, a.forcer)
+        envoyer_images(a.serveur, lignes, a.forcer, a.approchants)
     if a.rescan:
         with requete(a.serveur.rstrip("/") + "/api/v1/catalog/rescan", "POST", b"") as r:
             print("Rescan :", r.read().decode())

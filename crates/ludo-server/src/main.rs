@@ -21,16 +21,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store = store.with_roms(r.into());
     }
     let store = Arc::new(store);
-    let cache = std::env::var_os("LUDO_CACHE").map_or_else(|| std::path::Path::new(&data).join("cache"), Into::into);
+    let cache = std::env::var_os("LUDO_CACHE")
+        .map_or_else(|| std::path::Path::new(&data).join("cache"), Into::into);
     let mut cc = ConvertConfig::new(cache);
-    cc.keys = std::env::var_os("LUDO_SWITCH_KEYS").map(Into::into).filter(|k: &std::path::PathBuf| !k.as_os_str().is_empty());
-    if let Some(gb) = std::env::var("LUDO_CACHE_MAX_GB").ok().and_then(|v| v.parse::<u64>().ok()) {
+    cc.keys = std::env::var_os("LUDO_SWITCH_KEYS")
+        .map(Into::into)
+        .filter(|k: &std::path::PathBuf| !k.as_os_str().is_empty());
+    if let Some(gb) = std::env::var("LUDO_CACHE_MAX_GB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
         cc.max_bytes = gb.saturating_mul(1_000_000_000);
     }
     if let Ok(c) = std::env::var("LUDO_CONVERT_CMD") {
         cc.command = c;
     }
-    if let Some(t) = std::env::var("LUDO_CONVERT_TIMEOUT_S").ok().and_then(|v| v.parse::<u64>().ok()) {
+    if let Some(t) = std::env::var("LUDO_CONVERT_TIMEOUT_S")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
         cc.timeout = std::time::Duration::from_secs(t);
     }
     let converter = match Converter::new(cc.clone()) {
@@ -49,12 +58,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if roms.is_some() {
         let s = store.clone();
         tokio::task::spawn_blocking(move || match s.rescan() {
-            Ok(r) => tracing::info!(jeux = r.games, fichiers = r.files, ecartes = r.ignored.len(), "catalogue balayé"),
+            Ok(r) => tracing::info!(
+                jeux = r.games,
+                fichiers = r.files,
+                ecartes = r.ignored.len(),
+                "catalogue balayé"
+            ),
             // Un catalogue illisible n'empêche pas les sauvegardes : on garde l'ancien catalogue.
             Err(e) => tracing::warn!(erreur = %e, "balayage du catalogue échoué"),
         });
     }
-    axum::serve(listener, ludo_server::router_with(store, converter)).with_graceful_shutdown(shutdown()).await?;
+    axum::serve(listener, ludo_server::router_with(store, converter))
+        .with_graceful_shutdown(shutdown())
+        .await?;
     Ok(())
 }
 

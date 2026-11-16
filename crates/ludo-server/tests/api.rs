@@ -21,7 +21,10 @@ impl Clock for TestClock {
 fn arch(content: &str) -> Vec<u8> {
     let t = tempfile::tempdir().unwrap();
     std::fs::write(t.path().join("save.bin"), content).unwrap();
-    ludo_core::snapshot::snapshot(t.path(), &[]).unwrap().unwrap().archive
+    ludo_core::snapshot::snapshot(t.path(), &[])
+        .unwrap()
+        .unwrap()
+        .archive
 }
 
 struct App {
@@ -34,13 +37,23 @@ fn app() -> App {
     let dir = tempfile::tempdir().unwrap();
     let time = Arc::new(AtomicU64::new(1_000));
     let store = Store::open(dir.path(), Box::new(TestClock(time.clone()))).unwrap();
-    App { router: ludo_server::router(Arc::new(store)), time, _dir: dir }
+    App {
+        router: ludo_server::router(Arc::new(store)),
+        time,
+        _dir: dir,
+    }
 }
 
 async fn call(app: &App, req: Request<Body>) -> (StatusCode, Vec<u8>) {
     let resp = app.router.clone().oneshot(req).await.unwrap();
     let status = resp.status();
-    let body = resp.into_body().collect().await.unwrap().to_bytes().to_vec();
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
     (status, body)
 }
 
@@ -48,7 +61,13 @@ fn get(uri: &str) -> Request<Body> {
     Request::get(uri).body(Body::empty()).unwrap()
 }
 
-async fn push_raw(app: &App, base: u64, device: &str, data: Vec<u8>, discarded: bool) -> (StatusCode, Vec<u8>) {
+async fn push_raw(
+    app: &App,
+    base: u64,
+    device: &str,
+    data: Vec<u8>,
+    discarded: bool,
+) -> (StatusCode, Vec<u8>) {
     let uri = format!(
         "/api/v1/saves/guilhem/switch-mk8?base_rev={base}&device={device}&emulator=ryujinx&playtime_s=60&discarded={discarded}"
     );
@@ -57,7 +76,11 @@ async fn push_raw(app: &App, base: u64, device: &str, data: Vec<u8>, discarded: 
 
 async fn push(app: &App, base: u64, device: &str, content: &str) -> (StatusCode, PushOutcome) {
     let (s, b) = push_raw(app, base, device, arch(content), false).await;
-    (s, serde_json::from_slice(&b).unwrap_or_else(|_| panic!("{s} {}", String::from_utf8_lossy(&b))))
+    (
+        s,
+        serde_json::from_slice(&b)
+            .unwrap_or_else(|_| panic!("{s} {}", String::from_utf8_lossy(&b))),
+    )
 }
 
 async fn lease(app: &App, profile: &str, device: &str, force: bool) -> (StatusCode, LeaseOutcome) {
@@ -86,7 +109,9 @@ async fn cycle_complet_envoi_conflit_version_ecartee_historique() {
     // Première sauvegarde (base 0).
     let (s, o) = push(&a, 0, "pc", "partie-1").await;
     assert_eq!(s, StatusCode::CREATED);
-    assert!(matches!(o, PushOutcome::Accepted { ref revision } if revision.rev == 1 && revision.parent == 0));
+    assert!(
+        matches!(o, PushOutcome::Accepted { ref revision } if revision.rev == 1 && revision.parent == 0)
+    );
 
     // Même contenu renvoyé : aucune révision créée.
     let (s, o) = push(&a, 1, "pc", "partie-1").await;
@@ -100,13 +125,17 @@ async fn cycle_complet_envoi_conflit_version_ecartee_historique() {
     // Le PC, resté sur la base 1, envoie autre chose : conflit, la tête ne bouge pas.
     let (s, o) = push(&a, 1, "pc", "partie-3").await;
     assert_eq!(s, StatusCode::CONFLICT);
-    assert!(matches!(o, PushOutcome::Conflict { ref head } if head.rev == 2 && head.device == "steam-deck"));
+    assert!(
+        matches!(o, PushOutcome::Conflict { ref head } if head.rev == 2 && head.device == "steam-deck")
+    );
 
     // Le joueur choisit la version du Deck : celle du PC est archivée comme écartée.
     let (s, b) = push_raw(&a, 1, "pc", arch("partie-3"), true).await;
     assert_eq!(s, StatusCode::CREATED);
     let o: PushOutcome = serde_json::from_slice(&b).unwrap();
-    assert!(matches!(o, PushOutcome::Accepted { ref revision } if revision.rev == 3 && revision.discarded));
+    assert!(
+        matches!(o, PushOutcome::Accepted { ref revision } if revision.rev == 3 && revision.discarded)
+    );
 
     // La tête reste celle du Deck.
     let (_, b) = call(&a, get("/api/v1/saves/guilhem/switch-mk8")).await;
@@ -116,14 +145,26 @@ async fn cycle_complet_envoi_conflit_version_ecartee_historique() {
     // Le CAS se fait toujours contre la tête (2), pas contre la version écartée (3).
     let (s, o) = push(&a, 2, "steam-deck", "partie-4").await;
     assert_eq!(s, StatusCode::CREATED);
-    assert!(matches!(o, PushOutcome::Accepted { ref revision } if revision.rev == 4 && revision.parent == 2));
+    assert!(
+        matches!(o, PushOutcome::Accepted { ref revision } if revision.rev == 4 && revision.parent == 2)
+    );
 
     // Historique complet, version écartée comprise, et contenu de chaque révision.
     let (_, b) = call(&a, get("/api/v1/saves/guilhem/switch-mk8/history")).await;
     let hist: Vec<SaveRevision> = serde_json::from_slice(&b).unwrap();
-    assert_eq!(hist.iter().map(|r| (r.rev, r.discarded)).collect::<Vec<_>>(), vec![(4, false), (3, true), (2, false), (1, false)]);
+    assert_eq!(
+        hist.iter()
+            .map(|r| (r.rev, r.discarded))
+            .collect::<Vec<_>>(),
+        vec![(4, false), (3, true), (2, false), (1, false)]
+    );
     assert_eq!(hist[0].created_at, 1_000);
-    for (rev, content) in [(1, "partie-1"), (2, "partie-2"), (3, "partie-3"), (4, "partie-4")] {
+    for (rev, content) in [
+        (1, "partie-1"),
+        (2, "partie-2"),
+        (3, "partie-3"),
+        (4, "partie-4"),
+    ] {
         let (s, b) = call(&a, get(&format!("/api/v1/saves/guilhem/switch-mk8/{rev}"))).await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(b, arch(content));
@@ -138,7 +179,11 @@ async fn cycle_complet_envoi_conflit_version_ecartee_historique() {
 async fn archives_refusees() {
     let a = app();
     // Corps vide, octets quelconques, tar sans fichier.
-    for data in [Vec::new(), b"pas une archive".to_vec(), tar::Builder::new(Vec::new()).into_inner().unwrap()] {
+    for data in [
+        Vec::new(),
+        b"pas une archive".to_vec(),
+        tar::Builder::new(Vec::new()).into_inner().unwrap(),
+    ] {
         let (s, _) = push_raw(&a, 0, "pc", data, false).await;
         assert_eq!(s, StatusCode::BAD_REQUEST);
     }
@@ -187,28 +232,45 @@ async fn verrous_de_partie() {
     // « Jouer ici » force la prise.
     let (s, _) = lease(&a, "guilhem", "steam-deck", true).await;
     assert_eq!(s, StatusCode::OK);
-    let (s, _) = call(&a, Request::delete("/api/v1/leases/guilhem/switch-mk8?device=steam-deck").body(Body::empty()).unwrap()).await;
+    let (s, _) = call(
+        &a,
+        Request::delete("/api/v1/leases/guilhem/switch-mk8?device=steam-deck")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     let (s, _) = lease(&a, "guilhem", "pc", false).await;
     assert_eq!(s, StatusCode::OK);
     // Sans battement pendant plus de 2 minutes, le verrou expire.
-    a.time.fetch_add(ludo_proto::LEASE_TTL_S + 1, Ordering::SeqCst);
+    a.time
+        .fetch_add(ludo_proto::LEASE_TTL_S + 1, Ordering::SeqCst);
     let (s, _) = lease(&a, "guilhem", "steam-deck", false).await;
     assert_eq!(s, StatusCode::OK);
 }
 
 fn params(base: u64, device: &str) -> PushParams {
-    PushParams { base_rev: base, device: device.into(), emulator: "eden".into(), playtime_s: 1, discarded: false }
+    PushParams {
+        base_rev: base,
+        device: device.into(),
+        emulator: "eden".into(),
+        playtime_s: 1,
+        discarded: false,
+    }
 }
 
 #[test]
 fn persistance_apres_redemarrage() {
     let dir = tempfile::tempdir().unwrap();
     let time = Arc::new(AtomicU64::new(5));
-    let key = SaveKey { profile: "claire".into(), game: "n3ds-mm3d".into() };
+    let key = SaveKey {
+        profile: "claire".into(),
+        game: "n3ds-mm3d".into(),
+    };
     {
         let s = Store::open(dir.path(), Box::new(TestClock(time.clone()))).unwrap();
-        s.push(&key, &params(0, "steam-deck"), &arch("zelda")).unwrap();
+        s.push(&key, &params(0, "steam-deck"), &arch("zelda"))
+            .unwrap();
     }
     let s = Store::open(dir.path(), Box::new(TestClock(time))).unwrap();
     assert_eq!(s.head(&key).unwrap().unwrap().rev, 1);
@@ -218,8 +280,13 @@ fn persistance_apres_redemarrage() {
 #[test]
 fn envois_concurrents_un_seul_gagnant_par_base() {
     let dir = tempfile::tempdir().unwrap();
-    let store = Arc::new(Store::open(dir.path(), Box::new(TestClock(Arc::new(AtomicU64::new(1))))).unwrap());
-    let key = SaveKey { profile: "guilhem".into(), game: "switch-botw".into() };
+    let store = Arc::new(
+        Store::open(dir.path(), Box::new(TestClock(Arc::new(AtomicU64::new(1))))).unwrap(),
+    );
+    let key = SaveKey {
+        profile: "guilhem".into(),
+        game: "switch-botw".into(),
+    };
     store.push(&key, &params(0, "pc"), &arch("base")).unwrap();
 
     // 8 appareils envoient en même temps sur la base 1, dont 4 avec le même contenu.
@@ -227,14 +294,26 @@ fn envois_concurrents_un_seul_gagnant_par_base() {
         .map(|i| {
             let (store, key) = (store.clone(), key.clone());
             std::thread::spawn(move || {
-                let content = if i < 4 { "meme".to_string() } else { format!("partie-{i}") };
-                store.push(&key, &params(1, &format!("d{i}")), &arch(&content)).unwrap()
+                let content = if i < 4 {
+                    "meme".to_string()
+                } else {
+                    format!("partie-{i}")
+                };
+                store
+                    .push(&key, &params(1, &format!("d{i}")), &arch(&content))
+                    .unwrap()
             })
         })
         .collect();
     let outcomes: Vec<PushOutcome> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-    let accepted = outcomes.iter().filter(|o| matches!(o, PushOutcome::Accepted { .. })).count();
-    assert_eq!(accepted, 1, "un seul envoi accepté sur la base 1 : {outcomes:?}");
+    let accepted = outcomes
+        .iter()
+        .filter(|o| matches!(o, PushOutcome::Accepted { .. }))
+        .count();
+    assert_eq!(
+        accepted, 1,
+        "un seul envoi accepté sur la base 1 : {outcomes:?}"
+    );
     assert_eq!(store.head(&key).unwrap().unwrap().rev, 2);
     assert_eq!(store.history(&key).unwrap().len(), 2);
 }
@@ -243,7 +322,10 @@ fn envois_concurrents_un_seul_gagnant_par_base() {
 fn blob_tronque_detecte_puis_repare_au_renvoi() {
     let dir = tempfile::tempdir().unwrap();
     let store = Store::open(dir.path(), Box::new(TestClock(Arc::new(AtomicU64::new(1))))).unwrap();
-    let key = SaveKey { profile: "guilhem".into(), game: "switch-lm3".into() };
+    let key = SaveKey {
+        profile: "guilhem".into(),
+        game: "switch-lm3".into(),
+    };
     let data = arch("luigi");
     store.push(&key, &params(0, "pc"), &data).unwrap();
     let hash = store.head(&key).unwrap().unwrap().hash;
@@ -251,10 +333,16 @@ fn blob_tronque_detecte_puis_repare_au_renvoi() {
     // Simule une coupure de courant : le blob est tronqué à 0 octet.
     let blob = dir.path().join("blobs").join(&hash[..2]).join(&hash);
     std::fs::write(&blob, b"").unwrap();
-    assert!(store.blob(&key, 1).is_err(), "un blob corrompu n'est jamais servi");
+    assert!(
+        store.blob(&key, 1).is_err(),
+        "un blob corrompu n'est jamais servi"
+    );
 
     // Le même contenu renvoyé (autre jeu, même octets) répare le blob au lieu de le réutiliser.
-    let other = SaveKey { profile: "guilhem".into(), game: "switch-lm3-copie".into() };
+    let other = SaveKey {
+        profile: "guilhem".into(),
+        game: "switch-lm3-copie".into(),
+    };
     store.push(&other, &params(0, "pc"), &data).unwrap();
     assert_eq!(store.blob(&key, 1).unwrap().unwrap(), data);
 }
@@ -284,15 +372,34 @@ async fn profils_creation_mise_a_jour_et_ordre() {
     assert_eq!(serde_json::from_slice::<Vec<Profile>>(&b).unwrap(), vec![]);
 
     // Création : le nom est enregistré sans les espaces autour.
-    let (s, b) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "  Guilhem ", "renard"))).await;
+    let (s, b) = call(
+        &a,
+        put_profile_req("guilhem", profile_json("guilhem", "  Guilhem ", "renard")),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
     let p: Profile = serde_json::from_slice(&b).unwrap();
-    assert_eq!((p.name.as_str(), p.avatar_kind.as_deref(), p.prefs.vibrations), ("Guilhem", Some("renard"), false));
+    assert_eq!(
+        (
+            p.name.as_str(),
+            p.avatar_kind.as_deref(),
+            p.prefs.vibrations
+        ),
+        ("Guilhem", Some("renard"), false)
+    );
 
-    call(&a, put_profile_req("claire", profile_json("claire", "Claire", "champi"))).await;
+    call(
+        &a,
+        put_profile_req("claire", profile_json("claire", "Claire", "champi")),
+    )
+    .await;
 
     // Mise à jour de Guilhem : il garde sa place (ordre de création), les champs changent.
-    let (s, _) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "Gui", "poisson"))).await;
+    let (s, _) = call(
+        &a,
+        put_profile_req("guilhem", profile_json("guilhem", "Gui", "poisson")),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
 
     let (_, b) = call(&a, get("/api/v1/profiles")).await;
@@ -320,28 +427,50 @@ async fn profils_invalides_refuses() {
     let (s, b) = call(&a, put_profile_req("claire", sans_prefs)).await;
     assert_eq!(s, StatusCode::OK);
     let p: Profile = serde_json::from_slice(&b).unwrap();
-    assert_eq!((p.avatar_kind, p.prefs.sons, p.prefs.vibrations), (None, true, true));
+    assert_eq!(
+        (p.avatar_kind, p.prefs.sons, p.prefs.vibrations),
+        (None, true, true)
+    );
 
     let mut mauvaise_couleur = profile_json("guilhem", "Guilhem", "renard");
     mauvaise_couleur["accent"] = "rouge".into();
     for (id, body) in [
         ("guilhem", profile_json("guilhem", "   ", "renard")),
         ("guilhem", profile_json("guilhem", "", "renard")),
-        ("guilhem", profile_json("guilhem", "Dix-sept lettres!", "renard")),
+        (
+            "guilhem",
+            profile_json("guilhem", "Dix-sept lettres!", "renard"),
+        ),
         ("guilhem", profile_json("guilhem", "Guilhem", "dragon")),
         ("guilhem", profile_json("claire", "Claire", "renard")),
         ("guilhem", mauvaise_couleur),
         ("..", profile_json("..", "Point", "renard")),
     ] {
         let (s, b) = call(&a, put_profile_req(id, body.clone())).await;
-        assert_eq!(s, StatusCode::BAD_REQUEST, "{body} → {}", String::from_utf8_lossy(&b));
+        assert_eq!(
+            s,
+            StatusCode::BAD_REQUEST,
+            "{body} → {}",
+            String::from_utf8_lossy(&b)
+        );
     }
     // Seize caractères (accents compris) : la limite est en caractères, pas en octets.
-    let (s, _) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "Éléonore-Hélène!", "etoile"))).await;
+    let (s, _) = call(
+        &a,
+        put_profile_req(
+            "guilhem",
+            profile_json("guilhem", "Éléonore-Hélène!", "etoile"),
+        ),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
 
     let (_, b) = call(&a, get("/api/v1/profiles")).await;
-    let ids: Vec<String> = serde_json::from_slice::<Vec<Profile>>(&b).unwrap().into_iter().map(|p| p.id).collect();
+    let ids: Vec<String> = serde_json::from_slice::<Vec<Profile>>(&b)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.id)
+        .collect();
     assert_eq!(ids, vec!["claire", "guilhem"]);
 }
 
@@ -374,14 +503,30 @@ async fn noms_invisibles_et_doublons_refuses() {
     let a = app();
     // Espace de largeur nulle, puis inversion du sens d'écriture : refusés.
     for name in ["Cla\u{200B}ire", "\u{202E}eriaC"] {
-        let (s, _) = call(&a, put_profile_req("claire", profile_json("claire", name, "champi"))).await;
+        let (s, _) = call(
+            &a,
+            put_profile_req("claire", profile_json("claire", name, "champi")),
+        )
+        .await;
         assert_eq!(s, StatusCode::BAD_REQUEST, "{name:?}");
     }
-    let (s, _) = call(&a, put_profile_req("claire", profile_json("claire", "Élodie", "champi"))).await;
+    let (s, _) = call(
+        &a,
+        put_profile_req("claire", profile_json("claire", "Élodie", "champi")),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
     // Même nom pour un autre profil (casse et accent en majuscule) : refusé ; même profil : accepté.
-    let (s, _) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "élodie", "renard"))).await;
+    let (s, _) = call(
+        &a,
+        put_profile_req("guilhem", profile_json("guilhem", "élodie", "renard")),
+    )
+    .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    let (s, _) = call(&a, put_profile_req("claire", profile_json("claire", "ÉLODIE", "champi"))).await;
+    let (s, _) = call(
+        &a,
+        put_profile_req("claire", profile_json("claire", "ÉLODIE", "champi")),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK);
 }

@@ -88,13 +88,20 @@ const PRESETS: &[(&str, &str, &str, Option<&str>)] = &[
 ];
 
 fn fnv1a(s: &str) -> u64 {
-    s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+    s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 /// Jaquette de repli, déterministe pour un identifiant donné.
 pub fn preset_art(id: &str) -> GameArt {
     let (motif, from, to, ink) = PRESETS[(fnv1a(id) % PRESETS.len() as u64) as usize];
-    GameArt { motif: motif.into(), from: from.into(), to: to.into(), ink: ink.map(String::from) }
+    GameArt {
+        motif: motif.into(),
+        from: from.into(),
+        to: to.into(),
+        ink: ink.map(String::from),
+    }
 }
 
 fn is_hex_color(s: &str) -> bool {
@@ -102,7 +109,10 @@ fn is_hex_color(s: &str) -> bool {
 }
 
 fn valid_art(a: &GameArt) -> bool {
-    MOTIFS.contains(&a.motif.as_str()) && is_hex_color(&a.from) && is_hex_color(&a.to) && a.ink.as_deref().is_none_or(is_hex_color)
+    MOTIFS.contains(&a.motif.as_str())
+        && is_hex_color(&a.from)
+        && is_hex_color(&a.to)
+        && a.ink.as_deref().is_none_or(is_hex_color)
 }
 
 fn formats(console: &str) -> &'static [&'static str] {
@@ -144,12 +154,16 @@ pub fn clean_name(stem: &str) -> String {
 /// Identifiant de titre Switch (16 chiffres hexadécimaux commençant par `01`) lu dans un nom.
 pub fn title_id_in(name: &str) -> Option<u64> {
     name.split(|c: char| !c.is_ascii_alphanumeric())
-        .find(|run| run.len() == 16 && run.starts_with("01") && run.chars().all(|c| c.is_ascii_hexdigit()))
+        .find(|run| {
+            run.len() == 16 && run.starts_with("01") && run.chars().all(|c| c.is_ascii_hexdigit())
+        })
         .and_then(|run| u64::from_str_radix(run, 16).ok())
 }
 
 fn parse_title_id(s: &str) -> Option<u64> {
-    (s.len() == 16 && s.chars().all(|c| c.is_ascii_hexdigit())).then(|| u64::from_str_radix(s, 16).ok()).flatten()
+    (s.len() == 16 && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| u64::from_str_radix(s, 16).ok())
+        .flatten()
 }
 
 /// Version ASCII d'un nom pour un identifiant : minuscules, accents retirés, tirets.
@@ -181,7 +195,10 @@ fn norm(s: &str) -> String {
 }
 
 fn mtime_s(m: &std::fs::Metadata) -> u64 {
-    m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())
+    m.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Taille cumulée et dernière modification d'un dossier (liens symboliques ignorés).
@@ -189,7 +206,9 @@ fn dir_stats(dir: &Path) -> (u64, u64) {
     let (mut size, mut mtime) = (0, 0);
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.filter_map(Result::ok) {
             let Ok(m) = e.metadata() else { continue };
             let Ok(ft) = e.file_type() else { continue };
@@ -222,15 +241,22 @@ fn rel(parts: &[&str]) -> String {
 }
 
 fn extension(name: &str) -> Option<String> {
-    Path::new(name).extension().and_then(|e| e.to_str()).map(str::to_lowercase)
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
 }
 
 fn collect_addons(dir: &Path, rel_dir: &str, console: &'static str, out: &mut Vec<Candidate>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut entries: Vec<_> = rd.filter_map(Result::ok).collect();
     entries.sort_by_key(|e| e.file_name());
     for e in entries {
-        let Some(name) = e.file_name().to_str().map(String::from) else { continue };
+        let Some(name) = e.file_name().to_str().map(String::from) else {
+            continue;
+        };
         let Ok(ft) = e.file_type() else { continue };
         if name.starts_with('.') || ft.is_symlink() {
             continue;
@@ -241,14 +267,23 @@ fn collect_addons(dir: &Path, rel_dir: &str, console: &'static str, out: &mut Ve
                 collect_addons(&e.path(), &path, console, out);
             }
         } else if ft.is_file() {
-            let Some(ext) = extension(&name).filter(|x| formats(console).contains(&x.as_str())) else { continue };
+            let Some(ext) = extension(&name).filter(|x| formats(console).contains(&x.as_str()))
+            else {
+                continue;
+            };
             let Ok(m) = e.metadata() else { continue };
             let stem = name[..name.len() - ext.len() - 1].to_string();
             out.push(Candidate {
                 console,
                 tid: title_id_in(&stem),
                 stem,
-                file: ScannedFile { path, role: FileRole::Maj, format: ext, size: m.len(), mtime: mtime_s(&m) },
+                file: ScannedFile {
+                    path,
+                    role: FileRole::Maj,
+                    format: ext,
+                    size: m.len(),
+                    mtime: mtime_s(&m),
+                },
             });
         }
     }
@@ -289,18 +324,33 @@ fn collect(root: &Path) -> Result<(Vec<Candidate>, Vec<Candidate>), StoreError> 
                         console,
                         tid: title_id_in(&name),
                         stem: name,
-                        file: ScannedFile { path, role: FileRole::Base, format: "dir".into(), size, mtime },
+                        file: ScannedFile {
+                            path,
+                            role: FileRole::Base,
+                            format: "dir".into(),
+                            size,
+                            mtime,
+                        },
                     });
                 }
             } else if ft.is_file() {
-                let Some(ext) = extension(&name).filter(|x| formats(console).contains(&x.as_str())) else { continue };
+                let Some(ext) = extension(&name).filter(|x| formats(console).contains(&x.as_str()))
+                else {
+                    continue;
+                };
                 let Ok(m) = e.metadata() else { continue };
                 let stem = name[..name.len() - ext.len() - 1].to_string();
                 bases.push(Candidate {
                     console,
                     tid: title_id_in(&stem),
                     stem,
-                    file: ScannedFile { path, role: FileRole::Base, format: ext, size: m.len(), mtime: mtime_s(&m) },
+                    file: ScannedFile {
+                        path,
+                        role: FileRole::Base,
+                        format: ext,
+                        size: m.len(),
+                        mtime: mtime_s(&m),
+                    },
                 });
             }
         }
@@ -315,7 +365,8 @@ fn load_catalog(root: &Path) -> Result<Vec<CatalogEntry>, StoreError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
-    let file: CatalogFile = toml::from_str(&text).map_err(|e| StoreError::Catalog(format!("catalogue.toml : {e}")))?;
+    let file: CatalogFile =
+        toml::from_str(&text).map_err(|e| StoreError::Catalog(format!("catalogue.toml : {e}")))?;
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for g in file.game {
@@ -364,7 +415,11 @@ fn draft_from_entry(e: &CatalogEntry, cand: &Candidate) -> Draft {
             id: e.id.clone(),
             console: e.console.clone(),
             title: e.title.clone(),
-            short: e.short.clone().unwrap_or_else(|| e.title.clone()).replace("\\n", "\n"),
+            short: e
+                .short
+                .clone()
+                .unwrap_or_else(|| e.title.clone())
+                .replace("\\n", "\n"),
             title_id: tid.map(|t| format!("{t:016x}")),
             art,
             catalogued: true,
@@ -380,7 +435,11 @@ fn unlisted_id(c: &Candidate) -> String {
         Some(t) => format!("{}-{t:016x}", c.console),
         None => {
             let s = slug(&clean_name(&c.stem));
-            let s = if s.is_empty() { format!("{:08x}", fnv1a(&c.stem) as u32) } else { s };
+            let s = if s.is_empty() {
+                format!("{:08x}", fnv1a(&c.stem) as u32)
+            } else {
+                s
+            };
             let id = format!("{}-{s}", c.console);
             id.chars().take(128).collect()
         }
@@ -417,16 +476,21 @@ pub struct ScanResult {
 
 pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
     // Racine absente ou illisible (partage non monté) : erreur, jamais un catalogue vide.
-    std::fs::read_dir(root).map_err(|e| StoreError::RomsUnavailable(format!("{} : {e}", root.display())))?;
+    std::fs::read_dir(root)
+        .map_err(|e| StoreError::RomsUnavailable(format!("{} : {e}", root.display())))?;
     let entries = load_catalog(root)?;
     let (bases, addons) = collect(root)?;
     let mut ignored = Vec::new();
     let mut drafts: BTreeMap<String, Draft> = BTreeMap::new();
-    let by_entry: BTreeMap<String, &CatalogEntry> = entries.iter().map(|e| (entry_path(root, e), e)).collect();
+    let by_entry: BTreeMap<String, &CatalogEntry> =
+        entries.iter().map(|e| (entry_path(root, e), e)).collect();
     for (path, e) in &by_entry {
         if !bases.iter().any(|b| &b.file.path == path) {
             tracing::warn!(id = %e.id, entry = %e.entry, "catalogue.toml : fichier d'entrée absent du disque, jeu ignoré");
-            ignored.push(format!("{} : fichier d'entrée introuvable ({})", e.id, e.entry));
+            ignored.push(format!(
+                "{} : fichier d'entrée introuvable ({})",
+                e.id, e.entry
+            ));
         }
     }
 
@@ -435,7 +499,9 @@ pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
     for c in bases {
         match by_entry.get(&c.file.path) {
             Some(e) => {
-                let d = drafts.entry(e.id.clone()).or_insert_with(|| draft_from_entry(e, &c));
+                let d = drafts
+                    .entry(e.id.clone())
+                    .or_insert_with(|| draft_from_entry(e, &c));
                 d.game.files.push(c.file);
             }
             None => rest.push(c),
@@ -444,10 +510,15 @@ pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
     // Passe 2 : autres fichiers, rattachés à un jeu du catalogue de même titre, sinon jeu déduit du nom.
     for c in rest {
         let known = c.tid.and_then(|t| {
-            drafts.values().find(|d| d.game.catalogued && d.game.console == c.console && d.tid == Some(t)).map(|d| d.game.id.clone())
+            drafts
+                .values()
+                .find(|d| d.game.catalogued && d.game.console == c.console && d.tid == Some(t))
+                .map(|d| d.game.id.clone())
         });
         let id = known.unwrap_or_else(|| unlisted_id(&c));
-        let d = drafts.entry(id.clone()).or_insert_with(|| draft_unlisted(id, &c));
+        let d = drafts
+            .entry(id.clone())
+            .or_insert_with(|| draft_unlisted(id, &c));
         d.game.files.push(c.file);
     }
 
@@ -468,12 +539,18 @@ pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
             })
             .or_else(|| {
                 let n = norm(&clean_name(&a.stem));
-                let role = if a.stem.to_lowercase().contains("dlc") { FileRole::Dlc } else { FileRole::Maj };
+                let role = if a.stem.to_lowercase().contains("dlc") {
+                    FileRole::Dlc
+                } else {
+                    FileRole::Maj
+                };
                 drafts
                     .values()
                     // Par nom seulement si l'un des deux identifiants de titre manque : deux identifiants
                     // connus et différents désignent deux jeux différents (« Mario » ≠ « Mario Kart »).
-                    .filter(|d| d.game.console == a.console && !(d.tid.is_some() && a.tid.is_some()))
+                    .filter(|d| {
+                        d.game.console == a.console && !(d.tid.is_some() && a.tid.is_some())
+                    })
                     .filter(|d| !d.name.is_empty() && n.starts_with(&d.name))
                     .max_by_key(|d| d.name.len())
                     .map(|d| (d.game.id.clone(), role))
@@ -486,7 +563,10 @@ pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
             }
             None => {
                 tracing::warn!(path = %a.file.path, "mise à jour ou DLC sans jeu correspondant, ignoré");
-                ignored.push(format!("{} : mise à jour ou DLC sans jeu correspondant", a.file.path));
+                ignored.push(format!(
+                    "{} : mise à jour ou DLC sans jeu correspondant",
+                    a.file.path
+                ));
             }
         }
     }
@@ -494,7 +574,9 @@ pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
     let games = drafts
         .into_values()
         .map(|mut d| {
-            d.game.files.sort_by(|a, b| (a.role.as_str(), &a.path).cmp(&(b.role.as_str(), &b.path)));
+            d.game
+                .files
+                .sort_by(|a, b| (a.role.as_str(), &a.path).cmp(&(b.role.as_str(), &b.path)));
             d.game
         })
         .collect();
@@ -507,14 +589,23 @@ mod tests {
 
     #[test]
     fn noms_nettoyes() {
-        assert_eq!(clean_name("Mario Kart 8 Deluxe [0100152000022000][v0]"), "Mario Kart 8 Deluxe");
-        assert_eq!(clean_name("Pokemon_Diamant (France) (v1.0)"), "Pokemon Diamant");
+        assert_eq!(
+            clean_name("Mario Kart 8 Deluxe [0100152000022000][v0]"),
+            "Mario Kart 8 Deluxe"
+        );
+        assert_eq!(
+            clean_name("Pokemon_Diamant (France) (v1.0)"),
+            "Pokemon Diamant"
+        );
         assert_eq!(clean_name("[0100152000022000]"), "");
     }
 
     #[test]
     fn identifiants_de_titre() {
-        assert_eq!(title_id_in("Zelda [01007EF00011E000][v0]"), Some(0x01007EF00011E000));
+        assert_eq!(
+            title_id_in("Zelda [01007EF00011E000][v0]"),
+            Some(0x01007EF00011E000)
+        );
         assert_eq!(title_id_in("Sans identifiant"), None);
         assert_eq!(title_id_in("[0200152000022000]"), None);
     }

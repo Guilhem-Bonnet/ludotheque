@@ -49,29 +49,65 @@ impl Env {
         }
     }
     fn calls(&self) -> usize {
-        std::fs::read_to_string(self.tmp.path().join("keys/calls.log")).map(|s| s.lines().count()).unwrap_or(0)
+        std::fs::read_to_string(self.tmp.path().join("keys/calls.log"))
+            .map(|s| s.lines().count())
+            .unwrap_or(0)
     }
     fn ready(&self) -> Vec<String> {
-        let mut v: Vec<String> = std::fs::read_dir(self.cache().join("ready")).unwrap().filter_map(Result::ok).flat_map(|d| std::fs::read_dir(d.path()).unwrap().filter_map(Result::ok).map(|f| f.file_name().to_string_lossy().into_owned())).collect();
+        let mut v: Vec<String> = std::fs::read_dir(self.cache().join("ready"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .flat_map(|d| {
+                std::fs::read_dir(d.path())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .map(|f| f.file_name().to_string_lossy().into_owned())
+            })
+            .collect();
         v.sort();
         v
     }
     fn ready_dirs(&self) -> usize {
-        std::fs::read_dir(self.cache().join("ready")).unwrap().count()
+        std::fs::read_dir(self.cache().join("ready"))
+            .unwrap()
+            .count()
     }
     fn id(&self, name: &str) -> (String, u64) {
-        let (g, f, _) = self.games.iter().find(|(_, _, n)| n.contains(name)).unwrap_or_else(|| panic!("{name} absent du catalogue : {:?}", self.games));
+        let (g, f, _) = self
+            .games
+            .iter()
+            .find(|(_, _, n)| n.contains(name))
+            .unwrap_or_else(|| panic!("{name} absent du catalogue : {:?}", self.games));
         (g.clone(), *f)
     }
-    async fn get(&self, name: &str, query: &str, headers: &[(&str, &str)]) -> (StatusCode, HeaderMap, Vec<u8>) {
+    async fn get(
+        &self,
+        name: &str,
+        query: &str,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
         let (g, f) = self.id(name);
         let mut req = Request::get(format!("/api/v1/games/{g}/files/{f}{query}"));
         for (k, v) in headers {
             req = req.header(*k, *v);
         }
-        let resp = self.router.clone().oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+        let resp = self
+            .router
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
         let (status, h) = (resp.status(), resp.headers().clone());
-        (status, h, resp.into_body().collect().await.unwrap().to_bytes().to_vec())
+        (
+            status,
+            h,
+            resp.into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
     }
     /// Redemande jusqu'à autre chose qu'un 202.
     async fn until_done(&self, name: &str, query: &str) -> (StatusCode, HeaderMap, Vec<u8>) {
@@ -101,15 +137,29 @@ fn env_with(keys: bool, max: u64, files: &[&str], tweak: impl FnOnce(&mut Conver
     let tmp = tempfile::tempdir().unwrap();
     let roms = tmp.path().join("roms");
     for f in files {
-        write(&roms.join("switch").join(f), format!("contenu de {f}").repeat(4).as_bytes());
+        write(
+            &roms.join("switch").join(f),
+            format!("contenu de {f}").repeat(4).as_bytes(),
+        );
     }
     write(&tmp.path().join("keys/prod.keys"), b"fausses cles de test");
     let script = tmp.path().join("faux-nsz.sh");
     std::fs::write(&script, FAKE).unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let store = Store::open(&tmp.path().join("data"), Box::new(SystemClock)).unwrap().with_roms(roms);
+    let store = Store::open(&tmp.path().join("data"), Box::new(SystemClock))
+        .unwrap()
+        .with_roms(roms);
     store.rescan().unwrap();
-    let games = store.games().unwrap().into_iter().flat_map(|g| g.files.into_iter().map(move |f| (g.id.clone(), f.id, f.path))).collect();
+    let games = store
+        .games()
+        .unwrap()
+        .into_iter()
+        .flat_map(|g| {
+            g.files
+                .into_iter()
+                .map(move |f| (g.id.clone(), f.id, f.path))
+        })
+        .collect();
     let mut cfg = ConvertConfig::new(tmp.path().join("cache"));
     cfg.max_bytes = max;
     cfg.command = script.to_string_lossy().into_owned();
@@ -149,18 +199,41 @@ async fn deux_cents_deux_puis_fichier_converti_avec_reprise() {
     let (st, h2, part) = e.get("Jeu", ALL, &[("range", "bytes=5-")]).await;
     assert_eq!(st, StatusCode::PARTIAL_CONTENT);
     assert_eq!(part, body[5..]);
-    assert_eq!(h2[header::CONTENT_RANGE].to_str().unwrap(), format!("bytes 5-{}/{total}", total - 1));
+    assert_eq!(
+        h2[header::CONTENT_RANGE].to_str().unwrap(),
+        format!("bytes 5-{}/{total}", total - 1)
+    );
     assert_eq!(h2[header::ETAG].to_str().unwrap(), etag);
     // If-Range identique : reprise ; différent : fichier entier.
-    assert_eq!(e.get("Jeu", ALL, &[("range", "bytes=5-"), ("if-range", &etag)]).await.0, StatusCode::PARTIAL_CONTENT);
-    assert_eq!(e.get("Jeu", ALL, &[("range", "bytes=5-"), ("if-range", "\"autre\"")]).await.0, StatusCode::OK);
+    assert_eq!(
+        e.get("Jeu", ALL, &[("range", "bytes=5-"), ("if-range", &etag)])
+            .await
+            .0,
+        StatusCode::PARTIAL_CONTENT
+    );
+    assert_eq!(
+        e.get(
+            "Jeu",
+            ALL,
+            &[("range", "bytes=5-"), ("if-range", "\"autre\"")]
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
     assert_eq!(e.calls(), 1, "le cache sert, aucune nouvelle conversion");
 }
 
 #[tokio::test]
 async fn servi_tel_quel_si_le_client_accepte_le_format_stocke() {
     let e = env(true, 1 << 30, &["Jeu [0100152000022000][v0].nsz"]);
-    for q in ["", "?formats=nsz", "?formats=nsz,nsp", "?formats=zcci", "?formats="] {
+    for q in [
+        "",
+        "?formats=nsz",
+        "?formats=nsz,nsp",
+        "?formats=zcci",
+        "?formats=",
+    ] {
         let (st, h, body) = e.get("Jeu", q, &[]).await;
         assert_eq!(st, StatusCode::OK, "{q}");
         assert!(h.get("x-ludo-format").is_none());
@@ -174,11 +247,17 @@ async fn sans_cles_conversion_indisponible() {
     let e = env(false, 1 << 30, &["Jeu [0100152000022000][v0].nsz"]);
     let (st, _, body) = e.get("Jeu", ALL, &[]).await;
     assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(String::from_utf8(body).unwrap(), "Conversion indisponible : clés manquantes");
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        "Conversion indisponible : clés manquantes"
+    );
     // Clés configurées mais fichier absent (secret optionnel non créé) : même réponse.
     let e2 = env(true, 1 << 30, &["Jeu [0100152000022000][v0].nsz"]);
     std::fs::remove_file(e2.tmp.path().join("keys/prod.keys")).unwrap();
-    assert_eq!(e2.get("Jeu", ALL, &[]).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        e2.get("Jeu", ALL, &[]).await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
     // Sans conversion demandée, le service reste normal.
     assert_eq!(e.get("Jeu", "?formats=nsz", &[]).await.0, StatusCode::OK);
 }
@@ -190,7 +269,9 @@ async fn demandes_simultanees_une_seule_conversion() {
     let mut tasks = Vec::new();
     for _ in 0..8 {
         let e = e.clone();
-        tasks.push(tokio::spawn(async move { e.until_done("Jeu", ALL).await.0 }));
+        tasks.push(tokio::spawn(
+            async move { e.until_done("Jeu", ALL).await.0 },
+        ));
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
     e.gate(false);
@@ -202,13 +283,25 @@ async fn demandes_simultanees_une_seule_conversion() {
 
 #[tokio::test]
 async fn une_conversion_a_la_fois() {
-    let e = env(true, 1 << 30, &["A [0100152000022000][v0].nsz", "B [0100152000023000][v0].nsz"]);
+    let e = env(
+        true,
+        1 << 30,
+        &[
+            "A [0100152000022000][v0].nsz",
+            "B [0100152000023000][v0].nsz",
+        ],
+    );
     e.gate(true);
     assert_eq!(e.get("A", ALL, &[]).await.0, StatusCode::ACCEPTED);
     tokio::time::sleep(Duration::from_millis(300)).await;
     let (st, _, body) = e.get("B", ALL, &[]).await;
     assert_eq!(st, StatusCode::ACCEPTED);
-    assert_eq!(serde_json::from_slice::<ConvertProgress>(&body).unwrap().state, "queued");
+    assert_eq!(
+        serde_json::from_slice::<ConvertProgress>(&body)
+            .unwrap()
+            .state,
+        "queued"
+    );
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(e.calls(), 1, "B attend la fin de A");
     e.gate(false);
@@ -226,17 +319,29 @@ async fn echec_sans_fichier_partiel_puis_nouvel_essai() {
     assert!(msg.starts_with("Conversion échouée"), "{msg}");
     assert!(!msg.contains("boom"), "pas de détail interne côté client");
     assert_eq!(e.ready_dirs(), 0, "rien dans le cache");
-    assert_eq!(std::fs::read_dir(e.cache().join("work")).unwrap().count(), 0, "dossier de travail nettoyé");
+    assert_eq!(
+        std::fs::read_dir(e.cache().join("work")).unwrap().count(),
+        0,
+        "dossier de travail nettoyé"
+    );
     // Une fois le délai d'attente écoulé, la demande suivante relance une conversion (qui échoue encore).
     tokio::time::sleep(Duration::from_millis(2100)).await;
-    assert_eq!(e.until_done("bad", ALL).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        e.until_done("bad", ALL).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
     assert_eq!(e.calls(), 2);
 }
 
 #[tokio::test]
 async fn eviction_lru_par_dernier_acces() {
     // Chaque conversion pèse ~ 3 × 4 × nom + 6 octets ; plafond réglé pour en garder trois.
-    let names = ["A [0100152000022000][v0].nsz", "B [0100152000023000][v0].nsz", "C [0100152000024000][v0].nsz", "D [0100152000025000][v0].nsz"];
+    let names = [
+        "A [0100152000022000][v0].nsz",
+        "B [0100152000023000][v0].nsz",
+        "C [0100152000024000][v0].nsz",
+        "D [0100152000025000][v0].nsz",
+    ];
     let probe = env(true, 1 << 30, &names[..1]);
     let one = probe.until_done("A", ALL).await.2.len() as u64;
     let src = one - 6;
@@ -268,13 +373,19 @@ async fn pourcentage_lu_sur_la_sortie_a_retour_chariot() {
     for _ in 0..100 {
         let (st, _, body) = e.get("Jeu", ALL, &[]).await;
         assert_eq!(st, StatusCode::ACCEPTED);
-        vu = serde_json::from_slice::<ConvertProgress>(&body).unwrap().percent;
+        vu = serde_json::from_slice::<ConvertProgress>(&body)
+            .unwrap()
+            .percent;
         if vu.is_some() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert_eq!(vu, Some(42), "pourcentage publié au fil de l'eau, avant la fin");
+    assert_eq!(
+        vu,
+        Some(42),
+        "pourcentage publié au fil de l'eau, avant la fin"
+    );
     e.gate(false);
     assert_eq!(e.until_done("Jeu", ALL).await.0, StatusCode::OK);
 }
@@ -289,42 +400,75 @@ async fn sorties_volumineuses_sans_blocage() {
 }
 
 fn vivant(pid: &str) -> bool {
-    std::process::Command::new("kill").args(["-0", pid]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 #[tokio::test]
 async fn delai_depasse_tue_le_groupe_de_processus() {
-    let e = env_with(true, 1 << 30, &["Jeu forky [0100152000022000][v0].nsz"], |c| c.timeout = Duration::from_millis(800));
+    let e = env_with(
+        true,
+        1 << 30,
+        &["Jeu forky [0100152000022000][v0].nsz"],
+        |c| c.timeout = Duration::from_millis(800),
+    );
     let (st, _, _) = e.until_done("forky", ALL).await;
     assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR);
-    let pid = std::fs::read_to_string(e.tmp.path().join("keys/child.pid")).unwrap().trim().to_string();
+    let pid = std::fs::read_to_string(e.tmp.path().join("keys/child.pid"))
+        .unwrap()
+        .trim()
+        .to_string();
     for _ in 0..40 {
         if !vivant(&pid) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(!vivant(&pid), "le fils lancé par le convertisseur doit être tué avec lui");
+    assert!(
+        !vivant(&pid),
+        "le fils lancé par le convertisseur doit être tué avec lui"
+    );
     assert_eq!(e.ready_dirs(), 0);
 }
 
 #[tokio::test]
 async fn echec_garde_en_attente_puis_nouvel_essai() {
-    let e = env_with(true, 1 << 30, &["Jeu bad [0100152000022000][v0].nsz"], |c| c.failure_backoff = Duration::from_millis(1500));
-    assert_eq!(e.until_done("bad", ALL).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+    let e = env_with(
+        true,
+        1 << 30,
+        &["Jeu bad [0100152000022000][v0].nsz"],
+        |c| c.failure_backoff = Duration::from_millis(1500),
+    );
+    assert_eq!(
+        e.until_done("bad", ALL).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
     // Pendant le délai : toujours l'échec, sans relancer le convertisseur.
     for _ in 0..3 {
-        assert_eq!(e.get("bad", ALL, &[]).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            e.get("bad", ALL, &[]).await.0,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
     assert_eq!(e.calls(), 1, "aucune relance pendant le délai d'attente");
     tokio::time::sleep(Duration::from_millis(1600)).await;
-    assert_eq!(e.until_done("bad", ALL).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        e.until_done("bad", ALL).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
     assert_eq!(e.calls(), 2, "relancé une fois le délai écoulé");
 }
 
 #[tokio::test]
 async fn eviction_pendant_un_envoi_sans_coupure() {
-    let names = ["A [0100152000022000][v0].nsz", "B [0100152000023000][v0].nsz", "C [0100152000024000][v0].nsz"];
+    let names = [
+        "A [0100152000022000][v0].nsz",
+        "B [0100152000023000][v0].nsz",
+        "C [0100152000024000][v0].nsz",
+    ];
     let probe = env(true, 1 << 30, &names[..1]);
     let one = probe.until_done("A", ALL).await.2.len() as u64;
     let src = one - 6;
@@ -336,10 +480,23 @@ async fn eviction_pendant_un_envoi_sans_coupure() {
     }
     // Envoi de A commencé (corps non lu) : A est le plus ancien mais en cours d'utilisation.
     let (g, f) = e.id("A");
-    let resp = e.router.clone().oneshot(Request::get(format!("/api/v1/games/{g}/files/{f}{ALL}")).body(Body::empty()).unwrap()).await.unwrap();
+    let resp = e
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/games/{g}/files/{f}{ALL}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(e.until_done("C", ALL).await.0, StatusCode::OK);
-    assert_eq!(e.ready_dirs(), 2, "une conversion évincée : la plus ancienne non utilisée (B)");
+    assert_eq!(
+        e.ready_dirs(),
+        2,
+        "une conversion évincée : la plus ancienne non utilisée (B)"
+    );
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(body.len() as u64, one, "envoi complet malgré l'éviction");
     assert!(body.ends_with(b"DECOMP"));
