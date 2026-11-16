@@ -275,3 +275,28 @@ pub fn conversion_target(stored: &str, accepted: &[String]) -> Option<&'static s
     let (_, target) = CONVERTIBLE.iter().find(|(from, _)| from.eq_ignore_ascii_case(stored))?;
     (!has(stored) && has(target)).then_some(*target)
 }
+
+/// Jeu tel qu'il est sur un appareil (inventaire envoyé par l'appareil, ou par le PC pour la Thor).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceGame {
+    pub game: GameId,
+    /// ROM présente sur l'appareil.
+    #[serde(default)]
+    pub installed: bool,
+    /// Jouable en flux depuis le PC (Moonlight → Sunshine).
+    #[serde(default)]
+    pub stream: bool,
+    /// Sauvegarde présente sur l'appareil.
+    #[serde(default)]
+    pub save: bool,
+}
+
+/// Inventaire d'un appareil : ce qu'il a, à la date de son dernier envoi.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceInventory {
+    pub device: String,
+    /// Secondes depuis l'époque Unix (fixé par le serveur à la réception).
+    #[serde(default)]
+    pub updated_at: u64,
+    pub games: Vec<DeviceGame>,
+}

@@ -157,6 +157,24 @@ impl Client {
         }
     }
 
+    /// Inventaires des appareils (ce que chacun a installé, en flux, en sauvegarde).
+    pub fn inventories(&self) -> Result<Vec<ludo_proto::DeviceInventory>, ApiError> {
+        let mut r = self.agent.get(self.url("devices")).call()?;
+        match r.status().as_u16() {
+            200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
+    /// Remplace l'inventaire d'un appareil.
+    pub fn put_inventory(&self, device: &str, games: &[ludo_proto::DeviceGame]) -> Result<ludo_proto::DeviceInventory, ApiError> {
+        let mut r = self.agent.put(self.url(&format!("devices/{device}/inventory"))).send_json(games)?;
+        match r.status().as_u16() {
+            200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
+
     /// Catalogue des jeux du serveur (titres, jaquettes, fichiers).
     pub fn games(&self) -> Result<Vec<CatalogGame>, ApiError> {
         let mut r = self.agent.get(self.url("games")).call()?;

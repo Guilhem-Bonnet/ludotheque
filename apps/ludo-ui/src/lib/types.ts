@@ -151,3 +151,20 @@ export interface Emulator {
   bin: string;
   data: string;
 }
+
+/** Jeu sur un autre appareil (inventaire envoyé au serveur). */
+export interface RemoteGame {
+  installed: boolean;
+  /** Jouable en flux depuis le PC (Moonlight). */
+  stream: boolean;
+  save: boolean;
+}
+
+/** Autre appareil du foyer (Ayn Thor, Steam Deck…) et ses jeux. */
+export interface RemoteDevice {
+  id: string;
+  name: string;
+  kind: DeviceKind;
+  updated: string;
+  games: Record<string, RemoteGame>;
+}

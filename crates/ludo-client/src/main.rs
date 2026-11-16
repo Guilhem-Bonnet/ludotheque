@@ -233,6 +233,17 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         .as_deref()
         .map(|r| ["switch", "switch2", "n3ds", "3ds", "nds", "ds"].iter().flat_map(|c| dev.list(&format!("{r}/{c}"))).map(|n| ludo_client::local::match_key(&n)).collect())
         .unwrap_or_default();
+    // Inventaire de l'appareil (envoyé au serveur à la fin) : ROM présentes, jeux jouables en flux
+    // depuis ce PC (applis Sunshine), sauvegardes trouvées sur l'appareil.
+    let streamable = sunshine_roms();
+    let mut inventory: std::collections::BTreeMap<String, ludo_proto::DeviceGame> = games
+        .iter()
+        .map(|g| {
+            let installed = g.files.iter().any(|f| roms.contains(&ludo_client::local::match_key(&f.path)));
+            let stream = g.files.iter().any(|f| streamable.contains(&ludo_client::local::match_key(&f.path)));
+            (g.id.clone(), ludo_proto::DeviceGame { game: g.id.clone(), installed, stream, save: false })
+        })
+        .collect();
     let journal_path = config::journal_path().with_file_name(format!("journal-{}.json", ctx.cfg.appareil));
     let mut journal = Journal::open(&journal_path).map_err(|e| e.to_string())?;
     let stamp = chrono_stamp();
@@ -249,6 +260,9 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
             }
         };
         let present_remote: Vec<bool> = pairs.iter().map(|(_, r)| dev.is_dir(r)).collect();
+        if let Some(e) = inventory.get_mut(&g.id) {
+            e.save = present_remote.iter().any(|p| *p);
+        }
         let has_rom = g.files.iter().any(|f| roms.contains(&ludo_client::local::match_key(&f.path)));
         let key = SaveKey { profile: profile.clone(), game: g.id.clone() };
         let on_server = ctx.client.head(&key).ok().flatten().is_some();
@@ -316,7 +330,46 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
             }
         }
     }
+    // Inventaire complet (même pour une synchronisation limitée à un jeu, il décrit tout l'appareil).
+    if only.is_none() {
+        let list: Vec<ludo_proto::DeviceGame> = inventory.into_values().filter(|g| g.installed || g.stream || g.save).collect();
+        match ctx.client.put_inventory(&ctx.cfg.appareil, &list) {
+            Ok(inv) => println!("Inventaire envoyé : {} jeux sur {}", inv.games.len(), ctx.cfg.appareil),
+            Err(e) => println!("Inventaire non envoyé : {e}"),
+        }
+    }
     Ok(code)
+}
+
+/// ROM jouables en flux depuis ce PC : chemins cités dans les commandes des applis Sunshine
+/// (`~/.config/sunshine/apps.json`), réduits à leur clé de rapprochement (nom, format équivalent).
+fn sunshine_roms() -> std::collections::BTreeSet<(String, String)> {
+    let path = config::home().join(".config/sunshine/apps.json");
+    let Ok(text) = std::fs::read_to_string(path) else { return Default::default() };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return Default::default() };
+    let mut out = std::collections::BTreeSet::new();
+    for app in v.get("apps").and_then(|a| a.as_array()).into_iter().flatten() {
+        let cmd = app.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+        // Chemins entre guillemets doubles ou simples dans la commande.
+        for quote in ['"', '\'']
+        {
+            let mut parts = cmd.split(quote);
+            parts.next();
+            while let Some(inside) = parts.next() {
+                if inside.starts_with('/') {
+                    // Le chemin et ses dossiers parents : un jeu en dossier (Switch 2 extrait) est
+                    // souvent cité par un fichier intérieur (`…/Pokemon Pokopia [id]/updates/…`).
+                    for anc in std::path::Path::new(inside).ancestors().take(6) {
+                        if let Some(n) = anc.file_name() {
+                            out.insert(ludo_client::local::match_key(&n.to_string_lossy()));
+                        }
+                    }
+                }
+                parts.next();
+            }
+        }
+    }
+    out
 }
 
 /// Horodatage pour nommer les dossiers mis de côté (`.ludo-old-20261116-0712`).

@@ -148,6 +148,51 @@ fn bin_exists(bin: &str, host: &ludo_client::detect::Host) -> bool {
     }
 }
 
+/// Jeu sur un autre appareil (`RemoteGame` de `types.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UiRemoteGame {
+    installed: bool,
+    stream: bool,
+    save: bool,
+}
+
+/// Autre appareil du foyer et ses jeux, d'après son inventaire sur le serveur (`RemoteDevice`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiRemoteDevice {
+    id: String,
+    name: String,
+    kind: &'static str,
+    /// « Aujourd'hui 07:41 », heure locale du dernier inventaire.
+    updated: String,
+    games: BTreeMap<String, UiRemoteGame>,
+}
+
+/// Inventaires des AUTRES appareils (pas celui-ci), pour la Bibliothèque.
+pub fn remote_devices(inventories: Vec<ludo_proto::DeviceInventory>, this: &str) -> Vec<UiRemoteDevice> {
+    inventories
+        .into_iter()
+        .filter(|i| i.device != this)
+        .map(|i| UiRemoteDevice {
+            name: device_name(&i.device),
+            kind: device_kind(&i.device),
+            updated: local_time(i.updated_at).format("%d/%m %H:%M").to_string(),
+            games: i.games.into_iter().map(|g| (g.game, UiRemoteGame { installed: g.installed, stream: g.stream, save: g.save })).collect(),
+            id: i.device,
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn devices() -> Result<Vec<UiRemoteDevice>, String> {
+    blocking(|| {
+        let cfg = load_config()?;
+        let inv = Client::new(&cfg.serveur).inventories().map_err(|e| e.to_string())?;
+        Ok(remote_devices(inv, &cfg.appareil))
+    })
+    .await
+}
+
 /// Le journal est relu puis réécrit d'un bloc à chaque opération : une seule opération à la fois
 /// dans l'interface, pour ne pas perdre l'écriture d'une synchronisation concurrente.
 static JOURNAL: Mutex<()> = Mutex::new(());
@@ -1198,7 +1243,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
@@ -1519,6 +1564,22 @@ mod tests {
             serde_json::json!({ "game": "g", "file": 3, "done": 10, "total": 40, "prepare": { "queued": false, "percent": 42, "elapsedS": 7 } })
         );
         assert_eq!(EVENT_PROGRESSION, "ludo://progression");
+    }
+
+    #[test]
+    fn autres_appareils_seulement() {
+        let inv = vec![
+            ludo_proto::DeviceInventory { device: "pc".into(), updated_at: 0, games: vec![] },
+            ludo_proto::DeviceInventory {
+                device: "thor".into(),
+                updated_at: 0,
+                games: vec![ludo_proto::DeviceGame { game: "switch2-x".into(), installed: false, stream: true, save: false }],
+            },
+        ];
+        let r = remote_devices(inv, "pc");
+        assert_eq!(r.len(), 1);
+        assert_eq!((r[0].id.as_str(), r[0].name.as_str(), r[0].kind), ("thor", "Ayn Thor", "thor"));
+        assert!(r[0].games["switch2-x"].stream);
     }
 
     #[test]

@@ -565,3 +565,37 @@ async fn image_de_fond_separee_de_la_jaquette() {
     let (s, _, _) = call(&a, Request::get("/api/v1/games/..%2Fbackgrounds%2Fswitch-lm3/background").body(Body::empty()).unwrap()).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn inventaire_d_un_appareil() {
+    let a = app();
+    a.store.rescan().unwrap();
+    let body = serde_json::json!([
+        {"game": "switch-lm3", "installed": true, "save": true},
+        {"game": "ds-pokemon-diamant", "stream": true},
+        {"game": "jeu-inconnu", "installed": true},
+        {"game": "switch-lm3-vide"}
+    ]);
+    let req = Request::put("/api/v1/devices/thor/inventory").header(header::CONTENT_TYPE, "application/json").body(Body::from(body.to_string())).unwrap();
+    let (s, _, b) = call(&a, req).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+    let (s, _, b) = call(&a, Request::get("/api/v1/devices").body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::OK);
+    let inv: Vec<ludo_proto::DeviceInventory> = serde_json::from_slice(&b).unwrap();
+    assert_eq!(inv.len(), 1);
+    assert_eq!(inv[0].device, "thor");
+    // Jeu inconnu du catalogue et entrée sans rien : ignorés.
+    let ids: Vec<&str> = inv[0].games.iter().map(|g| g.game.as_str()).collect();
+    assert_eq!(ids, ["ds-pokemon-diamant", "switch-lm3"]);
+    assert!(inv[0].games[1].installed && inv[0].games[1].save && !inv[0].games[1].stream);
+    // Remplacement complet au second envoi.
+    let req = Request::put("/api/v1/devices/thor/inventory").header(header::CONTENT_TYPE, "application/json").body(Body::from("[]")).unwrap();
+    call(&a, req).await;
+    let (_, _, b) = call(&a, Request::get("/api/v1/devices").body(Body::empty()).unwrap()).await;
+    let inv: Vec<ludo_proto::DeviceInventory> = serde_json::from_slice(&b).unwrap();
+    assert!(inv[0].games.is_empty());
+    // Nom d'appareil malformé : refusé.
+    let req = Request::put("/api/v1/devices/..%2Fx/inventory").header(header::CONTENT_TYPE, "application/json").body(Body::from("[]")).unwrap();
+    let (s, _, _) = call(&a, req).await;
+    assert!(s == StatusCode::BAD_REQUEST || s == StatusCode::NOT_FOUND, "{s}");
+}
