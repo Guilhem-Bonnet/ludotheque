@@ -6,37 +6,51 @@
   import { api } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
+  import StateNotice from '../lib/components/StateNotice.svelte';
   import type { UpdateItem } from '../lib/types';
 
   let items = $state<UpdateItem[]>([]);
-  // Avancement par élément (démonstration) : undefined = pas commencé, 0-100 = en cours, 'fait'.
+  // Avancement par élément : undefined = pas commencé, 0-100 = en cours, 'fait', ou message d'échec.
   let progress = $state<Record<string, number | 'fait'>>({});
+  let failed = $state<Record<string, string>>({});
+  let loadError = $state<string | null>(null);
+  let loaded = $state(false);
 
-  function run(it: UpdateItem) {
-    if (progress[it.id] !== undefined) return;
+  /** Installe la mise à jour ou le DLC (`id` = « <jeu>|<fichier> » côté app réelle). */
+  async function run(it: UpdateItem) {
+    if (progress[it.id] !== undefined && progress[it.id] !== 'fait') return;
+    if (progress[it.id] === 'fait') return;
+    delete failed[it.id];
     progress[it.id] = 0;
-    const start = performance.now();
-    const step = (t: number) => {
-      const k = Math.min(1, (t - start) / 1600);
-      progress[it.id] = Math.round(100 * (1 - Math.pow(1 - k, 2)));
-      if (k < 1) requestAnimationFrame(step);
-      else {
-        progress[it.id] = 'fait';
-        feedback(it.action === 'Installer' ? 'downloaded' : 'updated');
-      }
-    };
-    requestAnimationFrame(step);
+    const [game, file] = it.id.split('|');
+    try {
+      await api.installContent(game, Number(file), (p) => (progress[it.id] = Math.round(p * 100)));
+      progress[it.id] = 'fait';
+      feedback(it.action === 'Installer' ? 'downloaded' : 'updated');
+    } catch (e) {
+      delete progress[it.id];
+      failed[it.id] = e instanceof Error ? e.message : String(e);
+      feedback('err');
+    }
+  }
+
+  function load() {
+    loadError = null;
+    api.updates().then((u) => {
+      items = u;
+      loaded = true;
+      focusFirst();
+    }).catch((e) => {
+      loadError = e instanceof Error ? e.message : String(e);
+      loaded = true;
+      focusFirst();
+    });
   }
 
   function runAll() {
     items.forEach((it, k) => setTimeout(() => run(it), k * 300));
   }
-  onMount(() => {
-    api.updates().then((u) => {
-      items = u;
-      focusFirst();
-    });
-  });
+  onMount(load);
 
   const GROUPS: { id: UpdateItem['group']; label: string }[] = [
     { id: 'jeux', label: 'Jeux' },
@@ -52,7 +66,11 @@
   </header>
 
   <main>
-    {#if items.length === 0}<p class="empty">Tout est à jour</p>{/if}
+    {#if loadError}
+      <StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={load} />
+    {:else if loaded && items.length === 0}
+      <StateNotice icon="check-circle" title="Tout est à jour" detail="Aucune mise à jour ni DLC à installer pour les jeux de cet appareil." autofocus={false} />
+    {/if}
     {#each GROUPS as grp (grp.id)}
       {@const list = items.filter((i) => i.group === grp.id)}
       {#if list.length}
@@ -68,7 +86,8 @@
               {:else if progress[it.id] !== undefined}
                 <span class="mini" role="progressbar" aria-valuenow={Number(progress[it.id])} aria-valuemin="0" aria-valuemax="100" aria-label="{it.title} : {progress[it.id]} %"><span style:width="{progress[it.id]}%"></span></span>
               {:else}
-                <button class="act focusable" onclick={() => run(it)}>{it.action}</button>
+                {#if failed[it.id]}<span class="fail" title={failed[it.id]}>Échec</span>{/if}
+                <button class="act focusable" onclick={() => run(it)}>{failed[it.id] ? 'Réessayer' : it.action}</button>
               {/if}
             </div>
           {/each}
@@ -102,4 +121,5 @@
   .mini { width: 120px; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; display: block; }
   .mini span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 120ms linear; }
   .empty { color: var(--ink-3); font-size: 17px; }
+  .fail { font-size: 13px; color: #ff9b9b; }
 </style>

@@ -80,7 +80,7 @@
 
     <section>
       <h2>Serveur</h2>
-      <div class="row static"><Icon name="pin" size={22} />Adresse<span class="value">ludotheque.srvdreamer.fr</span></div>
+      <div class="row static"><Icon name="pin" size={22} />Adresse<span class="value">{(device.serverUrl ?? "https://ludotheque.srvdreamer.fr").replace(/^https?:\/\//, "")}</span></div>
       <button class="row focusable" data-sound="none" onclick={testServer} aria-busy={test === 'busy'}>
         <CloudIcon name={test === 'ko' ? 'cloud-off' : test === 'ok' ? 'cloud-ok' : 'cloud-sync'} busy={test === 'busy'} color={test === 'ok' ? 'var(--ok)' : test === 'ko' ? 'var(--offline)' : undefined} />
         Tester la connexion
@@ -108,7 +108,7 @@
 
     <section>
       <h2>À propos</h2>
-      <div class="row static"><Icon name="grid" size={22} />Ludothèque<span class="value">0.1.0{isDemo ? ' · démo' : ''}</span></div>
+      <div class="row static"><Icon name="grid" size={22} />Ludothèque<span class="value">{device.version ?? '0.1.0'}{isDemo ? ' · démo' : ''}</span></div>
     </section>
   </main>
   <ButtonHints hints={[{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Retour' }]} note={volFocused ? 'Gauche / droite : régler le volume' : undefined} />

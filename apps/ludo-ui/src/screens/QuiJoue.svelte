@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StateNotice from '../lib/components/StateNotice.svelte';
   import { onMount } from 'svelte';
   import Avatar from '../lib/components/Avatar.svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
@@ -12,10 +13,14 @@
   let { device }: { device: DeviceInfo } = $props();
   let profiles = $state<Profile[]>([]);
   let focused = $state(0);
+  let loadError = $state<string | null>(null);
 
   onMount(() => {
     api.profiles().then((p) => {
       profiles = p;
+      focusFirst();
+    }).catch((e) => {
+      loadError = e instanceof Error ? e.message : String(e);
       focusFirst();
     });
   });
@@ -42,6 +47,7 @@
 
   <main>
     <h1 class="rise" style:--i={0}>Qui joue ?</h1>
+    {#if loadError}<StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={() => location.reload()} />{/if}
     <div class="profiles">
       {#each profiles as p, i (p.id)}
         <button
