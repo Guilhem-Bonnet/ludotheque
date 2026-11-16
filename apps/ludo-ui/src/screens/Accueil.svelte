@@ -1,7 +1,7 @@
 <script lang="ts">
   import StateNotice from '../lib/components/StateNotice.svelte';
   import { onMount } from 'svelte';
-  import { fly } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { feedback } from '../lib/feedback';
   import { play as playSound } from '../lib/sound';
@@ -48,8 +48,7 @@
       }
       if ((ev as CustomEvent).detail === 'y' && g && !options) {
         feedback('ok');
-        router.heroGame = g.id;
-        router.go({ name: 'fiche', game: g });
+        openGame(g);
       }
     };
     window.addEventListener('ludo:action', onAction);
@@ -121,6 +120,22 @@
     feedback(lib.some((g) => g.syncError) ? 'err' : lib.some((g) => g.sync === 'conflit') ? 'conflict' : 'saved');
   }
 
+  /** A ou clic sur une tuile : la fiche du jeu s'ouvre (le lancement se fait depuis la fiche ou le menu Options). */
+  function openGame(g: Game) {
+    router.heroGame = g.id;
+    router.go({ name: 'fiche', game: g });
+  }
+
+  /* Défilement de la rangée géré ici (pas par la navigation) : la tuile choisie se place en deuxième
+     position, d'un défilement doux. Positions calculées, pas mesurées : les tuiles non choisies font
+     232 px + 20 px d'écart, donc la cible ne dépend pas de l'agrandissement en cours. */
+  let row: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    const i = focused;
+    if (!row) return;
+    row.scrollTo({ left: Math.max(0, (i - 1) * 252), behavior: reducedMotion() ? 'auto' : 'smooth' });
+  });
+
   /** Mise en scène du lancement : la tuile se soulève, les autres s'estompent, puis l'écran change. */
   function launch(game: Game, el: HTMLElement) {
     launching = game.id;
@@ -135,7 +150,7 @@
 </script>
 
 <div class="screen">
-  <Ambiance art={current?.art} x={lightX} key={current?.id} />
+  <Ambiance art={current?.art} cover={current?.cover} x={lightX} key={current?.id} />
   <header class="rise" style:--i={0}>
     <button class="who pill focusable" aria-label="Profil de {router.profile!.name}" onclick={() => router.go({ name: 'profil' })} onfocus={() => (profileFocused = true)} onblur={() => (profileFocused = false)}>
       <Avatar profile={router.profile!} size={46} />
@@ -156,7 +171,7 @@
     <div class="notice-wrap"><StateNotice icon="grid" title="Aucune partie récente" detail="Les jeux joués apparaissent ici. Tous les jeux sont dans la Bibliothèque." action="Bibliothèque" onaction={() => router.go({ name: 'bibliotheque' })} /></div>
   {/if}
   <section aria-label="Jeux récents" class="row-wrap">
-    <div class="row">
+    <div class="row" bind:this={row} data-own-scroll>
       {#each games as game, i (game.id)}
         <!-- Une seule tuile par jeu : elle grandit au focus sans être recréée (le focus reste dessus). -->
         <div class="slot rise" class:focused={i === focused} style:--i={i}>
@@ -169,7 +184,7 @@
             lifting={launching === game.id}
             autofocus={i === 0}
             onfocus={() => (focused = i)}
-            onclick={(el) => launch(game, el)}
+            onclick={() => openGame(game)}
           />
           {#if i === focused && game.last}
             <div class="device-tab">
@@ -190,7 +205,7 @@
       <!-- Le titre change avec la tuile : l'ancien s'efface, le nouveau monte de 8 px. -->
       <div class="caption-slot">
         {#key current.id}
-          <div class="caption" in:fly={{ y: 8, duration: reducedMotion() ? 0 : 220, easing: cubicOut }}>
+          <div class="caption" in:fly={{ y: 8, duration: reducedMotion() ? 0 : 260, delay: reducedMotion() ? 0 : 60, easing: cubicOut }} out:fade={{ duration: reducedMotion() ? 0 : 120 }}>
             <h1>{current.title}</h1>
             {#if current.playtime}<span>{current.playtime} de jeu</span>{/if}
           </div>
@@ -227,7 +242,7 @@
   {:else if profileFocused}
     <ButtonHints hints={[{ key: 'A', label: 'Profil' }]} />
   {:else}
-    <ButtonHints hints={[{ key: 'A', label: 'Jouer' }, { key: 'Y', label: 'Détails' }, { key: 'X', label: 'Options' }]} />
+    <ButtonHints hints={[{ key: 'A', label: 'Ouvrir' }, { key: 'X', label: 'Options' }]} />
   {/if}
 </div>
 
@@ -246,7 +261,7 @@
   .status { display: flex; align-items: center; gap: 14px; font-size: 15px; color: var(--ink); }
 
   .row-wrap { padding: 48px 0 0 48px; }
-  .row { display: flex; align-items: flex-start; gap: 20px; overflow-x: auto; overflow-y: visible; padding: 22px 64px 16px 12px; margin: -22px 0 0 -12px; scroll-padding-inline: 24px 64px; scrollbar-width: none; }
+  .row { display: flex; align-items: flex-start; gap: 20px; overflow-x: auto; overscroll-behavior-x: contain; overflow-y: visible; padding: 22px 64px 16px 12px; margin: -22px 0 0 -12px; scroll-padding-inline: 24px 64px; scrollbar-width: none; }
   .row::-webkit-scrollbar { display: none; }
   .slot { display: flex; flex-direction: column; flex-shrink: 0; margin-top: 20px; }
   .slot.focused { width: 272px; margin-top: 0; }
@@ -262,9 +277,9 @@
     @keyframes tab-out { from { transform: translateY(-4px); opacity: 0; } to { transform: none; opacity: 1; } }
   }
 
-  .caption-slot { margin-top: 26px; height: 40px; }
-  .caption { display: flex; align-items: baseline; gap: 16px; }
-  .caption h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
+  .caption-slot { margin-top: 26px; height: 40px; position: relative; }
+  .caption { position: absolute; inset: 0 auto auto 0; white-space: nowrap; display: flex; align-items: baseline; gap: 16px; }
+  .caption h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.45); }
   .caption span { font-size: 16px; color: rgba(255, 255, 255, 0.72); }
 
   nav { margin-top: auto; display: flex; justify-content: center; gap: 36px; padding-bottom: 26px; }
