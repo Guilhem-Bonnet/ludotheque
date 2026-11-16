@@ -121,6 +121,8 @@ fn rig(bin: Option<&str>) -> Rig {
         consoles: BTreeMap::new(),
         emulateurs: BTreeMap::new(),
         dossiers: BTreeMap::new(),
+        // Banc d'essai isolé : la vraie collection du poste ne doit pas compter.
+        collection: false,
         adb: None,
     };
     let journal = dir.path().join("journal.json");
