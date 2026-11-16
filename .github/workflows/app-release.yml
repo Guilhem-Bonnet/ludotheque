@@ -52,9 +52,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # .cargo/config.toml du dépôt fixe target-dir sur le poste de dev (/home/guilhem/.cache/…) :
+      # la CI compile dans son propre dossier (la variable prime sur le fichier de configuration).
+      - name: Dossier de compilation de la CI
+        run: echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
+
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/ludo-ui/src-tauri -> target
+          workspaces: ". -> target"
 
       - name: Dépendances de l'interface
         working-directory: apps/ludo-ui
