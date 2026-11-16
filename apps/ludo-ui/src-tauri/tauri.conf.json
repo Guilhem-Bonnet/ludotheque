@@ -40,6 +40,15 @@
       "appimage": {
         "bundleMediaFramework": true
       }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERBQTc4ODdDMTJEQUY4RDEKUldUUitOb1NmSWluMnBxbExWamJ1RVdjZzUrMEZTckplRnJoRG42d2ZTYnhycmVsTkhOTlAwYzkK",
+      "endpoints": [
+        "https://github.com/Guilhem-Bonnet/ludotheque/releases/latest/download/latest.json"
+      ]
     }
   }
 }

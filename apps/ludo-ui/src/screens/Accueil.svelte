@@ -18,6 +18,7 @@
   import { router } from '../lib/router.svelte';
   import type { DeviceInfo, Game } from '../lib/types';
   import { play } from '../lib/play';
+  import { appUpdate } from '../lib/appUpdate.svelte';
 
   let { device }: { device: DeviceInfo } = $props();
 
@@ -219,7 +220,7 @@
       <span class="round"><Icon name="grid" size={26} /></span>Bibliothèque
     </button>
     <button class="shortcut focusable" onclick={() => router.go({ name: 'mises-a-jour' })}>
-      <span class="round"><Icon name="update" size={26} />{#if updatesCount}<span class="count">{updatesCount}</span>{/if}</span>Mises à jour
+      <span class="round"><Icon name="update" size={26} />{#if updatesCount + (appUpdate.status === 'available' ? 1 : 0)}<span class="count">{updatesCount + (appUpdate.status === 'available' ? 1 : 0)}</span>{/if}</span>Mises à jour
     </button>
     <button class="shortcut focusable" onclick={() => router.go({ name: 'qui-joue' })}>
       <span class="round"><Icon name="people" size={26} /></span>Profils

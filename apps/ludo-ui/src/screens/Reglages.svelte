@@ -7,6 +7,7 @@
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { play as playSound, setVolume } from '../lib/sound';
+  import { appUpdate, checkAppUpdate, installAppUpdate } from '../lib/appUpdate.svelte';
   import type { DeviceInfo, Emulator } from '../lib/types';
 
   // Réglages de l'appareil (ceux du profil sont dans l'écran Profil) : son, serveur, synchronisation,
@@ -148,6 +149,16 @@
     <section>
       <h2>À propos</h2>
       <div class="row static"><Icon name="grid" size={22} />Ludothèque<span class="value">{device.version ?? '0.1.0'}{isDemo ? ' · démo' : ''}</span></div>
+      {#if appUpdate.status === 'available'}
+        <button class="row focusable" data-sound="none" onclick={() => void installAppUpdate()}>
+          <Icon name="update" size={22} />Mettre à jour vers {appUpdate.version}<span class="value good">Disponible</span>
+        </button>
+      {:else}
+        <button class="row focusable" data-sound="none" onclick={() => void checkAppUpdate()} aria-busy={appUpdate.status === 'checking'} disabled={appUpdate.status === 'downloading' || appUpdate.status === 'restarting'}>
+          <Icon name="update" size={22} />Rechercher une mise à jour
+          <span class="value">{appUpdate.status === 'checking' ? 'Recherche…' : appUpdate.status === 'none' ? 'À jour' : appUpdate.status === 'downloading' ? `Téléchargement… ${appUpdate.percent ?? ''}${appUpdate.percent === null ? '' : ' %'}` : appUpdate.status === 'restarting' ? 'Redémarrage…' : appUpdate.status === 'error' ? 'Vérification impossible' : ''}</span>
+        </button>
+      {/if}
     </section>
   </main>
   <ButtonHints hints={[{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Retour' }]} note={volFocused ? 'Gauche / droite : régler le volume' : undefined} />

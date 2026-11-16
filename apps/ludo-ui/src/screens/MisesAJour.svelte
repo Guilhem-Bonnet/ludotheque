@@ -8,6 +8,8 @@
   import { focusFirst } from '../lib/nav';
   import StateNotice from '../lib/components/StateNotice.svelte';
   import type { UpdateItem } from '../lib/types';
+  import { appUpdate, installAppUpdate } from '../lib/appUpdate.svelte';
+  const appCard = $derived(['available', 'downloading', 'restarting', 'error'].includes(appUpdate.status) && !!appUpdate.version);
 
   let items = $state<UpdateItem[]>([]);
   // Avancement par élément : undefined = pas commencé, 0-100 = en cours, 'fait', ou message d'échec.
@@ -68,8 +70,33 @@
   <main>
     {#if loadError}
       <StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={load} />
-    {:else if loaded && items.length === 0}
+    {:else if loaded && items.length === 0 && !appCard}
       <StateNotice icon="check-circle" title="Tout est à jour" detail="Aucune mise à jour ni DLC à installer pour les jeux de cet appareil." autofocus={false} />
+    {/if}
+    {#if appCard}
+      <!-- Mise à jour de l'app elle-même : bouton, puis barre de progression, puis redémarrage. -->
+      <section>
+        <h2>Ludothèque</h2>
+        <div class="item app" class:busy={appUpdate.status === 'downloading' || appUpdate.status === 'restarting'}>
+          <span class="thumb" style:background="linear-gradient(160deg, #4cc3ff, #1c3546)"><Icon name="update" size={26} color="#fff" /></span>
+          <span class="text">
+            <span class="title">Ludothèque {appUpdate.version}</span>
+            <span class="detail">{appUpdate.status === 'restarting' ? 'Redémarrage…' : appUpdate.status === 'error' ? appUpdate.error : appUpdate.notes || 'Nouvelle version de l\'application'}</span>
+            {#if appUpdate.status === 'downloading'}
+              <span class="bar" role="progressbar" aria-label="Téléchargement de la mise à jour" aria-valuemin="0" aria-valuemax="100" aria-valuenow={appUpdate.percent ?? undefined}>
+                <span class:indet={appUpdate.percent === null} style:width="{appUpdate.percent ?? 30}%"></span>
+              </span>
+            {/if}
+          </span>
+          {#if appUpdate.status === 'downloading'}
+            <span class="pct">{appUpdate.percent === null ? 'Téléchargement…' : `${appUpdate.percent} %`}</span>
+          {:else if appUpdate.status === 'restarting'}
+            <span class="pct">Redémarrage…</span>
+          {:else}
+            <button class="act focusable" data-autofocus onclick={() => { feedback('ok'); void installAppUpdate(); }}>{appUpdate.status === 'error' ? 'Réessayer' : 'Mettre à jour'}</button>
+          {/if}
+        </div>
+      </section>
     {/if}
     {#each GROUPS as grp (grp.id)}
       {@const list = items.filter((i) => i.group === grp.id)}
@@ -122,4 +149,10 @@
   .mini span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 120ms linear; }
   .empty { color: var(--ink-3); font-size: 17px; }
   .fail { font-size: 13px; color: #ff9b9b; }
+  .item.app { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+  .bar { display: block; margin-top: 8px; height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
+  .bar span { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 160ms linear; }
+  .bar span.indet { animation: indet 1.2s ease-in-out infinite; }
+  @keyframes indet { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  .pct { min-width: 120px; text-align: right; font-size: 15px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 </style>

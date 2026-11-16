@@ -1,0 +1,73 @@
+// Mise à jour de l'app elle-même (pas des jeux) : releases signées publiées par la CI sur GitHub
+// (`latest.json`), vérifiées avec la clé publique de tauri.conf.json avant toute installation.
+// Vérification au démarrage et sur demande (Réglages) ; l'installation remplace l'AppImage puis relance.
+import { check, type Update } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
+import { isDemo } from './api';
+
+export type AppUpdateStatus = 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'restarting' | 'error';
+
+export const appUpdate = $state<{
+  status: AppUpdateStatus;
+  /** Version proposée (`0.5.0`). */
+  version: string;
+  notes: string;
+  /** Avancement du téléchargement, 0-100 ; `null` si la taille n'est pas connue. */
+  percent: number | null;
+  error: string;
+  checkedAt: Date | null;
+}>({ status: 'idle', version: '', notes: '', percent: null, error: '', checkedAt: null });
+
+let pending: Update | null = null;
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Cherche une version plus récente. Sans effet hors de l'app (démo dans un navigateur). */
+export async function checkAppUpdate(): Promise<void> {
+  if (isDemo || appUpdate.status === 'checking' || appUpdate.status === 'downloading' || appUpdate.status === 'restarting') return;
+  appUpdate.status = 'checking';
+  appUpdate.error = '';
+  try {
+    pending = await check();
+    appUpdate.checkedAt = new Date();
+    if (pending) {
+      appUpdate.version = pending.version;
+      appUpdate.notes = pending.body ?? '';
+      appUpdate.status = 'available';
+    } else {
+      appUpdate.status = 'none';
+    }
+  } catch (e) {
+    appUpdate.checkedAt = new Date();
+    appUpdate.error = message(e);
+    appUpdate.status = 'error';
+  }
+}
+
+/** Télécharge (signature vérifiée), installe, puis relance l'app. */
+export async function installAppUpdate(): Promise<void> {
+  if (!pending || appUpdate.status === 'downloading' || appUpdate.status === 'restarting') return;
+  appUpdate.status = 'downloading';
+  appUpdate.percent = 0;
+  appUpdate.error = '';
+  let total = 0;
+  let done = 0;
+  try {
+    await pending.downloadAndInstall((ev) => {
+      if (ev.event === 'Started') {
+        total = ev.data.contentLength ?? 0;
+        appUpdate.percent = total ? 0 : null;
+      } else if (ev.event === 'Progress') {
+        done += ev.data.chunkLength;
+        appUpdate.percent = total ? Math.min(100, Math.round((done / total) * 100)) : null;
+      } else if (ev.event === 'Finished') {
+        appUpdate.percent = 100;
+      }
+    });
+    appUpdate.status = 'restarting';
+    await relaunch();
+  } catch (e) {
+    appUpdate.error = message(e);
+    appUpdate.status = 'error';
+  }
+}

@@ -1,0 +1,79 @@
+name: Release de l'app Ludothèque
+
+# Tag app-vX.Y.Z -> AppImage signée (son embarqué) + latest.json publiés dans une release GitHub.
+# L'app installée lit https://github.com/Guilhem-Bonnet/ludotheque/releases/latest/download/latest.json,
+# vérifie la signature avec la clé publique de tauri.conf.json, puis propose « Mettre à jour ».
+# Indépendant de l'image serveur (tags vX.Y.Z, workflow image.yml).
+on:
+  push:
+    tags: ["app-v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  appimage:
+    # 22.04 : glibc assez ancienne pour tourner sur Fedora récent comme sur SteamOS.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version depuis le tag
+        id: version
+        run: |
+          v="${GITHUB_REF_NAME#app-v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          # La version affichée par l'app (Réglages) et celle comparée par la mise à jour viennent du tag.
+          jq --arg v "$v" '.version = $v' apps/ludo-ui/src-tauri/tauri.conf.json > /tmp/conf.json
+          mv /tmp/conf.json apps/ludo-ui/src-tauri/tauri.conf.json
+          sed -i "0,/^version = \".*\"/s//version = \"$v\"/" apps/ludo-ui/src-tauri/Cargo.toml
+          grep -m1 '^version' apps/ludo-ui/src-tauri/Cargo.toml
+
+      - name: Dépendances système (WebKitGTK, GStreamer pour le son embarqué)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/ludo-ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/ludo-ui/src-tauri -> target
+
+      - name: Dépendances de l'interface
+        working-directory: apps/ludo-ui
+        run: npm ci
+
+      - name: Construction, signature et publication
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          NO_STRIP: "true"
+          GSTREAMER_PLUGINS_DIR: /usr/lib/x86_64-linux-gnu/gstreamer-1.0
+          GSTREAMER_HELPERS_DIR: /usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0
+        with:
+          projectPath: apps/ludo-ui
+          args: --bundles appimage
+          tagName: ${{ github.ref_name }}
+          releaseName: Ludothèque ${{ steps.version.outputs.version }}
+          releaseBody: Mise à jour de l'application Ludothèque (PC, Steam Deck). Installée depuis l'écran Mises à jour.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

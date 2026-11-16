@@ -20,6 +20,8 @@ ludo-client = { path = "../../../crates/ludo-client" }
 ludo-proto = { path = "../../../crates/ludo-proto" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 gilrs = "0.11"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [features]
 # Interface intégrée au binaire (sans elle, Tauri charge le serveur de développement localhost:5173).
