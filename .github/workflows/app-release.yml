@@ -39,9 +39,10 @@ jobs:
       - name: Dépendances système (WebKitGTK, GStreamer pour le son embarqué)
         run: |
           sudo apt-get update
+          # Plugins GStreamer seulement (embarqués dans l'AppImage) : les paquets -dev de GStreamer
+          # tirent libunwind-dev, en conflit avec libunwind-14 préinstallé sur ubuntu-22.04.
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav file
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav file
 
       - uses: actions/setup-node@v4
         with:
