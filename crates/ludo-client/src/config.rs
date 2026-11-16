@@ -66,10 +66,21 @@ pub struct Config {
     /// ses jeux comptent comme installés (reconnus par leur nom de fichier), sans copie.
     #[serde(default)]
     pub dossiers: BTreeMap<String, Vec<String>>,
+    /// Appareil Android synchronisé par le PC via adb (`[adb] series = ["31bc567e", "192.168.2.50:5555"]`).
+    pub adb: Option<AdbConf>,
     /// Emplacement imposé d'un émulateur sur cet appareil (`[emulateurs.ryujinx] bin = … data = …`) :
     /// prime sur la détection.
     #[serde(default)]
     pub emulateurs: BTreeMap<String, DeviceSettings>,
+}
+
+/// Appareil synchronisé via adb : séries USB et adresses `ip:port` (débogage sans fil), essayées
+/// dans l'ordre ; `roms` = dossier des ROM sur l'appareil (jeux présents = jeux à synchroniser).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AdbConf {
+    pub series: Vec<String>,
+    #[serde(default)]
+    pub roms: Option<String>,
 }
 
 /// Émulateur par défaut de chaque console (décision du 14/11 : Ryujinx pour la Switch).
@@ -231,6 +242,8 @@ pub struct Prepared {
     pub layout: Box<dyn SaveLayout>,
     pub vars: BTreeMap<&'static str, String>,
     pub fiche: Fiche,
+    /// Dossiers lus et écrits par l'adaptateur (sert à les recopier depuis un appareil distant).
+    pub dirs: Vec<PathBuf>,
 }
 
 fn need<T: Clone>(v: &Option<T>, profile: &str, field: &'static str) -> Result<T, ConfigError> {
@@ -255,9 +268,11 @@ pub fn prepare(cfg: &Config, emulator: &str, profile: &str, title_id: &str) -> R
     vars.insert("title_id", format!("{tid:016x}"));
     vars.insert("title_id_maj", format!("{tid:016X}"));
 
+    let mut dirs: Vec<PathBuf> = Vec::new();
     let layout: Box<dyn SaveLayout> = if fiche.id == "ryujinx" {
         let uid = need(&ids.ryujinx_user_id, profile, "ryujinx_user_id")?;
         vars.insert("profil_nom", need(&ids.ryujinx_nom, profile, "ryujinx_nom")?);
+        dirs.push(data.join("bis/user/save"));
         Box::new(RyujinxLayout { save_root: data.join("bis/user/save"), title_id: tid, user_id: uid, exclude: fiche.exclusions.clone() })
     } else {
         if fiche.profils == ProfileMode::Natifs {
@@ -273,9 +288,11 @@ pub fn prepare(cfg: &Config, emulator: &str, profile: &str, title_id: &str) -> R
         } else {
             None
         };
+        dirs.push(account.clone());
+        dirs.extend(device.clone());
         Box::new(DirLayout { account, device, exclude: fiche.exclusions.clone() })
     };
-    Ok(Prepared { layout, vars, fiche })
+    Ok(Prepared { layout, vars, fiche, dirs })
 }
 
 /// Ligne de commande de lancement, découpée en arguments.

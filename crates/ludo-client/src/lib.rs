@@ -1,6 +1,7 @@
 //! Client de la ludothèque : moteur de synchronisation, adaptateurs de rangement par
 //! émulateur, configuration d'appareil. Le binaire `ludo` (main.rs) s'appuie dessus.
 
+pub mod adb;
 pub mod api;
 pub mod config;
 pub mod detect;

@@ -78,6 +78,19 @@ enum Cmd {
     Statut,
     /// Émulateurs connus et ce qui en est trouvé sur cet appareil (lecture seule, sans cache).
     Emulateurs,
+    /// Synchronise, depuis ce PC, les sauvegardes d'un appareil Android branché en adb (USB ou Wi-Fi),
+    /// décrit par une configuration dédiée (`--config ~/.config/ludo/thor.toml`, section `[adb]`).
+    AdbSync {
+        /// Profil (absent = profil par défaut de la configuration de l'appareil).
+        #[arg(long)]
+        profil: Option<String>,
+        /// Un seul jeu (identifiant ludothèque).
+        #[arg(long)]
+        jeu: Option<String>,
+        /// Choix en cas de conflit de sauvegarde (sinon le conflit est signalé, rien n'est écrit).
+        #[arg(long, value_enum)]
+        resoudre: Option<Choix>,
+    },
     /// Jeux du catalogue et leurs fichiers trouvés sur cet appareil (dossier de la Ludothèque ou
     /// collection existante). Lecture seule.
     Jeux,
@@ -204,6 +217,108 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool, via: Op
     Ok(exit_for(&after).unwrap_or(ExitCode::SUCCESS))
 }
 
+/// Synchronisation d'un appareil Android par adb, jeu par jeu (voir `ludo_client::adb`).
+fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: Option<Choix>) -> Result<ExitCode, String> {
+    use ludo_client::adb::{self, Adb};
+    let conf = ctx.cfg.adb.as_ref().ok_or("section [adb] absente de la configuration")?;
+    let Some(dev) = Adb::find(&conf.series) else {
+        println!("{} non connecté (adb) : rien à faire", ctx.cfg.appareil);
+        return Ok(ExitCode::SUCCESS);
+    };
+    let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
+    let games = ctx.client.games().map_err(|e| e.to_string())?;
+    // ROM présentes sur l'appareil (par nom, formats équivalents) : jeux à suivre même sans sauvegarde.
+    let roms: std::collections::BTreeSet<(String, String)> = conf
+        .roms
+        .as_deref()
+        .map(|r| ["switch", "switch2", "n3ds", "3ds", "nds", "ds"].iter().flat_map(|c| dev.list(&format!("{r}/{c}"))).map(|n| ludo_client::local::match_key(&n)).collect())
+        .unwrap_or_default();
+    let journal_path = config::journal_path().with_file_name(format!("journal-{}.json", ctx.cfg.appareil));
+    let mut journal = Journal::open(&journal_path).map_err(|e| e.to_string())?;
+    let stamp = chrono_stamp();
+    let mut code = ExitCode::SUCCESS;
+    for g in games.iter().filter(|g| only.as_deref().is_none_or(|j| j == g.id)) {
+        let Some(gc) = ctx.cfg.game_conf(&g.id, &profile, Some(g)) else { continue };
+        let Some(package) = adb::package_of(&ctx.cfg, &gc.emulateur) else { continue };
+        let mirror = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let (prepared, pairs) = match adb::prepare_mirrored(&ctx.cfg, &gc, &profile, mirror.path()) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("{}\t{e}", g.id);
+                continue;
+            }
+        };
+        let present_remote: Vec<bool> = pairs.iter().map(|(_, r)| dev.is_dir(r)).collect();
+        let has_rom = g.files.iter().any(|f| roms.contains(&ludo_client::local::match_key(&f.path)));
+        let key = SaveKey { profile: profile.clone(), game: g.id.clone() };
+        let on_server = ctx.client.head(&key).ok().flatten().is_some();
+        // À suivre : sauvegarde déjà sur l'appareil, ROM présente, ou jeu demandé explicitement.
+        let wanted = present_remote.iter().any(|p| *p) || has_rom || (on_server && only.is_some());
+        if !wanted {
+            continue;
+        }
+        if dev.running(&package) {
+            println!("{}\tÉmulateur en cours sur l'appareil : ignoré", g.id);
+            continue;
+        }
+        let device = ctx.cfg.appareil.clone();
+        match ctx.client.acquire_lease(&key, &device, false) {
+            Ok(LeaseOutcome::HeldElsewhere { lease }) => {
+                println!("{}\tEn cours sur {}", g.id, launch::holder_device(&lease.device));
+                continue;
+            }
+            Ok(LeaseOutcome::Granted { .. }) => {}
+            Err(e) => return Err(format!("serveur injoignable : {e}")),
+        }
+        let result = (|| -> Result<SyncOutcome, String> {
+            for ((local, remote), present) in pairs.iter().zip(&present_remote) {
+                if *present {
+                    dev.pull_dir(remote, local).map_err(|e| e.to_string())?;
+                }
+            }
+            let playtime_s = launch::head_playtime(&ctx.client, &key).unwrap_or(0);
+            let mut engine = Engine { client: &ctx.client, journal: &mut journal, device: device.clone(), emulator: gc.emulateur.clone(), playtime_s };
+            let mut out = engine.sync(&key, prepared.layout.as_ref()).map_err(|e| e.to_string())?;
+            if let (SyncOutcome::Conflict { .. }, Some(choice)) = (&out, resoudre) {
+                let r = match choice {
+                    Choix::Local => Resolution::KeepLocal,
+                    Choix::Serveur => Resolution::KeepServer,
+                };
+                out = engine.resolve(&key, prepared.layout.as_ref(), r).map_err(|e| e.to_string())?;
+            }
+            // Sauvegarde du serveur installée dans le miroir : la reposer sur l'appareil.
+            if matches!(out, SyncOutcome::Downloaded { .. }) {
+                for (local, remote) in &pairs {
+                    if local.is_dir() {
+                        dev.push_replace(local, remote, &stamp).map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+            Ok(out)
+        })();
+        let _ = ctx.client.release_lease(&key, &device);
+        match result {
+            Ok(o) => {
+                println!("{}\t{}", g.id, label(&o));
+                if exit_for(&o).is_some() {
+                    code = ExitCode::from(2);
+                }
+            }
+            Err(e) => {
+                println!("{}\tÉchec : {e}", g.id);
+                code = ExitCode::from(1);
+            }
+        }
+    }
+    Ok(code)
+}
+
+/// Horodatage pour nommer les dossiers mis de côté (`.ludo-old-20261116-0712`).
+fn chrono_stamp() -> String {
+    let out = std::process::Command::new("date").arg("+%Y%m%d-%H%M%S").output();
+    out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "ancien".into())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let path = cli.config.unwrap_or_else(Config::default_path);
@@ -220,6 +335,7 @@ fn main() -> ExitCode {
                 Ok(exit_for(&o).unwrap_or(ExitCode::SUCCESS))
             }
             Cmd::Run { jeu, rom, jouer_ici, via, lanceur } => run(&mut ctx, &jeu, &rom, jouer_ici, via.as_deref(), lanceur.as_deref()),
+            Cmd::AdbSync { profil, jeu, resoudre } => adb_sync(&ctx, profil, jeu, resoudre),
             Cmd::Jeux => {
                 let local = ludo_client::local::LocalIndex::scan(&ctx.cfg, &ludo_client::detect::Host::current());
                 for (c, d) in &local.roots {
