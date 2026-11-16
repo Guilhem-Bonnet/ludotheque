@@ -71,3 +71,14 @@ export async function installAppUpdate(): Promise<void> {
     appUpdate.status = 'error';
   }
 }
+
+/** Vérifications régulières (toutes les 30 min) : une app laissée ouverte voit les nouvelles versions
+ *  sans être relancée. Une vérification en cours ou une mise à jour déjà trouvée n'est pas refaite. */
+let timer: ReturnType<typeof setInterval> | undefined;
+export function startAppUpdateChecks(everyMs = 30 * 60 * 1000): void {
+  void checkAppUpdate();
+  if (timer) return;
+  timer = setInterval(() => {
+    if (appUpdate.status === 'idle' || appUpdate.status === 'none' || appUpdate.status === 'error') void checkAppUpdate();
+  }, everyMs);
+}

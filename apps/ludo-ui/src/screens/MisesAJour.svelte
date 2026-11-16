@@ -9,7 +9,7 @@
   import { focusFirst } from '../lib/nav';
   import StateNotice from '../lib/components/StateNotice.svelte';
   import type { UpdateItem } from '../lib/types';
-  import { appUpdate, installAppUpdate } from '../lib/appUpdate.svelte';
+  import { appUpdate, checkAppUpdate, installAppUpdate } from '../lib/appUpdate.svelte';
   const appCard = $derived(['available', 'downloading', 'restarting', 'error'].includes(appUpdate.status) && !!appUpdate.version);
 
   let items = $state<UpdateItem[]>([]);
@@ -53,7 +53,11 @@
   function runAll() {
     items.forEach((it, k) => setTimeout(() => run(it), k * 300));
   }
-  onMount(load);
+  onMount(() => {
+    load();
+    // Ouvrir l'écran relance la recherche d'une nouvelle version de l'app (sauf si déjà trouvée).
+    if (appUpdate.status !== 'available' && appUpdate.status !== 'downloading' && appUpdate.status !== 'restarting') void checkAppUpdate();
+  });
 
   const GROUPS: { id: UpdateItem['group']; label: string }[] = [
     { id: 'jeux', label: 'Jeux' },
