@@ -1184,6 +1184,10 @@ pub const EVENT_FERMETURE: &str = "ludo://fermeture-refusee";
 pub fn run() {
     rumble::init();
     tauri::Builder::default()
+        // Mise à jour de l'app : releases signées publiées par la CI (clé publique dans tauri.conf.json),
+        // puis relance après installation.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // Partie en cours : la fenêtre ne se ferme pas (l'émulateur serait orphelin et la
         // sauvegarde jamais envoyée) ; l'interface affiche « Partie en cours : fermer le jeu d'abord ».
         .on_window_event(|window, event| {

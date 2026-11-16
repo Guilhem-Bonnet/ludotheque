@@ -4,6 +4,7 @@
   import { focusFirst, installNav } from './lib/nav';
   import { reducedMotion } from './lib/motion';
   import { router } from './lib/router.svelte';
+  import { checkAppUpdate } from './lib/appUpdate.svelte';
   import StateNotice from './lib/components/StateNotice.svelte';
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
@@ -69,6 +70,8 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
   }
 
   onMount(() => {
+    // Mise à jour de l'app : vérifiée une fois au démarrage (sans bloquer ; échec silencieux ici).
+    void checkAppUpdate();
     installNav();
     rescale();
     window.addEventListener('resize', rescale);
