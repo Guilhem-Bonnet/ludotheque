@@ -66,6 +66,10 @@ pub struct Config {
     /// ses jeux comptent comme installés (reconnus par leur nom de fichier), sans copie.
     #[serde(default)]
     pub dossiers: BTreeMap<String, Vec<String>>,
+    /// Lire la collection existante (`dossiers`, dossiers de jeux des émulateurs, EmuDeck) ;
+    /// `false` : seul le dossier de la Ludothèque compte.
+    #[serde(default = "oui")]
+    pub collection: bool,
     /// Appareil Android synchronisé par le PC via adb (`[adb] series = ["31bc567e", "192.168.2.50:5555"]`).
     pub adb: Option<AdbConf>,
     /// Emplacement imposé d'un émulateur sur cet appareil (`[emulateurs.ryujinx] bin = … data = …`) :
@@ -81,6 +85,10 @@ pub struct AdbConf {
     pub series: Vec<String>,
     #[serde(default)]
     pub roms: Option<String>,
+}
+
+fn oui() -> bool {
+    true
 }
 
 /// Émulateur par défaut de chaque console (décision du 14/11 : Ryujinx pour la Switch).

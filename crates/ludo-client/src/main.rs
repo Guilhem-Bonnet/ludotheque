@@ -228,6 +228,16 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
     let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
     let games = ctx.client.games().map_err(|e| e.to_string())?;
     // ROM présentes sur l'appareil (par nom, formats équivalents) : jeux à suivre même sans sauvegarde.
+    let rom_names: Vec<String> = conf
+        .roms
+        .as_deref()
+        .map(|r| ["switch", "switch2", "n3ds", "3ds", "nds", "ds"].iter().flat_map(|c| dev.list(&format!("{r}/{c}"))).collect())
+        .unwrap_or_default();
+    let rom_titles: std::collections::BTreeSet<(String, String)> = rom_names.iter().filter_map(|n| ludo_client::local::title_key(n)).collect();
+    // Présence d'un fichier du catalogue parmi les ROM de l'appareil : par nom, sinon par identité Switch.
+    let rom_has = |path: &str, names: &std::collections::BTreeSet<(String, String)>| {
+        names.contains(&ludo_client::local::match_key(path)) || ludo_client::local::title_key(path).is_some_and(|t| rom_titles.contains(&t))
+    };
     let roms: std::collections::BTreeSet<(String, String)> = conf
         .roms
         .as_deref()
@@ -239,7 +249,7 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
     let mut inventory: std::collections::BTreeMap<String, ludo_proto::DeviceGame> = games
         .iter()
         .map(|g| {
-            let installed = g.files.iter().any(|f| roms.contains(&ludo_client::local::match_key(&f.path)));
+            let installed = g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms));
             let stream = g.files.iter().any(|f| streamable.contains(&ludo_client::local::match_key(&f.path)));
             (g.id.clone(), ludo_proto::DeviceGame { game: g.id.clone(), installed, stream, save: false })
         })
@@ -263,7 +273,7 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         if let Some(e) = inventory.get_mut(&g.id) {
             e.save = present_remote.iter().any(|p| *p);
         }
-        let has_rom = g.files.iter().any(|f| roms.contains(&ludo_client::local::match_key(&f.path)));
+        let has_rom = g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms));
         let key = SaveKey { profile: profile.clone(), game: g.id.clone() };
         let on_server = ctx.client.head(&key).ok().flatten().is_some();
         // À suivre : sauvegarde déjà sur l'appareil, ROM présente, ou jeu demandé explicitement.

@@ -33,10 +33,31 @@ pub fn match_key(name: &str) -> (String, String) {
     (stem.to_lowercase(), ext)
 }
 
+/// Identité Switch d'un nom de fichier : `[<titre 16 hex>]` et `[v<version>]` (absente = v0).
+/// Deux copies du même jeu portent souvent des noms différents (« (nsw2u.xyz) », « [v0] » omis) ;
+/// l'identifiant de titre et la version, eux, ne changent pas. Une mise à jour d'une autre
+/// version n'est donc jamais confondue.
+pub fn title_key(name: &str) -> Option<(String, String)> {
+    let base = name.trim_end_matches('/').rsplit('/').next().unwrap_or(name);
+    let mut tid = None;
+    let mut version = None;
+    for part in base.split('[').skip(1) {
+        let inner = part.split(']').next().unwrap_or("");
+        if tid.is_none() && inner.len() == 16 && inner.chars().all(|c| c.is_ascii_hexdigit()) {
+            tid = Some(inner.to_ascii_uppercase());
+        } else if version.is_none() && inner.len() > 1 && inner.starts_with(['v', 'V']) && inner[1..].chars().all(|c| c.is_ascii_digit()) {
+            version = Some(inner[1..].trim_start_matches('0').to_string());
+        }
+    }
+    Some((tid?, version.filter(|v| !v.is_empty()).unwrap_or_else(|| "0".into())))
+}
+
 /// Index des fichiers de jeu présents sur l'appareil, par console.
 #[derive(Debug, Default, Clone)]
 pub struct LocalIndex {
     by_console: BTreeMap<String, BTreeMap<(String, String), PathBuf>>,
+    /// Même index par identité Switch (titre + version), pour les noms de fichier différents.
+    by_title: BTreeMap<String, BTreeMap<(String, String), PathBuf>>,
     /// Dossiers parcourus (affichés dans les Réglages, pour comprendre ce qui est vu).
     pub roots: Vec<(String, PathBuf)>,
 }
@@ -45,6 +66,9 @@ impl LocalIndex {
     /// Parcourt les dossiers connus pour cet appareil.
     pub fn scan(cfg: &Config, host: &Host) -> Self {
         let mut idx = LocalIndex::default();
+        if !cfg.collection {
+            return idx;
+        }
         for (console, dir) in roots(cfg, host) {
             idx.add_root(&console, &dir);
         }
@@ -59,11 +83,20 @@ impl LocalIndex {
         self.roots.push((console.to_string(), dir.to_path_buf()));
         let files = self.by_console.entry(console.to_string()).or_default();
         walk(dir, 0, files);
+        let titles = self.by_title.entry(console.to_string()).or_default();
+        for (key, path) in files.iter() {
+            if let Some(t) = title_key(&format!("{}.{}", key.0, key.1)) {
+                titles.entry(t).or_insert_with(|| path.clone());
+            }
+        }
     }
 
     /// Fichier local correspondant à un chemin du catalogue (`switch/MAJ-DLC/x [id][v1].nsz`).
     pub fn find(&self, console: &str, catalog_rel: &str) -> Option<&PathBuf> {
-        self.by_console.get(console)?.get(&match_key(catalog_rel))
+        self.by_console
+            .get(console)?
+            .get(&match_key(catalog_rel))
+            .or_else(|| self.by_title.get(console)?.get(&title_key(catalog_rel)?))
     }
 
     /// Fichier du catalogue présent sur l'appareil : dans le dossier de la Ludothèque (`roms`), tel
@@ -201,6 +234,21 @@ mod tests {
         assert_eq!(idx.locate(Some(&roms), "switch/B [0100000000000002][v0].xcz"), Some(coll.join("B [0100000000000002][v0].xci")));
         assert_eq!(idx.locate(None, "switch/B [0100000000000002][v0].xcz"), Some(coll.join("B [0100000000000002][v0].xci")));
         assert_eq!(idx.locate(Some(&roms), "switch/C [0100000000000003][v0].nsz"), None);
+    }
+
+    #[test]
+    fn identite_switch_titre_et_version() {
+        assert_eq!(title_key("switch/Pokemon Brilliant Diamond [0100000011D90000][v0].nsz"), Some(("0100000011D90000".into(), "0".into())));
+        assert_eq!(title_key("Pokemon Brilliant Diamond [0100000011D90000][v0](nsw2u.xyz).xci"), title_key("x/Pokemon BD [0100000011d90000].nsz"));
+        assert_eq!(title_key("MAJ [0100F2C0115B6800][v131072] (MAJ 1.1.0).nsz").unwrap().1, "131072");
+        assert_ne!(title_key("MAJ [0100F2C0115B6800][v131072].nsp"), title_key("MAJ [0100F2C0115B6800][v65536].nsp"), "autre version de mise à jour");
+        assert_eq!(title_key("3ds/Jeu (Europe).cxi"), None);
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("Pokemon Lets Go Pikachu [010003F003A34000].xci"), b"x").unwrap();
+        let mut idx = LocalIndex::default();
+        idx.add_root("switch", t.path());
+        assert!(idx.find("switch", "switch/Pokemon Let's Go Pikachu [010003F003A34000][v0].nsz").is_some());
+        assert!(idx.find("switch", "switch/MAJ-DLC/Pokemon Let's Go Pikachu [010003F003A34800][v65536].nsz").is_none());
     }
 
     #[test]
