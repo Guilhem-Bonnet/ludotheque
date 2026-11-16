@@ -151,10 +151,11 @@
 </script>
 
 <div class="screen">
-  <Ambiance art={game.art} x={14} />
+  <Ambiance art={game.art} cover={game.cover} x={14} dim />
   <main>
     <aside>
       <div class="art"><Tile {game} size={320} big still hero={router.heroGame === game.id} /></div>
+      <h2 class="gname">{game.title}</h2>
       <div class="actions">
         <button class="primary focusable" class:busy={installing !== null} data-autofocus aria-busy={installing !== null} onclick={primary}>
           {#if installing !== null}<span class="fill" class:waiting={preparing !== null} style:width="{preparing ? 100 : installing * 100}%"></span>{/if}
@@ -175,13 +176,13 @@
       </dl>
     </aside>
 
-    <section aria-labelledby="hist">
+    <section class="panel" aria-labelledby="hist">
       {#if content.length > 0}
         <div class="tabs" role="tablist">
-          <span class="bumper" aria-hidden="true">L1</span>
+          <button class="bumper" tabindex="-1" aria-label="Onglet précédent" onclick={() => showTab('saves')}>L1</button>
           <button class="tab" role="tab" aria-selected={tab === 'saves'} class:on={tab === 'saves'} onclick={() => showTab('saves')}>Sauvegardes</button>
           <button class="tab" role="tab" aria-selected={tab === 'content'} class:on={tab === 'content'} onclick={() => showTab('content')}>Contenu additionnel<span class="count">{content.length}</span></button>
-          <span class="bumper" aria-hidden="true">R1</span>
+          <button class="bumper" tabindex="-1" aria-label="Onglet suivant" onclick={() => showTab('content')}>R1</button>
         </div>
       {/if}
       {#if tab === 'content'}
@@ -244,6 +245,10 @@
 <style>
   .screen { height: 100%; display: flex; flex-direction: column; position: relative; isolation: isolate; }
   main { flex-grow: 1; display: flex; gap: 56px; padding: 44px 56px 0; min-height: 0; }
+  /* Panneau sombre translucide : le texte reste lisible sur n'importe quel fond (image floutée claire comprise). */
+  .panel { align-self: flex-start; max-height: calc(100% - 24px); box-sizing: border-box; padding: 22px 24px; border-radius: 20px;
+    background: rgba(10, 12, 16, 0.62); backdrop-filter: blur(18px) saturate(1.2); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06), 0 18px 40px rgba(0, 0, 0, 0.3); }
+  .gname { margin: -6px 0 0; font-size: 22px; font-weight: 600; line-height: 1.2; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5); }
   aside { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 22px; }
   .art { pointer-events: none; }
   .actions { display: flex; gap: 12px; }
@@ -260,17 +265,18 @@
   .secondary.armed { background: rgba(255, 90, 90, 0.16); color: #ff9b9b; }
   .secondary:disabled { cursor: default; opacity: 0.8; }
   .error { margin: 0; font-size: 14px; color: #ff9b9b; }
-  dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 18px; font-size: 15px; }
-  dt { color: var(--ink-4); }
+  dl { padding: 14px 16px; border-radius: 14px; background: rgba(10, 12, 16, 0.5); backdrop-filter: blur(12px);
+    margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 10px 18px; font-size: 15px; }
+  dt { color: var(--ink-3); }
   dd { margin: 0; }
   section { flex-grow: 1; display: flex; flex-direction: column; gap: 18px; min-width: 0; overflow-y: auto; }
   .head { display: flex; align-items: baseline; justify-content: space-between; }
   h1 { margin: 0; font-size: 28px; font-weight: 600; }
   .state { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); }
   ul { list-style: none; margin: 0; padding: 4px; display: flex; flex-direction: column; gap: 8px; }
-  .row { all: unset; cursor: pointer; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: 12px; background: var(--surface); font-size: 16px; }
+  .row { all: unset; cursor: pointer; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); font-size: 16px; }
   .row:disabled { cursor: default; }
-  .row:focus { background: var(--raised); }
+  .row:focus, .row:hover:not(:disabled) { background: rgba(255, 255, 255, 0.13); }
   .dev { width: 140px; }
   .when { width: 200px; color: var(--ink-2); }
   .time { color: var(--ink-2); }
@@ -279,15 +285,17 @@
   .tag.discarded { background: #33284a; color: #d9b8ff; }
   .restore { margin-left: auto; font-size: 15px; font-weight: 600; padding: 8px 16px; border-radius: var(--radius-control); background: var(--control); color: var(--ink); }
   .row:focus .restore { background: var(--accent); color: var(--ground); }
-  .policy, .empty { font-size: 14px; color: var(--ink-4); }
+  .policy, .empty { font-size: 14px; color: var(--ink-2); }
   .tabs { display: flex; align-items: center; gap: 6px; }
-  .bumper { font-size: 12px; font-weight: 700; color: var(--ink-4); border: 1.5px solid var(--hint); border-radius: 6px; padding: 2px 6px; margin: 0 4px; }
-  .tab { all: unset; cursor: pointer; font-size: 20px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-control); color: var(--ink-3); display: inline-flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out, background-color var(--t-std) var(--ease-land); }
+  .bumper { all: unset; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink); border: 1.5px solid rgba(255, 255, 255, 0.45); border-radius: 6px; padding: 2px 7px; margin: 0 4px; }
+  .bumper:hover { background: rgba(255, 255, 255, 0.12); }
+  .tabs { padding: 4px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); align-self: flex-start; }
+  .tab { all: unset; cursor: pointer; font-size: 20px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-control); color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out, background-color var(--t-std) var(--ease-land); }
   .tab.on { color: var(--ground); background: var(--accent); }
   .count { font-size: 12px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.16); }
   .tab.on .count { background: rgba(0, 0, 0, 0.18); }
   .cname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .role { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-3); background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px; }
+  .role { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-2); background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px; }
   .csize { width: 80px; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
   /* Colonne de droite de largeur fixe : rien ne bouge quand « Installer » devient une barre puis « Installé ». */
   .content .tag, .content .restore, .content .mini { margin-left: 8px; width: 120px; box-sizing: border-box; justify-content: center; text-align: center; flex-shrink: 0; }

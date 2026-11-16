@@ -4,8 +4,8 @@
   import SyncBadge from './SyncBadge.svelte';
   import type { Game } from '../types';
 
-  // Tuile d'un jeu : image du jeu si le serveur en a une (dégradés en haut et en bas pour garder la pastille
-  // console, l'état et le titre lisibles), sinon jaquette illustrée (motif original) ; + titre + console.
+  // Tuile d'un jeu : image du jeu si le serveur en a une (léger dégradé en haut pour la pastille console
+  // et l'état ; pas de titre par-dessus), sinon jaquette illustrée (motif original) avec son titre.
   // Au focus, les deux plans de la jaquette glissent à des vitesses différentes (parallaxe douce).
   //
   // Mouvement au focus (couches primaire / secondaire / ambiance) :
@@ -69,6 +69,7 @@
   data-hero={hero ? '' : undefined}
   aria-label={game.title}
   {onfocus}
+  onpointerenter={(e) => { if (!still && e.pointerType === 'mouse') el?.focus({ preventScroll: true }); }}
   onclick={() => el && onclick?.(el)}
 >
   {#if cover}
@@ -80,7 +81,10 @@
     <ConsoleChip console={game.console} size={size > 250 ? 'l' : size < 190 ? 's' : 'm'} />
     <SyncBadge {game} size={Math.round(size * 0.14)} />
   </span>
-  <span class="title" style:font-size="{titleSize}px" style:color={cover ? '#ffffff' : game.tileInk} class:shadowed={cover || game.tileInk.toLowerCase() === '#ffffff'}>{game.short}</span>
+  <!-- Vraie image : le nom est déjà dans l'image et sous la tuile, il ne la recouvre pas. -->
+  {#if !cover}
+    <span class="title" style:font-size="{titleSize}px" style:color={game.tileInk} class:shadowed={game.tileInk.toLowerCase() === '#ffffff'}>{game.short}</span>
+  {/if}
 </button>
 
 <style>
@@ -91,8 +95,8 @@
     position: relative; isolation: isolate; overflow: visible;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
     transition:
-      width var(--t-std) var(--ease-pop),
-      height var(--t-std) var(--ease-pop),
+      width 280ms var(--ease-land),
+      height 280ms var(--ease-land),
       padding var(--t-std) var(--ease-land),
       box-shadow 320ms var(--ease-land),
       transform 280ms var(--ease-pop),
@@ -104,7 +108,7 @@
   .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .photo::after {
     content: ''; position: absolute; inset: 0;
-    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.45) 0%, transparent 28%, transparent 52%, rgba(0, 0, 0, 0.8) 100%);
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.38) 0%, transparent 24%);
   }
   .tile.big { border-radius: 18px; padding: 22px; }
 

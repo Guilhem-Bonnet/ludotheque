@@ -65,8 +65,10 @@ export function move(dir: Dir) {
   const from = active.getBoundingClientRect();
   const next = neighbour(from, all.filter((el) => el !== active).map((el) => ({ el, r: el.getBoundingClientRect() })), dir);
   if (next) {
-    next.focus();
-    next.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    // Sans `preventScroll`, le navigateur défile d'un coup avant le défilement doux (saccade).
+    // Un conteneur `data-own-scroll` gère lui-même son défilement (rangée de l'accueil).
+    next.focus({ preventScroll: true });
+    if (!next.closest('[data-own-scroll]')) next.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
     feedback('move');
   } else {
     wobble(active, dir);
@@ -141,6 +143,14 @@ const KEYS: Record<string, () => void> = {
   q: () => (key('L1'), emit('ludo:tab', -1)),
   e: () => (key('R1'), emit('ludo:tab', 1)),
 };
+
+/**
+ * Touche « virtuelle » (clic ou toucher sur la barre d'aide, sur L1 / R1) : même effet que la manette.
+ * A agit sur l'élément qui a le focus ; la barre d'aide ne prend jamais le focus (voir ButtonHints).
+ */
+export function virtualKey(k: 'A' | 'B' | 'X' | 'Y' | 'L1' | 'R1') {
+  ({ A: PAD[0], B: PAD[1], X: PAD[2], Y: PAD[3], L1: PAD[4], R1: PAD[5] })[k]();
+}
 
 // Boutons de la manette standard (Gamepad API) : 0 A, 1 B, 2 X, 3 Y, 4 L1, 5 R1, 12-15 croix.
 const PAD: Record<number, () => void> = {
