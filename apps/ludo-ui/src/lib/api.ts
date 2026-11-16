@@ -26,7 +26,8 @@ export interface LudoApi {
   recent(profile: string): Promise<Game[]>;
   library(profile: string): Promise<Game[]>;
   history(profile: string, game: string): Promise<SaveRevision[]>;
-  updates(): Promise<UpdateItem[]>;
+  /** Mises à jour et DLC à installer ; `profile` = profil en cours (appareil partagé). */
+  updates(profile?: string): Promise<UpdateItem[]>;
   /** Synchronisation demandée à la main : envoie et récupère tout, puis renvoie la bibliothèque à jour. */
   sync(profile: string): Promise<Game[]>;
   /** Restaure une version de sauvegarde : elle devient la version actuelle (nouvelle révision). `onstep` suit l'avancement. */
@@ -331,7 +332,7 @@ const tauriApi: LudoApi = {
   recent: (profile) => call('recent', { profile }),
   library: (profile) => call('library', { profile }),
   history: (profile, game) => call('history', { profile, game }),
-  updates: () => call('updates'),
+  updates: (profile) => call('updates', { profile: profile ?? null }),
   sync: (profile) => call('sync', { profile }),
   saveProfile: (profile) => call('saveProfile', { profile }),
   ping: () => call('ping'),

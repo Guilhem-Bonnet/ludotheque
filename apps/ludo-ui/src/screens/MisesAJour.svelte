@@ -4,6 +4,7 @@
   import ConsoleChip from '../lib/components/ConsoleChip.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import { api } from '../lib/api';
+  import { router } from '../lib/router.svelte';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import StateNotice from '../lib/components/StateNotice.svelte';
@@ -38,7 +39,7 @@
 
   function load() {
     loadError = null;
-    api.updates().then((u) => {
+    api.updates(router.profile?.id).then((u) => {
       items = u;
       loaded = true;
       focusFirst();
@@ -69,7 +70,7 @@
 
   <main>
     {#if loadError}
-      <StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={load} />
+      <StateNotice title="Mises à jour indisponibles" detail={loadError} action="Réessayer" onaction={load} />
     {:else if loaded && items.length === 0 && !appCard}
       <StateNotice icon="check-circle" title="Tout est à jour" detail="Aucune mise à jour ni DLC à installer pour les jeux de cet appareil." autofocus={false} />
     {/if}
