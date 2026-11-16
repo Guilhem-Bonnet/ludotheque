@@ -12,7 +12,7 @@
 
 use crate::catalog;
 use ludo_core::snapshot::{archive_hash, validate_archive, SnapshotError};
-use ludo_proto::{
+use ludo_proto::{DeviceGame, DeviceInventory, 
     CatalogGame, FileRole, GameArt, GameFile, Lease, LeaseOutcome, Profile, RescanReport, SaveSummary, ProfilePrefs, PushOutcome, PushParams, SaveKey, SaveRevision, AVATAR_KINDS, LEASE_TTL_S,
     PROFILE_NAME_MAX,
 };
@@ -195,6 +195,18 @@ CREATE TABLE IF NOT EXISTS files (
     mtime  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS files_game ON files (game);
+CREATE TABLE IF NOT EXISTS devices (
+    device     TEXT    NOT NULL PRIMARY KEY,
+    updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS device_games (
+    device    TEXT    NOT NULL,
+    game      TEXT    NOT NULL,
+    installed INTEGER NOT NULL,
+    stream    INTEGER NOT NULL,
+    save      INTEGER NOT NULL,
+    PRIMARY KEY (device, game)
+);
 ";
 
 const COLS: &str = "rev, parent, hash, size, device, emulator, playtime_s, created_at, discarded";
@@ -507,6 +519,50 @@ impl Store {
             params![key.profile, key.game, device],
         )?;
         Ok(())
+    }
+
+    /// Remplace l'inventaire d'un appareil. Les jeux absents du catalogue sont ignorés (catalogue
+    /// rebalayé entre-temps) ; un identifiant malformé est refusé.
+    pub fn put_inventory(&self, device: &str, games: &[DeviceGame]) -> Result<DeviceInventory, StoreError> {
+        check(device)?;
+        for g in games {
+            check(&g.game)?;
+        }
+        let now = self.clock.now();
+        let mut db = self.db.lock().expect("verrou base");
+        let tx = db.transaction()?;
+        tx.execute("DELETE FROM device_games WHERE device=?1", params![device])?;
+        let mut kept = Vec::new();
+        for g in games {
+            let known = tx.query_row("SELECT 1 FROM games WHERE id=?1", params![g.game], |_| Ok(())).optional()?;
+            if known.is_some() && (g.installed || g.stream || g.save) {
+                tx.execute(
+                    "INSERT OR REPLACE INTO device_games (device, game, installed, stream, save) VALUES (?1,?2,?3,?4,?5)",
+                    params![device, g.game, g.installed, g.stream, g.save],
+                )?;
+                kept.push(g.clone());
+            }
+        }
+        tx.execute("INSERT OR REPLACE INTO devices (device, updated_at) VALUES (?1, ?2)", params![device, now as i64])?;
+        tx.commit()?;
+        kept.sort_by(|a, b| a.game.cmp(&b.game));
+        Ok(DeviceInventory { device: device.to_string(), updated_at: now, games: kept })
+    }
+
+    /// Inventaires de tous les appareils connus.
+    pub fn inventories(&self) -> Result<Vec<DeviceInventory>, StoreError> {
+        let db = self.db.lock().expect("verrou base");
+        let mut st = db.prepare("SELECT device, updated_at FROM devices ORDER BY device")?;
+        let devices: Vec<(String, u64)> = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?.collect::<Result<_, _>>()?;
+        let mut out = Vec::new();
+        for (device, updated_at) in devices {
+            let mut st = db.prepare("SELECT game, installed, stream, save FROM device_games WHERE device=?1 ORDER BY game")?;
+            let games = st
+                .query_map(params![device], |r| Ok(DeviceGame { game: r.get(0)?, installed: r.get(1)?, stream: r.get(2)?, save: r.get(3)? }))?
+                .collect::<Result<_, _>>()?;
+            out.push(DeviceInventory { device, updated_at, games });
+        }
+        Ok(out)
     }
 
     /// Profils du foyer, dans l'ordre de leur création.

@@ -9,7 +9,8 @@
   import { feedback } from '../lib/feedback';
   import { focusFirst, virtualKey } from '../lib/nav';
   import { router } from '../lib/router.svelte';
-  import type { Console, DeviceInfo, Game } from '../lib/types';
+  import Icon from '../lib/components/Icon.svelte';
+  import type { Console, DeviceInfo, Game, RemoteDevice } from '../lib/types';
 
   let { device }: { device: DeviceInfo } = $props();
 
@@ -19,6 +20,10 @@
   ];
 
   let games = $state<Game[]>([]);
+  /* Appareil regardé : celui-ci (« ici ») ou un autre du foyer (Ayn Thor…), d'après son inventaire. */
+  let remotes = $state<RemoteDevice[]>([]);
+  let where = $state<string>('ici');
+  const remote = $derived(remotes.find((r) => r.id === where));
   let tab = $state(0);
   let filter = $state<'tous' | 'installes' | 'non_installes'>('tous');
   let slide = $state<'left' | 'right' | 'none'>('none');
@@ -62,6 +67,8 @@
 
   onMount(() => {
     void load();
+    // Autres appareils : facultatif (serveur ancien ou injoignable = rien à montrer).
+    api.devices().then((d) => (remotes = d)).catch(() => (remotes = []));
     const onTab = (ev: Event) => {
       const d = (ev as CustomEvent<number>).detail;
       slide = d > 0 ? 'right' : 'left';
@@ -84,14 +91,28 @@
     games.filter((g) => {
       const t = TABS[tab].id;
       if (t !== 'tout' && g.console !== t) return false;
-      if (filter === 'installes') return g.install !== 'non_installe';
-      if (filter === 'non_installes') return g.install === 'non_installe';
+      const here = remote ? onRemote(g) : g.install !== 'non_installe';
+      if (filter === 'installes') return here;
+      if (filter === 'non_installes') return !here;
       return true;
     }),
   );
-  const installed = $derived(games.filter((g) => g.install !== 'non_installe').length);
+  const installed = $derived(games.filter((g) => (remote ? onRemote(g) : g.install !== 'non_installe')).length);
+
+  /** Le jeu est-il jouable sur l'appareil regardé (installé, ou en flux depuis le PC) ? */
+  function onRemote(g: Game): boolean {
+    const r = remote?.games[g.id];
+    return !!r && (r.installed || r.stream);
+  }
 
   function stateOf(g: Game): [string, string] {
+    if (remote) {
+      const r = remote.games[g.id];
+      if (r?.installed) return [r.save ? 'Installé · Sauvegarde' : 'Installé', 'var(--ink-3)'];
+      if (r?.stream) return ['Via Moonlight', 'var(--accent-ink)'];
+      if (r?.save) return ['Sauvegarde seule', 'var(--ink-4)'];
+      return ['Absent', 'var(--ink-4)'];
+    }
     if (g.sync === 'conflit') return ['Conflit de sauvegarde', 'var(--conflict)'];
     if (g.sync === 'envoi_en_attente') return ['Envoi en attente', 'var(--pending)'];
     if (g.sync === 'a_recuperer') return ['Sauvegarde à récupérer', 'var(--sync)'];
@@ -110,7 +131,7 @@
   <header>
     <div class="line">
       <h1>Bibliothèque</h1>
-      <span class="meta">{games.length} jeux · {installed} installés · {device.freeSpace}</span>
+      <span class="meta">{#if remote}{installed} jeux sur {remote.name} · inventaire du {remote.updated}{:else}{games.length} jeux · {installed} installés · {device.freeSpace}{/if}</span>
     </div>
     <div class="line">
       <div class="tabs" role="tablist" aria-label="Consoles">
@@ -122,6 +143,14 @@
         <button class="bumper" tabindex="-1" aria-label="Onglet suivant" onpointerdown={(e) => e.preventDefault()} onclick={() => virtualKey('R1')}>R1</button>
       </div>
       <div class="filters">
+        {#if remotes.length}
+          <!-- Appareil regardé : celui-ci, ou un autre du foyer (ses jeux installés et en flux Moonlight). -->
+          <button class="pill dev focusable" aria-pressed={where === 'ici'} onclick={() => { where = 'ici'; feedback('tab'); }}><Icon name={device.kind} size={16} />{device.name}</button>
+          {#each remotes as r (r.id)}
+            <button class="pill dev focusable" aria-pressed={where === r.id} onclick={() => { where = r.id; feedback('tab'); }}><Icon name={r.kind} size={16} />{r.name}</button>
+          {/each}
+          <span class="sep" aria-hidden="true"></span>
+        {/if}
         <button class="pill focusable" aria-pressed={filter === 'installes'} onclick={() => toggle('installes')}>Installés</button>
         <button class="pill focusable" aria-pressed={filter === 'non_installes'} onclick={() => toggle('non_installes')}>Non installés</button>
       </div>
@@ -172,6 +201,8 @@
   .tab.on { color: var(--ground); font-weight: 600; }
   .filters { display: flex; gap: 8px; }
   .pill { all: unset; cursor: pointer; font-size: 14px; padding: 7px 14px; border-radius: 999px; border: 1.5px solid var(--hint); color: var(--ink-2); }
+  .pill.dev { display: inline-flex; align-items: center; gap: 6px; }
+  .sep { width: 1px; align-self: stretch; margin: 4px 6px; background: var(--hint); }
   .pill[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
   main { flex-grow: 1; overflow-y: auto; padding: 26px 48px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 28px 20px; align-content: start; }
   /* Changement d'onglet : la grille glisse du côté de l'onglet choisi, cellules en cascade de 25 ms. */

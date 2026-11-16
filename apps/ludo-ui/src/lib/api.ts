@@ -1,7 +1,7 @@
 // Accès aux données. Dans l'app Tauri, chaque appel passe par une commande Rust (`ludo-client`).
 // Dans un navigateur (développement, démonstration), une source de démonstration répond à la place.
 
-import type { Conflict, ConflictSide, DeviceInfo, Emulator, Game, Preparation, Profile, SaveRevision, UpdateItem } from './types';
+import type { Conflict, ConflictSide, DeviceInfo, Emulator, Game, RemoteDevice, Preparation, Profile, SaveRevision, UpdateItem } from './types';
 
 /** Étapes d'un lancement réel, dans l'ordre (événement `ludo://passage`). */
 export type LaunchStep = 'profil' | 'telechargement' | 'sauvegarde' | 'lancement' | 'en_jeu' | 'envoi' | 'termine';
@@ -35,6 +35,8 @@ export interface LudoApi {
   ping(): Promise<number>;
   /** Recherche les émulateurs sur l'appareil (à chaque appel, sans cache). */
   emulators(): Promise<Emulator[]>;
+  /** Autres appareils du foyer et leurs jeux (inventaires du serveur). */
+  devices(): Promise<RemoteDevice[]>;
   /** Installe une mise à jour ou un DLC sur l'appareil ; `onprogress` reçoit 0 à 1 (et `preparing` tant que le serveur convertit le fichier). */
   installContent(game: string, content: number, onprogress?: OnProgress): Promise<void>;
   /** Installe un jeu sur l'appareil (jeu de base et mises à jour) ; `onprogress` reçoit 0 à 1. Erreur : message en français. */
@@ -200,6 +202,10 @@ const demoApi: LudoApi = {
     await wait(600);
     onstep?.(2, 1);
   },
+  async devices() {
+    await wait(300);
+    return [] as RemoteDevice[];
+  },
   async emulators() {
     await wait(700);
     return [
@@ -330,6 +336,7 @@ const tauriApi: LudoApi = {
   saveProfile: (profile) => call('saveProfile', { profile }),
   ping: () => call('ping'),
   emulators: () => call('emulators'),
+  devices: () => call('devices'),
   installContent: async (game, content, onprogress) => {
     await withProgress(game, onprogress, () => call('installContent', { game, content }));
     onprogress?.(1);

@@ -21,6 +21,8 @@
 //! - `PUT    /games/{id}/cover`                      image du jeu (png, jpeg ou webp, 5 Mo au plus, octets magiques vérifiés)
 //! - `PUT    /games/{id}/background`                 image de fond, grand format (mêmes règles)
 //! - `GET    /games/{id}/background`                 image de fond (ETag, `Cache-Control`)
+//! - `GET    /devices`                               inventaires des appareils (jeux installés, en flux, sauvegardes)
+//! - `PUT    /devices/{device}/inventory`            remplace l'inventaire d'un appareil
 //! - `GET    /games/{id}/cover`                      image du jeu (ETag, `Cache-Control` ; 304 sur `If-None-Match`)
 //! - `POST   /catalog/rescan`                         nouveau balayage du dossier des ROM
 //!
@@ -97,6 +99,9 @@ pub fn router_with(store: Arc<Store>, converter: Option<Arc<Converter>>) -> Rout
         .route("/api/v1/games/{id}/cover", get(get_cover).put(put_cover).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
         .route("/api/v1/games/{id}/background", get(get_background).put(put_background).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
         .route("/api/v1/catalog/rescan", post(post_rescan))
+        .route("/api/v1/devices", get(get_devices))
+        // Inventaire d'un appareil : quelques centaines de jeux au plus (limite 256 Kio).
+        .route("/api/v1/devices/{device}/inventory", put(put_inventory).layer(DefaultBodyLimit::max(256 * 1024)))
         .route("/api/v1/profiles", get(get_profiles))
         // Un profil tient en quelques centaines d'octets : limite propre à cette route (16 Kio).
         .route("/api/v1/profiles/{id}", put(put_profile).layer(DefaultBodyLimit::max(16 * 1024)))
@@ -171,6 +176,14 @@ async fn delete_lease(
 ) -> Result<Response, StoreError> {
     blocking(move || s.release_lease(&key(p, g), &q.device)).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn get_devices(State(s): State<AppState>) -> Result<Response, StoreError> {
+    Ok(Json(blocking(move || s.inventories()).await?).into_response())
+}
+
+async fn put_inventory(State(s): State<AppState>, Path(device): Path<String>, Json(games): Json<Vec<ludo_proto::DeviceGame>>) -> Result<Response, StoreError> {
+    Ok(Json(blocking(move || s.put_inventory(&device, &games)).await?).into_response())
 }
 
 async fn get_profiles(State(s): State<AppState>) -> Result<Response, StoreError> {
