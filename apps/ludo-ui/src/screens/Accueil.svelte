@@ -38,7 +38,7 @@
     const profile = router.profile!;
     void load(profile.id);
     // Les mises à jour ne bloquent jamais l'accueil : un échec laisse simplement le compteur à 0.
-    api.updates().then((u) => (updatesCount = u.length)).catch(() => (updatesCount = 0));
+    api.updates(router.profile?.id).then((u) => (updatesCount = u.length)).catch(() => (updatesCount = 0));
     const onAction = (ev: Event) => {
       const g = games[focused];
       const onTile = (document.activeElement as HTMLElement | null)?.classList.contains('tile');

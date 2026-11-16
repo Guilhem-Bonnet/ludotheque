@@ -683,7 +683,9 @@ pub fn select_recent(library: &[UiGame], saves: &[SaveSummary], limit: usize) ->
 fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSummary>), String> {
     let client = Client::new(&cfg.serveur);
     let games = client.games().map_err(|e| e.to_string())?;
-    let saves = client.save_summaries(profile).map_err(|e| e.to_string())?;
+    // Aucun profil (appareil partagé, avant « Qui joue ? ») : pas de sauvegardes à lire, la
+    // bibliothèque et les mises à jour restent disponibles.
+    let saves = if profile.is_empty() { Vec::new() } else { client.save_summaries(profile).map_err(|e| e.to_string())? };
     let journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
     let prefix = format!("{profile}/");
     let entries: BTreeMap<String, Entry> =
@@ -770,10 +772,11 @@ pub fn build_updates(library: &[UiGame]) -> Vec<UiUpdate> {
 
 /// Mises à jour disponibles pour cet appareil (catalogue du serveur comparé aux ROM installées).
 #[tauri::command]
-async fn updates() -> Result<Vec<UiUpdate>, String> {
-    blocking(|| {
+async fn updates(profile: Option<String>) -> Result<Vec<UiUpdate>, String> {
+    blocking(move || {
         let cfg = load_config()?;
-        let profile = cfg.profil_defaut.clone().unwrap_or_default();
+        // Profil en cours (écran « Qui joue ? » passé), sinon celui de l'appareil, sinon aucun.
+        let profile = profile.filter(|p| !p.is_empty()).or_else(|| cfg.profil_defaut.clone()).unwrap_or_default();
         Ok(build_updates(&fetch_library(&cfg, &profile)?.0))
     })
     .await
