@@ -44,6 +44,8 @@ pub enum StoreError {
     NoRoms,
     #[error("dossier des ROM indisponible : {0}")]
     RomsUnavailable(String),
+    #[error("image refusée : {0}")]
+    InvalidCover(String),
     #[error("introuvable")]
     NotFound,
     #[error("chemin refusé : {0}")]
@@ -62,9 +64,55 @@ impl Clock for SystemClock {
     }
 }
 
+/// Formats d'image acceptés : extension de stockage et type MIME servi.
+const COVER_TYPES: &[(&str, &str)] = &[("png", "image/png"), ("jpg", "image/jpeg"), ("webp", "image/webp")];
+
+/// Taille maximale d'une image de jeu (5 Mo).
+pub const MAX_COVER_BYTES: usize = 5 * 1024 * 1024;
+
+/// Format d'une image d'après ses premiers octets.
+pub fn sniff_cover(d: &[u8]) -> Option<(&'static str, &'static str)> {
+    if d.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some(("png", "image/png"))
+    } else if d.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some(("jpg", "image/jpeg"))
+    } else if d.len() >= 12 && &d[..4] == b"RIFF" && &d[8..12] == b"WEBP" {
+        Some(("webp", "image/webp"))
+    } else {
+        None
+    }
+}
+
+/// Sorte d'image d'un jeu : la jaquette (tuile) ou le fond (grand format, affiché flouté derrière
+/// l'écran). Chacune dans son dossier du volume de données (`covers/`, `backgrounds/`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageKind {
+    Cover,
+    Background,
+}
+
+impl ImageKind {
+    pub const ALL: [ImageKind; 2] = [ImageKind::Cover, ImageKind::Background];
+    pub fn dir(self) -> &'static str {
+        match self {
+            ImageKind::Cover => "covers",
+            ImageKind::Background => "backgrounds",
+        }
+    }
+    /// Dernier segment de la route (`/api/v1/games/{id}/<segment>`).
+    pub fn segment(self) -> &'static str {
+        match self {
+            ImageKind::Cover => "cover",
+            ImageKind::Background => "background",
+        }
+    }
+}
+
 pub struct Store {
     db: Mutex<Connection>,
     blobs: PathBuf,
+    /// Volume de données : images des jeux sous `<data>/<sorte>/<id>.<ext>` (sauvegardées avec lui).
+    data_dir: PathBuf,
     clock: Box<dyn Clock>,
     /// Racine des ROM (`LUDO_ROMS`) ; absente = catalogue vide.
     roms: Option<PathBuf>,
@@ -277,11 +325,23 @@ fn sync_dir(_dir: &Path) -> std::io::Result<()> {
 impl Store {
     pub fn open(data_dir: &Path, clock: Box<dyn Clock>) -> Result<Self, StoreError> {
         std::fs::create_dir_all(data_dir.join("blobs"))?;
+        for kind in ImageKind::ALL {
+            let dir = data_dir.join(kind.dir());
+            std::fs::create_dir_all(&dir)?;
+            // Restes d'un envoi d'image interrompu (disque plein, arrêt) : jamais lus, on les balaie.
+            for e in std::fs::read_dir(&dir)?.flatten() {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with('.') && name.ends_with(".tmp") {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
         let db = Connection::open(data_dir.join("ludotheque.db"))?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         db.execute_batch(SCHEMA)?;
-        Ok(Self { db: Mutex::new(db), blobs: data_dir.join("blobs"), clock, roms: None })
+        Ok(Self { db: Mutex::new(db), blobs: data_dir.join("blobs"), data_dir: data_dir.to_path_buf(), clock, roms: None })
     }
 
     /// Indique le dossier des ROM (catalogue, téléchargements). Le balayage se lance avec [`Store::rescan`].
@@ -591,6 +651,8 @@ impl Store {
                 short: r.get(3)?,
                 title_id: r.get(4)?,
                 art: GameArt { motif: r.get(5)?, from: r.get(6)?, to: r.get(7)?, ink: r.get(8)? },
+                cover: None,
+                background: None,
                 catalogued: r.get::<_, i64>(9)? != 0,
                 files: Vec::new(),
             })
@@ -598,8 +660,74 @@ impl Store {
         let mut games: Vec<CatalogGame> = rows.collect::<Result<_, _>>()?;
         for g in &mut games {
             g.files = by_game.remove(&g.id).unwrap_or_default();
+            let url = |kind: ImageKind| self.image_info(kind, &g.id).map(|(_, _, v)| format!("/api/v1/games/{}/{}?v={v}", g.id, kind.segment()));
+            g.cover = url(ImageKind::Cover);
+            g.background = url(ImageKind::Background);
         }
         Ok(games)
+    }
+
+    /// Jaquette du jeu (voir `image_info`).
+    pub fn cover_info(&self, game: &str) -> Option<(PathBuf, &'static str, String)> {
+        self.image_info(ImageKind::Cover, game)
+    }
+
+    /// Enregistre la jaquette d'un jeu (voir `put_image`).
+    pub fn put_cover(&self, game: &str, data: &[u8]) -> Result<(), StoreError> {
+        self.put_image(ImageKind::Cover, game, data)
+    }
+
+    /// Image d'un jeu : (chemin, type MIME, jeton de version `taille-date` en hexadécimal).
+    pub fn image_info(&self, kind: ImageKind, game: &str) -> Option<(PathBuf, &'static str, String)> {
+        let dir = self.data_dir.join(kind.dir());
+        // Id validé ici aussi : la route GET passe l'id décodé (`%2F..` compris) tel quel.
+        if !valid_id(game) {
+            return None;
+        }
+        for (ext, mime) in COVER_TYPES {
+            let path = dir.join(format!("{game}.{ext}"));
+            if let Ok(m) = std::fs::metadata(&path) {
+                if m.is_file() {
+                    let mtime = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis());
+                    return Some((path, mime, format!("{:x}-{mtime:x}", m.len())));
+                }
+            }
+        }
+        None
+    }
+
+    /// Enregistre l'image d'un jeu (remplace la précédente, quel que soit son format). Le jeu doit
+    /// exister au catalogue ; le contenu est validé par ses octets magiques, jamais par l'en-tête du client.
+    pub fn put_image(&self, kind: ImageKind, game: &str, data: &[u8]) -> Result<(), StoreError> {
+        check(game)?;
+        let dir = self.data_dir.join(kind.dir());
+        let Some((ext, _)) = sniff_cover(data) else {
+            return Err(StoreError::InvalidCover("format d'image non reconnu (png, jpeg ou webp attendu)".into()));
+        };
+        if data.len() > MAX_COVER_BYTES {
+            return Err(StoreError::InvalidCover(format!("image trop lourde (plus de {} Mo)", MAX_COVER_BYTES / 1_000_000)));
+        }
+        let known = self.db.lock().expect("verrou base").query_row("SELECT 1 FROM games WHERE id=?1", params![game], |_| Ok(())).optional()?;
+        if known.is_none() {
+            return Err(StoreError::NotFound);
+        }
+        // Nom temporaire unique : deux envois simultanés du même jeu n'écrivent jamais le même fichier.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = dir.join(format!(".{game}.{}.{n}.tmp", std::process::id()));
+        let written = std::fs::write(&tmp, data).and_then(|()| std::fs::rename(&tmp, dir.join(format!("{game}.{ext}"))));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+        // Les autres formats ne partent qu'une fois la nouvelle image en place.
+        for (other, _) in COVER_TYPES {
+            if *other != ext {
+                let _ = std::fs::remove_file(dir.join(format!("{game}.{other}")));
+            }
+        }
+        sync_dir(&dir)?;
+        Ok(())
     }
 
     /// Emplacement sur le disque d'un fichier du catalogue, vérifié : le chemin résolu doit rester

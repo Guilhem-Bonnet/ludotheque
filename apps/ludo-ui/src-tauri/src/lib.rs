@@ -86,6 +86,68 @@ async fn device() -> Result<DeviceInfo, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Émulateur connu (fiche) et ce qui en a été trouvé sur l'appareil (`Emulator` de `types.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiEmulator {
+    id: String,
+    name: String,
+    consoles: Vec<String>,
+    /// Émulateur par défaut de ces consoles sur l'appareil.
+    default_for: Vec<String>,
+    found: bool,
+    /// « Flatpak io.github… », « Réglage de l'appareil », « Chemin de la fiche »… ; vide si absent.
+    source: String,
+    bin: String,
+    data: String,
+}
+
+/// Recherche les émulateurs sur l'appareil, à chaque appel (aucun cache : un émulateur installé
+/// depuis est vu tout de suite). Lecture seule.
+#[tauri::command]
+async fn emulators() -> Result<Vec<UiEmulator>, String> {
+    blocking(|| {
+        let cfg = load_config()?;
+        let host = ludo_client::detect::Host::current();
+        let mut out = Vec::new();
+        for id in cfg.fiche_ids() {
+            let Ok(fiche) = cfg.fiche(&id) else { continue };
+            let default_for = fiche.consoles.iter().filter(|c| cfg.default_emulator(c).as_deref() == Some(id.as_str())).cloned().collect();
+            let (found, source, bin, data) = match cfg.locate(&fiche, &host) {
+                Ok(l) => {
+                    // La section [appareil] de la fiche n'est qu'une supposition : vraie si le programme existe.
+                    let present = match &l.origin {
+                        config::Origin::Fiche => bin_exists(&l.bin, &host),
+                        _ => true,
+                    };
+                    let source = match l.origin {
+                        config::Origin::Config => "Réglage de l'appareil".to_string(),
+                        config::Origin::Detected(s) => s,
+                        config::Origin::Fiche => "Chemin de la fiche".to_string(),
+                    };
+                    (present, if present { source } else { String::new() }, l.bin, l.data.display().to_string())
+                }
+                Err(_) => (false, String::new(), String::new(), String::new()),
+            };
+            out.push(UiEmulator { name: emulator_label(Some(&id), ""), id, consoles: fiche.consoles.clone(), default_for, found, source, bin, data });
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// Le programme d'une commande de lancement existe-t-il ? (`flatpak run <id>` : application installée.)
+fn bin_exists(bin: &str, host: &ludo_client::detect::Host) -> bool {
+    let mut words = bin.split_whitespace();
+    match (words.next(), words.next(), words.next()) {
+        (Some("flatpak"), Some("run"), Some(id)) => {
+            host.home.join(".local/share/flatpak/app").join(id).is_dir() || host.system_flatpak.join("app").join(id).is_dir()
+        }
+        (Some(first), _, _) => config::expand_in(&host.home, first).is_file(),
+        _ => false,
+    }
+}
+
 /// Le journal est relu puis réécrit d'un bloc à chaque opération : une seule opération à la fois
 /// dans l'interface, pour ne pas perdre l'écriture d'une synchronisation concurrente.
 static JOURNAL: Mutex<()> = Mutex::new(());
@@ -249,7 +311,12 @@ async fn restore(profile: String, game: String, rev: u64) -> Result<(), String> 
         let client = Client::new(&cfg.serveur);
         // Jeu configuré pour ce profil seulement (même règle que `sync`) ; adaptateur impossible à
         // construire : erreur avant de toucher au serveur.
-        let conf = cfg.jeux.get(&game).filter(|g| g.concerns(&profile));
+        // Jeu sans section [jeux] : émulateur par défaut de la console (catalogue lu seulement alors).
+        let conf = cfg.game_conf(&game, &profile, None).or_else(|| {
+            if cfg.jeux.contains_key(&game) { return None; }
+            find_game(&client, &game).ok().and_then(|c| cfg.game_conf(&game, &profile, Some(&c)))
+        });
+        let conf = conf.as_ref();
         let prepared = match conf {
             Some(g) => Some(config::prepare(&cfg, &g.emulateur, &profile, &g.title_id).map_err(|e| e.to_string())?),
             None => None,
@@ -287,13 +354,33 @@ pub fn sync_label(o: &SyncOutcome) -> &'static str {
 /// Résultat de la synchronisation d'un jeu : (identifiant, résultat ou erreur).
 type GameSync = (String, Result<SyncOutcome, String>);
 
+/// Jeux à synchroniser pour ce profil : ceux de `[jeux]`, plus ceux déjà joués sur cet appareil
+/// (présents au journal) avec l'émulateur par défaut de leur console. Un jeu jamais joué ici n'est
+/// pas touché : sa sauvegarde arrive au premier lancement. Catalogue injoignable : `[jeux]` seuls.
+fn games_to_sync(cfg: &Config, client: &Client, journal: &Journal, profile: &str) -> Vec<(String, config::GameConf)> {
+    let mut out: Vec<(String, config::GameConf)> = cfg.games_for(profile).map(|(id, g)| (id.clone(), g.clone())).collect();
+    let prefix = format!("{profile}/");
+    let played: Vec<String> = journal.entries().filter_map(|(k, _)| k.strip_prefix(&prefix).map(str::to_string)).collect();
+    if played.iter().all(|g| cfg.jeux.contains_key(g)) {
+        return out;
+    }
+    if let Ok(catalog) = client.games() {
+        for c in catalog.iter().filter(|c| played.contains(&c.id) && !cfg.jeux.contains_key(&c.id)) {
+            if let Some(g) = cfg.game_conf(&c.id, profile, Some(c)) {
+                out.push((c.id.clone(), g));
+            }
+        }
+    }
+    out
+}
+
 /// Synchronise chaque jeu configuré pour ce profil.
 fn sync_profile(cfg: &Config, profile: &str) -> Result<Vec<GameSync>, String> {
     let client = Client::new(&cfg.serveur);
     let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for (id, g) in cfg.games_for(profile) {
+    for (id, g) in &games_to_sync(cfg, &client, &journal, profile) {
         let key = SaveKey { profile: profile.into(), game: id.clone() };
         let result = (|| {
             let prepared = config::prepare(cfg, &g.emulateur, profile, &g.title_id).map_err(|e| e.to_string())?;
@@ -334,6 +421,12 @@ pub struct UiGame {
     tile: String,
     tile_ink: String,
     art: GameArt,
+    /// URL absolue de l'image du jeu (serveur configuré + chemin du catalogue), si le serveur en a une.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<String>,
+    /// URL absolue de l'image de fond grand format, si le serveur en a une.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background: Option<String>,
     emulator: String,
     install: &'static str,
     sync: &'static str,
@@ -487,6 +580,13 @@ pub struct LibraryEnv<'a> {
     pub exists: &'a dyn Fn(&str) -> bool,
     pub to_local: &'a dyn Fn(u64) -> NaiveDateTime,
     pub today: NaiveDate,
+/// Adresse du serveur (préfixe des chemins d'image du catalogue).
+pub server: &'a str,
+}
+
+/// URL absolue d'une image : adresse du serveur (sans `/` final) + chemin du catalogue.
+pub fn cover_url(server: &str, path: &str) -> String {
+    format!("{}/{}", server.trim_end_matches('/'), path.trim_start_matches('/'))
 }
 
 /// Catalogue du serveur vers les jeux de l'interface, dans l'ordre du catalogue.
@@ -504,6 +604,8 @@ pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
                 tile: g.art.to.clone(),
                 tile_ink: tile_ink(&g.art.to).into(),
                 art: g.art.clone(),
+                cover: g.cover.as_ref().map(|c| cover_url(env.server, c)),
+                background: g.background.as_ref().map(|c| cover_url(env.server, c)),
                 emulator: emulator_label((env.emulator)(&g.id).as_deref(), &g.console),
                 install: install_state(&g.files, env.exists),
                 sync: sync_state((env.journal)(&g.id).as_ref(), save.is_some()),
@@ -546,11 +648,12 @@ fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSu
         &LibraryEnv {
             saves: &saves,
             journal: &|g| entries.get(g).cloned(),
-            emulator: &|g| cfg.jeux.get(g).map(|c| c.emulateur.clone()),
+            emulator: &|g| cfg.game_conf(g, profile, games.iter().find(|c| c.id == g)).map(|c| c.emulateur),
             // Présent tel quel, ou converti par le serveur (`.nsz` installé en `.nsp`).
             exists: &|p| cfg.roms.as_ref().is_some_and(|r| r.join(p).exists() || install::converted_rel(p).is_some_and(|c| r.join(c).exists())),
             to_local: &local_time,
             today: Local::now().date_naive(),
+            server: &cfg.serveur,
         },
     );
     Ok((library, saves))
@@ -764,8 +867,14 @@ fn find_game(client: &Client, id: &str) -> Result<CatalogGame, String> {
 
 /// Formats que lit l'émulateur configuré pour ce jeu sur cet appareil (fiche) ; vide si le jeu n'est
 /// pas configuré ou la fiche illisible : le serveur envoie alors le fichier tel quel.
-fn accepted_formats(cfg: &Config, game: &str) -> Vec<String> {
-    cfg.jeux.get(game).and_then(|g| cfg.fiche(&g.emulateur).ok()).map(|f| f.formats).unwrap_or_default()
+fn accepted_formats(cfg: &Config, game: &CatalogGame) -> Vec<String> {
+    cfg.jeux
+        .get(&game.id)
+        .map(|g| g.emulateur.clone())
+        .or_else(|| cfg.default_emulator(&game.console))
+        .and_then(|e| cfg.fiche(&e).ok())
+        .map(|f| f.formats)
+        .unwrap_or_default()
 }
 
 /// Installe les fichiers du plan l'un après l'autre en émettant la progression cumulée.
@@ -775,7 +884,7 @@ fn accepted_formats(cfg: &Config, game: &str) -> Vec<String> {
 fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &[GameFile], cancel: Arc<AtomicBool>) -> Result<(), String> {
     let roms = roms_dir(cfg)?;
     let client = Client::new(&cfg.serveur);
-    let formats = accepted_formats(cfg, &game.id);
+    let formats = accepted_formats(cfg, game);
     let total: Cell<u64> = Cell::new(plan.iter().map(|f| f.size).sum());
     let before = Cell::new(0u64);
     let file_id = Cell::new(plan.first().map_or(0, |f| f.id));
@@ -1075,7 +1184,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
@@ -1204,9 +1313,22 @@ mod tests {
             short: "Luigi's\nMansion 3".into(),
             title_id: None,
             art: GameArt { motif: "manoir".into(), from: "#22e08f".into(), to: "#0a5a78".into(), ink: None },
+            cover: None,
+            background: None,
             catalogued: true,
             files,
         }
+    }
+
+    #[test]
+    fn url_absolue_de_l_image() {
+        assert_eq!(cover_url("https://ludo.test/", "/api/v1/games/x/cover?v=1"), "https://ludo.test/api/v1/games/x/cover?v=1");
+        let mut g = catalog_game("switch-lm3", "switch", vec![]);
+        g.cover = Some("/api/v1/games/switch-lm3/cover?v=a-b".into());
+        let entries = BTreeMap::new();
+        let lib = build_library(&[g, catalog_game("ds-x", "ds", vec![])], &env(&[], &entries, &[]));
+        assert_eq!(lib[0].cover.as_deref(), Some("https://ludo.test/api/v1/games/switch-lm3/cover?v=a-b"));
+        assert_eq!(lib[1].cover, None);
     }
 
     fn save(game: &str, device: &str, playtime_s: u64, created_at: u64) -> SaveSummary {
@@ -1263,6 +1385,7 @@ mod tests {
             exists: Box::leak(Box::new(move |p: &str| local.contains(&p))),
             to_local: Box::leak(Box::new(|ts: u64| at(2026, 11, 15, 20, 15) - chrono::Duration::days(ts as i64))),
             today: NaiveDate::from_ymd_opt(2026, 11, 15).unwrap(),
+            server: "https://ludo.test/",
         }
     }
 
@@ -1391,8 +1514,10 @@ mod tests {
             "jeux": { "switch-mk8": { "emulateur": "eden", "title_id": "0100152000022000" } }
         }))
         .unwrap();
-        assert_eq!(accepted_formats(&cfg, "switch-mk8"), ["nsp", "xci"]);
-        assert!(accepted_formats(&cfg, "inconnu").is_empty());
+        assert_eq!(accepted_formats(&cfg, &catalog_game("switch-mk8", "switch", vec![])), ["nsp", "xci"]);
+        // Sans section [jeux] : émulateur par défaut de la console (Ryujinx pour la Switch).
+        assert_eq!(accepted_formats(&cfg, &catalog_game("switch-autre", "switch", vec![])), ["nsp", "xci"]);
+        assert!(accepted_formats(&cfg, &catalog_game("3ds-x", "3ds", vec![])).is_empty());
     }
 
     #[test]

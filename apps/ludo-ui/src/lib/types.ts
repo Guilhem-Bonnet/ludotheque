@@ -61,6 +61,10 @@ export interface Game {
   tile: string;
   tileInk: string;
   art?: Art;
+  /** URL absolue de l'image du jeu (absente tant que le serveur n'en a pas). */
+  cover?: string;
+  /** Image de fond grand format (URL absolue), affichée légèrement floutée derrière l'écran. */
+  background?: string;
   emulator: string;
   install: InstallState;
   progress?: number;
@@ -132,4 +136,18 @@ export interface Preparation {
   game: Game;
   profile: string;
   steps: { label: string; state: 'fait' | 'en_cours' | 'a_venir'; detail?: string; progress?: number }[];
+}
+
+/** Émulateur connu (fiche) et ce que la détection a trouvé sur l'appareil (`UiEmulator` côté Rust). */
+export interface Emulator {
+  id: string;
+  name: string;
+  consoles: Console[];
+  /** Consoles dont c'est l'émulateur par défaut sur cet appareil. */
+  defaultFor: Console[];
+  found: boolean;
+  /** « Flatpak io.github… », « AppImage … », « Réglage de l'appareil »… ; vide si absent. */
+  source: string;
+  bin: string;
+  data: string;
 }

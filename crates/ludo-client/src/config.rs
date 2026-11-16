@@ -2,7 +2,9 @@
 //! à partir des fiches d'émulateur.
 
 use crate::layout::{DirLayout, RyujinxLayout, SaveLayout};
-use ludo_core::fiche::{render, Fiche, FicheError, ProfileMode};
+use crate::detect::{self, Host};
+use ludo_core::fiche::{render, DeviceSettings, Fiche, FicheError, ProfileMode};
+use ludo_proto::CatalogGame;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -53,9 +55,39 @@ pub struct Config {
     pub roms: Option<PathBuf>,
     #[serde(default)]
     pub profils: BTreeMap<String, ProfileIds>,
-    /// Jeux synchronisés par cet appareil (identifiant ludothèque → émulateur et titre).
+    /// Jeux synchronisés par cet appareil (identifiant ludothèque → émulateur et titre). Facultatif :
+    /// un jeu absent prend l'émulateur par défaut de sa console et le title_id du catalogue.
     #[serde(default)]
     pub jeux: BTreeMap<String, GameConf>,
+    /// Émulateur par défaut par console (`switch = "eden"`), en plus de `DEFAULT_EMULATORS`.
+    #[serde(default)]
+    pub consoles: BTreeMap<String, String>,
+    /// Emplacement imposé d'un émulateur sur cet appareil (`[emulateurs.ryujinx] bin = … data = …`) :
+    /// prime sur la détection.
+    #[serde(default)]
+    pub emulateurs: BTreeMap<String, DeviceSettings>,
+}
+
+/// Émulateur par défaut de chaque console (décision du 14/11 : Ryujinx pour la Switch).
+pub const DEFAULT_EMULATORS: &[(&str, &str)] = &[("switch", "ryujinx")];
+
+/// D'où vient l'emplacement retenu pour un émulateur.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Origin {
+    /// `[emulateurs.<id>]` de la configuration.
+    Config,
+    /// Trouvé sur l'appareil (le texte dit comment).
+    Detected(String),
+    /// Section `[appareil.<nom>]` de la fiche (dernier recours).
+    Fiche,
+}
+
+/// Emplacement retenu pour un émulateur sur cet appareil.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Located {
+    pub bin: String,
+    pub data: PathBuf,
+    pub origin: Origin,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -93,9 +125,14 @@ pub fn journal_path() -> PathBuf {
 
 /// Remplace un `~` initial par le dossier personnel.
 pub fn expand(p: &str) -> PathBuf {
+    expand_in(&home(), p)
+}
+
+/// Remplace un `~` initial par `home`.
+pub fn expand_in(home: &Path, p: &str) -> PathBuf {
     match p.strip_prefix("~/") {
-        Some(rest) => home().join(rest),
-        None if p == "~" => home(),
+        Some(rest) => home.join(rest),
+        None if p == "~" => home.to_path_buf(),
         None => PathBuf::from(p),
     }
 }
@@ -118,6 +155,61 @@ impl Config {
         }
         let text = BUILTIN.iter().find(|(n, _)| *n == id).map(|(_, t)| *t).ok_or_else(|| ConfigError::UnknownFiche(id.into()))?;
         Ok(Fiche::parse(text)?)
+    }
+
+    /// Identifiants de toutes les fiches connues : intégrées, puis celles du dossier `fiches`
+    /// (un émulateur nouveau se déclare en y déposant sa fiche, sans reconstruire `ludo`).
+    pub fn fiche_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = BUILTIN.iter().map(|(n, _)| n.to_string()).collect();
+        if let Some(dir) = &self.fiches {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if p.extension().is_some_and(|x| x == "toml") {
+                        if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                            ids.push(stem.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// Émulateur par défaut d'une console : configuration de l'appareil, sinon `DEFAULT_EMULATORS`.
+    pub fn default_emulator(&self, console: &str) -> Option<String> {
+        self.consoles
+            .get(console)
+            .cloned()
+            .or_else(|| DEFAULT_EMULATORS.iter().find(|(c, _)| *c == console).map(|(_, e)| e.to_string()))
+    }
+
+    /// Émulateur et title_id d'un jeu pour ce profil : la section `[jeux.<id>]` si elle existe (et
+    /// concerne le profil), sinon l'émulateur par défaut de la console avec le title_id du catalogue.
+    /// `None` : jeu non jouable ici (console sans émulateur, title_id inconnu, autre profil).
+    pub fn game_conf(&self, game: &str, profile: &str, catalog: Option<&CatalogGame>) -> Option<GameConf> {
+        if let Some(g) = self.jeux.get(game) {
+            return g.concerns(profile).then(|| g.clone());
+        }
+        let c = catalog.filter(|c| c.id == game)?;
+        let emulateur = self.default_emulator(&c.console)?;
+        let title_id = c.title_id.clone().filter(|t| t.len() == 16 && u64::from_str_radix(t, 16).is_ok())?;
+        Some(GameConf { emulateur, title_id: title_id.to_lowercase(), profils: None })
+    }
+
+    /// Emplacement d'un émulateur sur cet appareil : `[emulateurs.<id>]`, sinon détection, sinon la
+    /// section `[appareil.<nom>]` de la fiche.
+    pub fn locate(&self, fiche: &Fiche, host: &Host) -> Result<Located, ConfigError> {
+        if let Some(s) = self.emulateurs.get(&fiche.id) {
+            return Ok(Located { bin: s.bin.clone(), data: expand_in(&host.home, &s.data), origin: Origin::Config });
+        }
+        if let Some(f) = detect::detect(fiche, host) {
+            return Ok(Located { bin: f.bin, data: f.data, origin: Origin::Detected(f.source) });
+        }
+        let dev = fiche.device(&self.appareil)?;
+        Ok(Located { bin: dev.bin.clone(), data: expand_in(&host.home, &dev.data), origin: Origin::Fiche })
     }
 
     pub fn profile(&self, name: &str) -> Result<&ProfileIds, ConfigError> {
@@ -144,16 +236,16 @@ fn need<T: Clone>(v: &Option<T>, profile: &str, field: &'static str) -> Result<T
 /// Construit l'adaptateur et les variables de gabarit pour (émulateur, profil, jeu).
 pub fn prepare(cfg: &Config, emulator: &str, profile: &str, title_id: &str) -> Result<Prepared, ConfigError> {
     let fiche = cfg.fiche(emulator)?;
-    let dev = fiche.device(&cfg.appareil)?;
+    let loc = cfg.locate(&fiche, &Host::current())?;
     let ids = cfg.profile(profile)?;
     let tid = u64::from_str_radix(title_id, 16).map_err(|_| ConfigError::BadTitleId(title_id.into()))?;
     if title_id.len() != 16 {
         return Err(ConfigError::BadTitleId(title_id.into()));
     }
-    let data = expand(&dev.data);
+    let data = loc.data;
 
     let mut vars: BTreeMap<&'static str, String> = BTreeMap::new();
-    vars.insert("bin", dev.bin.clone());
+    vars.insert("bin", loc.bin);
     vars.insert("data", data.display().to_string());
     vars.insert("profil", profile.into());
     vars.insert("title_id", format!("{tid:016x}"));
@@ -229,5 +321,72 @@ mod tests {
         assert!(old.jeux.is_empty() && old.roms.is_none());
         let with: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"\nroms = \"/jeux/roms\"").unwrap();
         assert_eq!(with.roms, Some(PathBuf::from("/jeux/roms")));
+    }
+
+    fn catalogue(id: &str, console: &str, title_id: Option<&str>) -> CatalogGame {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "console": console, "title": id, "short": id, "title_id": title_id,
+            "art": { "motif": "x", "from": "#000", "to": "#000", "ink": "#fff" },
+            "catalogued": true, "files": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn emulateur_par_defaut_et_section_jeux() {
+        let mut cfg: Config = toml::from_str(
+            "serveur = \"x\"\nappareil = \"pc\"\n[jeux.switch-a]\nemulateur = \"eden\"\ntitle_id = \"0100152000022000\"\nprofils = [\"claire\"]\n",
+        )
+        .unwrap();
+        let tloz = catalogue("switch-b", "switch", Some("0100F2C0115B6000"));
+        // Défaut intégré : Ryujinx pour la Switch, title_id du catalogue (minuscules).
+        let g = cfg.game_conf("switch-b", "guilhem", Some(&tloz)).unwrap();
+        assert_eq!((g.emulateur.as_str(), g.title_id.as_str()), ("ryujinx", "0100f2c0115b6000"));
+        // La section [jeux] l'emporte, et garde sa restriction de profil.
+        assert_eq!(cfg.game_conf("switch-a", "claire", None).unwrap().emulateur, "eden");
+        assert!(cfg.game_conf("switch-a", "guilhem", Some(&catalogue("switch-a", "switch", Some("0100152000022000")))).is_none());
+        // Console sans émulateur, title_id absent ou invalide, catalogue d'un autre jeu : non jouable.
+        assert!(cfg.game_conf("3ds-x", "guilhem", Some(&catalogue("3ds-x", "3ds", None))).is_none());
+        assert!(cfg.game_conf("switch-c", "guilhem", Some(&catalogue("switch-c", "switch", None))).is_none());
+        assert!(cfg.game_conf("switch-d", "guilhem", Some(&catalogue("switch-d", "switch", Some("pas-hexa-du-tout")))).is_none());
+        assert!(cfg.game_conf("switch-b", "guilhem", Some(&catalogue("autre", "switch", Some("0100F2C0115B6000")))).is_none());
+        // Défaut de l'appareil : remplace le défaut intégré.
+        cfg.consoles.insert("switch".into(), "eden".into());
+        assert_eq!(cfg.game_conf("switch-b", "guilhem", Some(&tloz)).unwrap().emulateur, "eden");
+    }
+
+    #[test]
+    fn emplacement_config_puis_detection_puis_fiche() {
+        let t = tempfile::tempdir().unwrap();
+        let host = Host { home: t.path().into(), path: None, system_flatpak: t.path().join("sys") };
+        let mut cfg: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"").unwrap();
+        let fiche = cfg.fiche("ryujinx").unwrap();
+        // Rien d'installé : section [appareil.pc] de la fiche.
+        let l = cfg.locate(&fiche, &host).unwrap();
+        assert_eq!((l.origin, l.bin.as_str()), (Origin::Fiche, "flatpak run io.github.ryubing.Ryujinx"));
+        // Flatpak installé : détecté, mêmes chemins de données que la fiche (sauvegardes au même endroit).
+        std::fs::create_dir_all(t.path().join(".local/share/flatpak/app/io.github.ryubing.Ryujinx")).unwrap();
+        let l = cfg.locate(&fiche, &host).unwrap();
+        assert!(matches!(l.origin, Origin::Detected(_)));
+        assert_eq!(l.data, t.path().join(".var/app/io.github.ryubing.Ryujinx/config/Ryujinx"));
+        // Emplacement imposé : prime sur tout.
+        cfg.emulateurs.insert("ryujinx".into(), DeviceSettings { bin: "/opt/ryu".into(), data: "~/ryu".into() });
+        let l = cfg.locate(&fiche, &host).unwrap();
+        assert_eq!((l.origin, l.bin.as_str(), l.data), (Origin::Config, "/opt/ryu", t.path().join("ryu")));
+        // Appareil inconnu de la fiche et rien détecté : erreur.
+        let thor: Config = toml::from_str("serveur = \"x\"\nappareil = \"thor\"").unwrap();
+        let empty = Host { home: t.path().join("vide"), path: None, system_flatpak: t.path().join("sys") };
+        assert!(thor.locate(&fiche, &empty).is_err());
+    }
+
+    #[test]
+    fn fiches_du_dossier_ajoutees_aux_integrees() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("azahar.toml"), "").unwrap();
+        std::fs::write(t.path().join("notes.txt"), "").unwrap();
+        let mut cfg: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"").unwrap();
+        assert_eq!(cfg.fiche_ids(), ["eden", "ryujinx"]);
+        cfg.fiches = Some(t.path().into());
+        assert_eq!(cfg.fiche_ids(), ["azahar", "eden", "ryujinx"]);
     }
 }

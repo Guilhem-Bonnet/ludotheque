@@ -7,7 +7,7 @@
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { play as playSound, setVolume } from '../lib/sound';
-  import type { DeviceInfo } from '../lib/types';
+  import type { DeviceInfo, Emulator } from '../lib/types';
 
   // Réglages de l'appareil (ceux du profil sont dans l'écran Profil) : son, serveur, synchronisation,
   // appareil, à propos. Enregistrés sur l'appareil, appliqués tout de suite.
@@ -56,6 +56,27 @@
     }
   }
 
+  /* Émulateurs : recherchés à l'ouverture et sur demande (aucun cache : un émulateur installé depuis
+     est vu tout de suite ; un émulateur nouveau se déclare par une fiche dans le dossier de fiches). */
+  let emus = $state<Emulator[]>([]);
+  let emuState = $state<'busy' | 'ok' | 'ko'>('busy');
+  let emuError = $state('');
+  async function scanEmulators(manual = false) {
+    emuState = 'busy';
+    if (manual) feedback('syncStart');
+    try {
+      emus = await api.emulators();
+      emuState = 'ok';
+      if (manual) feedback('saved');
+    } catch (e) {
+      emuError = e instanceof Error ? e.message : String(e);
+      emuState = 'ko';
+      if (manual) feedback('err');
+    }
+  }
+  onMount(() => void scanEmulators());
+  const CONSOLE_NAMES: Record<string, string> = { switch: 'Switch', switch2: 'Switch 2', '3ds': '3DS', ds: 'DS', wiiu: 'Wii U', gc: 'GameCube' };
+
   function toggle(which: 'start' | 'end') {
     if (which === 'start') { syncAtStart = !syncAtStart; store('ludo.syncAtStart', syncAtStart ? '1' : '0'); }
     else { syncAtEnd = !syncAtEnd; store('ludo.syncAtEnd', syncAtEnd ? '1' : '0'); }
@@ -101,6 +122,24 @@
     </section>
 
     <section>
+      <h2>Émulateurs</h2>
+      {#each emus as e (e.id)}
+        <div class="emu" class:missing={!e.found}>
+          <span class="dot" class:on={e.found} aria-hidden="true"></span>
+          <span class="emu-name">{e.name}</span>
+          <span class="emu-consoles">{e.consoles.map((c) => CONSOLE_NAMES[c] ?? c).join(', ')}{#if e.defaultFor.length} · par défaut{/if}</span>
+          <span class="emu-src" title={e.found ? `${e.bin}\n${e.data}` : undefined}>{e.found ? e.source : 'Introuvable'}</span>
+        </div>
+      {/each}
+      {#if emuState === 'ko'}<p class="emu-note">Recherche impossible : {emuError}</p>{/if}
+      <button class="row focusable" data-sound="none" onclick={() => scanEmulators(true)} aria-busy={emuState === 'busy'}>
+        <Icon name="update" size={22} />Rechercher les émulateurs
+        <span class="value">{emuState === 'busy' ? 'Recherche…' : `${emus.filter((e) => e.found).length} trouvé${emus.filter((e) => e.found).length > 1 ? 's' : ''} sur ${emus.length}`}</span>
+      </button>
+      <p class="emu-note">Nouvel émulateur : déposer sa fiche dans le dossier de fiches de l'appareil, puis relancer la recherche.</p>
+    </section>
+
+    <section>
       <h2>Appareil</h2>
       <div class="row static"><Icon name={device.kind} size={22} />Nom<span class="value">{device.name}</span></div>
       <div class="row static"><Icon name="download" size={22} />Espace libre<span class="value">{device.freeSpace}</span></div>
@@ -139,5 +178,13 @@
   .switch span { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform var(--t-std) var(--ease-pop); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); }
   .switch.on { background: var(--accent); }
   .switch.on span { transform: translateX(20px); }
+  .emu { display: grid; grid-template-columns: 12px 120px 1fr auto; align-items: center; gap: 12px; padding: 8px 18px; font-size: 15px; color: var(--ink); }
+  .emu.missing { color: var(--ink-3); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, 0.2); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .emu-name { font-weight: 600; }
+  .emu-consoles { color: var(--ink-3); font-size: 14px; }
+  .emu-src { color: var(--ink-2); font-size: 13px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .emu-note { margin: 2px 18px 0; font-size: 13px; color: var(--ink-3); }
   @media (prefers-reduced-motion: reduce) { .row.focusable:focus { transform: none; } }
 </style>

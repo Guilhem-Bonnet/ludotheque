@@ -118,6 +118,8 @@ fn rig(bin: Option<&str>) -> Rig {
         roms: Some(dir.path().join("device-roms")),
         profils: BTreeMap::from([("claire".to_string(), Default::default())]),
         jeux: BTreeMap::from([(game.clone(), GameConf { emulateur: "fake".into(), title_id: TITLE.into(), profils: None })]),
+        consoles: BTreeMap::new(),
+        emulateurs: BTreeMap::new(),
     };
     let journal = dir.path().join("journal.json");
     Rig { url, dir, cfg, journal, lock: Mutex::new(()), game, store }
@@ -434,4 +436,25 @@ fn rom_hors_ligne_choix_deterministe() {
         fs::write(t.path().join("switch").join(n), "x").unwrap();
     }
     assert!(launch::find_rom_offline(t.path(), "0100152000022000").unwrap().ends_with("switch/a [0100152000022000].nsp"));
+}
+
+#[test]
+fn jeu_sans_section_jeux_lance_avec_l_emulateur_par_defaut_de_la_console() {
+    let mut r = rig(None);
+    r.cfg.jeux.clear();
+    // Aucun réglage : défaut intégré (Ryujinx pour la Switch) ; ici le profil n'a pas d'identifiant
+    // Ryujinx, donc erreur claire avant toute action, rien de lancé.
+    let mut o = obs(&r);
+    let err = launch::launch(&r.env(), &r.key(), &mut o).unwrap_err();
+    assert!(err.to_string().contains("ryujinx_user_id"), "{err}");
+    assert!(!r.marker().exists());
+    assert!(r.lease_free());
+
+    // Émulateur par défaut déclaré : title_id lu dans le catalogue du serveur, partie jouée.
+    r.cfg.consoles.insert("switch".into(), "fake".into());
+    let mut o = obs(&r);
+    let out = launch::launch(&r.env(), &r.key(), &mut o).unwrap();
+    assert!(matches!(out, LaunchOutcome::Played { exit_ok: true, .. }), "{out:?}");
+    assert!(r.marker().exists(), "émulateur lancé");
+    assert!(r.save_dir().join("save.dat").exists(), "sauvegarde rangée sous le title_id du catalogue");
 }

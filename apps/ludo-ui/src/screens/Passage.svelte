@@ -260,7 +260,7 @@
 </script>
 
 <div class="screen" class:launching data-modal={busy ? "" : undefined}>
-  <Ambiance art={preparation.game.art} x={14} />
+  <Ambiance art={preparation.game.art} cover={preparation.game.cover} background={preparation.game.background} x={14} dim />
   <main>
     <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero shine={launching} lifting={launching} /></div>
     <div class="side" class:dim={launching}>

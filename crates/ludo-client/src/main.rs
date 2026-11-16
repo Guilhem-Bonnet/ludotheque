@@ -68,6 +68,8 @@ enum Cmd {
     },
     /// État des sauvegardes connues de cet appareil.
     Statut,
+    /// Émulateurs connus et ce qui en est trouvé sur cet appareil (lecture seule, sans cache).
+    Emulateurs,
 }
 
 struct Ctx {
@@ -198,6 +200,27 @@ fn main() -> ExitCode {
                 Ok(exit_for(&o).unwrap_or(ExitCode::SUCCESS))
             }
             Cmd::Run { jeu, rom, jouer_ici } => run(&mut ctx, &jeu, &rom, jouer_ici),
+            Cmd::Emulateurs => {
+                let host = ludo_client::detect::Host::current();
+                for id in ctx.cfg.fiche_ids() {
+                    let fiche = ctx.cfg.fiche(&id).map_err(|e| format!("{id} : {e}"))?;
+                    let defaut: Vec<&str> =
+                        fiche.consoles.iter().filter(|c| ctx.cfg.default_emulator(c).as_deref() == Some(id.as_str())).map(String::as_str).collect();
+                    let defaut = if defaut.is_empty() { String::new() } else { format!(" (par défaut : {})", defaut.join(", ")) };
+                    match ctx.cfg.locate(&fiche, &host) {
+                        Ok(l) => {
+                            let origine = match l.origin {
+                                config::Origin::Config => "réglage de l'appareil".to_string(),
+                                config::Origin::Detected(s) => s,
+                                config::Origin::Fiche => "chemin de la fiche (non vérifié)".to_string(),
+                            };
+                            println!("{id}{defaut}\t{origine}\n\tlancement : {}\n\tdonnées : {}", l.bin, l.data.display());
+                        }
+                        Err(e) => println!("{id}{defaut}\tintrouvable ({e})"),
+                    }
+                }
+                Ok(ExitCode::SUCCESS)
+            }
             Cmd::Statut => {
                 for (k, e) in ctx.journal.entries() {
                     let etat = if e.conflict {

@@ -7,7 +7,7 @@
   import { play } from '../lib/play';
   import { api } from '../lib/api';
   import { feedback } from '../lib/feedback';
-  import { focusFirst } from '../lib/nav';
+  import { focusFirst, virtualKey } from '../lib/nav';
   import { router } from '../lib/router.svelte';
   import type { Console, DeviceInfo, Game } from '../lib/types';
 
@@ -114,12 +114,12 @@
     </div>
     <div class="line">
       <div class="tabs" role="tablist" aria-label="Consoles">
-        <span class="bumper">L1</span>
+        <button class="bumper" tabindex="-1" aria-label="Onglet précédent" onpointerdown={(e) => e.preventDefault()} onclick={() => virtualKey('L1')}>L1</button>
         <span class="indicator" class:ready={indicator.ready} style:transform="translateX({indicator.x}px)" style:width="{indicator.w}px" aria-hidden="true"></span>
         {#each TABS as t, i (t.id)}
           <button role="tab" aria-selected={i === tab} class="tab" class:on={i === tab} bind:this={tabEls[i]} onclick={() => (tab = i)} tabindex="-1">{t.label}</button>
         {/each}
-        <span class="bumper">R1</span>
+        <button class="bumper" tabindex="-1" aria-label="Onglet suivant" onpointerdown={(e) => e.preventDefault()} onclick={() => virtualKey('R1')}>R1</button>
       </div>
       <div class="filters">
         <button class="pill focusable" aria-pressed={filter === 'installes'} onclick={() => toggle('installes')}>Installés</button>
@@ -166,7 +166,7 @@
   .tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; position: relative; }
   .indicator { position: absolute; left: 0; top: 50%; height: 38px; margin-top: -19px; border-radius: var(--radius-control); background: var(--accent); z-index: 0; }
   .indicator.ready { transition: transform 260ms var(--ease-land), width 260ms var(--ease-land); }
-  .bumper { font-size: 12px; font-weight: 700; color: var(--ink-4); border: 1.5px solid var(--hint); border-radius: 6px; padding: 2px 6px; margin: 0 6px; }
+  .bumper { all: unset; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink-2); border: 1.5px solid rgba(255, 255, 255, 0.35); border-radius: 6px; padding: 2px 6px; margin: 0 6px; }
   .tab { all: unset; cursor: pointer; font-size: 16px; padding: 9px 16px; border-radius: var(--radius-control); color: var(--ink-2); }
   .tabs .tab { position: relative; z-index: 1; }
   .tab.on { color: var(--ground); font-weight: 600; }
