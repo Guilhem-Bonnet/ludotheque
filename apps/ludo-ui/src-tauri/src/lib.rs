@@ -337,6 +337,9 @@ pub struct UiGame {
     /// URL absolue de l'image du jeu (serveur configuré + chemin du catalogue), si le serveur en a une.
     #[serde(skip_serializing_if = "Option::is_none")]
     cover: Option<String>,
+    /// URL absolue de l'image de fond grand format, si le serveur en a une.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background: Option<String>,
     emulator: String,
     install: &'static str,
     sync: &'static str,
@@ -515,6 +518,7 @@ pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
                 tile_ink: tile_ink(&g.art.to).into(),
                 art: g.art.clone(),
                 cover: g.cover.as_ref().map(|c| cover_url(env.server, c)),
+                background: g.background.as_ref().map(|c| cover_url(env.server, c)),
                 emulator: emulator_label((env.emulator)(&g.id).as_deref(), &g.console),
                 install: install_state(&g.files, env.exists),
                 sync: sync_state((env.journal)(&g.id).as_ref(), save.is_some()),
@@ -1217,6 +1221,7 @@ mod tests {
             title_id: None,
             art: GameArt { motif: "manoir".into(), from: "#22e08f".into(), to: "#0a5a78".into(), ink: None },
             cover: None,
+            background: None,
             catalogued: true,
             files,
         }

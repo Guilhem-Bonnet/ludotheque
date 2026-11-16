@@ -63,6 +63,8 @@ export interface Game {
   art?: Art;
   /** URL absolue de l'image du jeu (absente tant que le serveur n'en a pas). */
   cover?: string;
+  /** Image de fond grand format (URL absolue), affichée légèrement floutée derrière l'écran. */
+  background?: string;
   emulator: string;
   install: InstallState;
   progress?: number;

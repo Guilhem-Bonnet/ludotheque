@@ -151,7 +151,7 @@
 </script>
 
 <div class="screen">
-  <Ambiance art={game.art} cover={game.cover} x={14} dim />
+  <Ambiance art={game.art} cover={game.cover} background={game.background} x={14} dim />
   <main>
     <aside>
       <div class="art"><Tile {game} size={320} big still hero={router.heroGame === game.id} /></div>

@@ -539,3 +539,29 @@ async fn image_lecture_refuse_traversee() {
         assert_ne!(b, png(), "{uri}");
     }
 }
+
+#[tokio::test]
+async fn image_de_fond_separee_de_la_jaquette() {
+    let a = app();
+    a.store.rescan().unwrap();
+    let put_bg = |id: &str, body: Vec<u8>| Request::put(format!("/api/v1/games/{id}/background")).body(Body::from(body)).unwrap();
+    let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    jpg.extend_from_slice(&[3; 50]);
+    let (s, _, _) = call(&a, put_bg("switch-lm3", jpg.clone())).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let games = catalog(&a).await;
+    let g = find(&games, "switch-lm3");
+    // Le fond ne devient pas la jaquette.
+    assert!(g.cover.is_none());
+    let url = g.background.clone().expect("fond présent");
+    assert!(url.starts_with("/api/v1/games/switch-lm3/background?v="), "{url}");
+    let (s, h, b) = call(&a, Request::get(&url).body(Body::empty()).unwrap()).await;
+    assert_eq!((s, h[header::CONTENT_TYPE].to_str().unwrap(), b), (StatusCode::OK, "image/jpeg", jpg));
+    // Mêmes gardes que la jaquette : contenu, jeu inconnu, traversée.
+    let (s, _, _) = call(&a, put_bg("switch-lm3", b"<svg/>".to_vec())).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _, _) = call(&a, put_bg("switch-fantome", png())).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _, _) = call(&a, Request::get("/api/v1/games/..%2Fbackgrounds%2Fswitch-lm3/background").body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}

@@ -9,7 +9,9 @@
   // voile qui garde le texte lisible (`dim` : plus fort sur les écrans chargés de texte, comme la fiche).
   // Changer de jeu fait un fondu enchaîné ; la même ambiance suit le jeu de l'accueil à l'écran de
   // passage et à la fiche, pour que la tuile reste dans « son » monde pendant le vol.
-  let { art, cover, x = 18, key, dim = false }: { art?: Art; cover?: string; x?: number; key?: string; dim?: boolean } = $props();
+  // `background` : image grand format du jeu (bannière), à peine floutée pour rester reconnaissable ;
+  // à défaut, la jaquette, plus floutée (un carré agrandi en plein écran ne tient pas net).
+  let { art, cover, background, x = 18, key, dim = false }: { art?: Art; cover?: string; background?: string; x?: number; key?: string; dim?: boolean } = $props();
 
   const wash = $derived(
     art
@@ -18,7 +20,10 @@
   );
   // Une image qui ne charge pas retombe sur la couleur de la jaquette.
   let failed = $state('');
-  const photo = $derived(cover && failed !== cover ? cover : undefined);
+  const wide = $derived(!!background && failed !== background);
+  const photo = $derived(wide ? background : cover && failed !== cover ? cover : undefined);
+  // Fond de petite taille (captures 3DS/DS en 400×240) : un peu plus flouté pour ne pas pixeliser.
+  let small = $state(false);
   const d = () => (reducedMotion() ? 0 : 520);
 </script>
 
@@ -27,7 +32,7 @@
     <div class="layer" in:fade={{ duration: d() }} out:fade={{ duration: d() }}>
       {#if wash}<div class="wash" style:background={wash}></div>{/if}
       {#if photo}
-        <img class="photo" src={photo} alt="" draggable="false" onerror={() => (failed = photo ?? '')} />
+        <img class="photo" class:wide class:small src={photo} onload={(e) => (small = (e.currentTarget as HTMLImageElement).naturalWidth < 900)} alt="" draggable="false" onerror={() => (failed = photo ?? '')} />
       {/if}
     </div>
   {/key}
@@ -41,11 +46,14 @@
   /* Image du jeu : agrandie pour que le flou ne laisse pas de bord clair, saturée pour garder la couleur. */
   .photo {
     position: absolute; inset: -8%; width: 116%; height: 116%; object-fit: cover;
-    filter: blur(48px) saturate(1.35) brightness(0.62); transform: scale(1.05);
+    filter: blur(18px) saturate(1.25) brightness(0.6); transform: scale(1.05);
+  }
+  .photo.wide { inset: -3%; width: 106%; height: 106%; filter: blur(4px) saturate(1.1) brightness(0.62); transform: scale(1.02); }
+  .photo.wide.small { filter: blur(10px) saturate(1.15) brightness(0.6);
   }
   @media (prefers-reduced-motion: no-preference) {
     .photo { animation: drift 24s ease-in-out infinite alternate; }
-    @keyframes drift { from { transform: scale(1.05) translate(0, 0); } to { transform: scale(1.12) translate(-1.5%, 1%); } }
+    @keyframes drift { from { transform: scale(1.04) translate(0, 0); } to { transform: scale(1.09) translate(-1%, 0.6%); } }
   }
   /* Voile : un halo lumineux au-dessus de la tuile, le bas assombri pour les raccourcis et les textes. */
   .veil { position: absolute; inset: 0; transition: background 520ms var(--ease-land); }
