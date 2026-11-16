@@ -8,4 +8,5 @@ pub mod engine;
 pub mod install;
 pub mod journal;
 pub mod launch;
+pub mod local;
 pub mod layout;

@@ -643,14 +643,16 @@ fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSu
     let prefix = format!("{profile}/");
     let entries: BTreeMap<String, Entry> =
         journal.entries().filter_map(|(k, e)| k.strip_prefix(&prefix).map(|g| (g.to_string(), e.clone()))).collect();
+    // Collection déjà présente sur l'appareil (dossiers déclarés, dossiers de jeux des émulateurs).
+    let local = ludo_client::local::LocalIndex::scan(cfg, &ludo_client::detect::Host::current());
     let library = build_library(
         &games,
         &LibraryEnv {
             saves: &saves,
             journal: &|g| entries.get(g).cloned(),
             emulator: &|g| cfg.game_conf(g, profile, games.iter().find(|c| c.id == g)).map(|c| c.emulateur),
-            // Présent tel quel, ou converti par le serveur (`.nsz` installé en `.nsp`).
-            exists: &|p| cfg.roms.as_ref().is_some_and(|r| r.join(p).exists() || install::converted_rel(p).is_some_and(|c| r.join(c).exists())),
+            // Dossier de la Ludothèque (tel quel ou converti par le serveur), sinon collection existante.
+            exists: &|p| local.locate(cfg.roms.as_deref(), p).is_some(),
             to_local: &local_time,
             today: Local::now().date_naive(),
             server: &cfg.serveur,
@@ -952,6 +954,14 @@ async fn uninstall_game(game: String) -> Result<(), String> {
         let cfg = load_config()?;
         let roms = roms_dir(&cfg)?;
         let g = find_game(&Client::new(&cfg.serveur), &game)?;
+        // Jeu de la collection existante (hors dossier de la Ludothèque) : jamais supprimé d'ici.
+        let in_roms = g.files.iter().any(|f| roms.join(&f.path).exists() || install::converted_rel(&f.path).is_some_and(|c| roms.join(c).exists()));
+        if !in_roms {
+            let local = ludo_client::local::LocalIndex::scan(&cfg, &ludo_client::detect::Host::current());
+            if let Some(p) = g.files.iter().find_map(|f| local.find(&g.console, &f.path)) {
+                return Err(format!("Jeu de la collection de l'appareil ({}) : à retirer depuis ce dossier, la Ludothèque n'y supprime rien", p.parent().unwrap_or(p).display()));
+            }
+        }
         install::uninstall(&roms, &g.files).map(|_| ()).map_err(|e| e.to_string())
     })
     .await

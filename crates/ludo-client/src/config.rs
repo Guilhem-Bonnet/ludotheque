@@ -62,6 +62,10 @@ pub struct Config {
     /// Émulateur par défaut par console (`switch = "eden"`), en plus de `DEFAULT_EMULATORS`.
     #[serde(default)]
     pub consoles: BTreeMap<String, String>,
+    /// Collection déjà présente sur l'appareil, par console (`switch = ["/mnt/games/Rom/cartoucheSwitch"]`) :
+    /// ses jeux comptent comme installés (reconnus par leur nom de fichier), sans copie.
+    #[serde(default)]
+    pub dossiers: BTreeMap<String, Vec<String>>,
     /// Emplacement imposé d'un émulateur sur cet appareil (`[emulateurs.ryujinx] bin = … data = …`) :
     /// prime sur la détection.
     #[serde(default)]

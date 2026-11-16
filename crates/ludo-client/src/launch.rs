@@ -312,7 +312,9 @@ fn play(
         Ok(games) => {
             let game = games.into_iter().find(|g| g.id == key.game).ok_or_else(|| fail("Jeu introuvable sur le serveur"))?;
             let base = game.files.iter().find(|f| f.role == FileRole::Base).ok_or_else(|| fail("Aucun fichier de base pour ce jeu sur le serveur"))?;
-            match installed_rom(&roms, &base.path) {
+            // Dossier de la Ludothèque, sinon collection déjà présente (lancée sur place, jamais copiée).
+            let local = crate::local::LocalIndex::scan(cfg, &crate::detect::Host::current());
+            match installed_rom(&roms, &base.path).or_else(|| local.find(&game.console, &base.path).cloned()) {
                 Some(rom) => {
                     obs.step(Step::Telechargement, StepState::Fait, Some("Jeu installé".into()));
                     rom
