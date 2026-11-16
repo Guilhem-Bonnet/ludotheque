@@ -296,6 +296,12 @@ const demoApi: LudoApi = {
  * App réelle (Tauri) : chaque appel passe par une commande Rust, et une erreur remonte telle quelle
  * (message en français) pour que l'écran l'affiche. Aucune donnée de démonstration dans l'app.
  */
+/**
+ * Commande absente de l'app Rust : messages exacts de Tauri 2 (« Command xyz not found », refus
+ * d'autorisation), pour ne jamais confondre avec une erreur réseau comme « host not found ».
+ */
+const commandMissing = (e: unknown) => /^Command \S+ not found$| not allowed( on |\. (Plugin|Command) not found)/.test(String(e));
+
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
     return await invoke<T>(cmd, args);
