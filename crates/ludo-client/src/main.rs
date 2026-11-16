@@ -270,6 +270,9 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
             Ok(LeaseOutcome::Granted { .. }) => {}
             Err(e) => return Err(format!("serveur injoignable : {e}")),
         }
+        // Entrée du journal avant la synchronisation : rétablie si la sauvegarde ne peut pas être
+        // reposée sur l'appareil (sinon l'ancienne version restée là passerait pour une modification).
+        let journal_before = journal.get(&key);
         let result = (|| -> Result<SyncOutcome, String> {
             for ((local, remote), present) in pairs.iter().zip(&present_remote) {
                 if *present {
@@ -290,7 +293,10 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
             if matches!(out, SyncOutcome::Downloaded { .. }) {
                 for (local, remote) in &pairs {
                     if local.is_dir() {
-                        dev.push_replace(local, remote, &stamp).map_err(|e| e.to_string())?;
+                        if let Err(e) = dev.push_replace(local, remote, &stamp) {
+                            let _ = engine.journal.set(&key, journal_before.clone());
+                            return Err(format!("{e} (journal rétabli, rien n'a été remplacé sur l'appareil)"));
+                        }
                     }
                 }
             }

@@ -109,9 +109,16 @@ impl Adb {
             // Reste d'un envoi interrompu : mis de côté, pas supprimé.
             self.shell(&format!("mv {} {}", sq(&staging), sq(&format!("{staging}-{stamp}"))))?;
         }
-        // `adb push <dossier local> <chemin absent>` crée <chemin> avec le contenu du dossier local.
-        ok(self.adb().arg("push").arg(local).arg(&staging).output()?, "push")?;
-        self.shell(&format!("chmod -R ug+rwX {}", sq(&staging)))?;
+        // `adb push` ne peut pas créer de dossier dans Android/data (« secure_mkdirs : Operation not
+        // permitted ») : dépôt dans /data/local/tmp (à l'utilisateur shell), puis copie par le shell,
+        // qui a le droit d'écrire dans Android/data (groupe ext_data_rw).
+        let tmp = format!("/data/local/tmp/ludo-{stamp}-{}", std::process::id());
+        self.shell(&format!("mkdir -p {}", sq(&tmp)))?;
+        let depot = format!("{tmp}/dossier");
+        let pushed = ok(self.adb().arg("push").arg(local).arg(&depot).output()?, "push")
+            .and_then(|_| self.shell(&format!("cp -r {} {} && chmod -R ug+rwX {}", sq(&depot), sq(&staging), sq(&staging))));
+        let _ = self.shell(&format!("rm -r {}", sq(&tmp)));
+        pushed?;
         let script = format!(
             "if [ -d {r} ]; then mv {r} {o}; fi && mv {s} {r}",
             r = sq(remote),
