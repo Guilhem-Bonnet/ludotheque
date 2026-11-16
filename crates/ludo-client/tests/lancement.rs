@@ -121,6 +121,7 @@ fn rig(bin: Option<&str>) -> Rig {
         consoles: BTreeMap::new(),
         emulateurs: BTreeMap::new(),
         dossiers: BTreeMap::new(),
+        adb: None,
     };
     let journal = dir.path().join("journal.json");
     Rig { url, dir, cfg, journal, lock: Mutex::new(()), game, store }

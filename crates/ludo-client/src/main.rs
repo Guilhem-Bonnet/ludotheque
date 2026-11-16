@@ -65,11 +65,32 @@ enum Cmd {
         /// Jouer ici même si une partie est en cours sur un autre appareil.
         #[arg(long)]
         jouer_ici: bool,
+        /// Partie jouée en flux depuis cet appareil client (Moonlight) : le verrou porte son nom
+        /// (`pc-via-thor`). Par défaut : `SUNSHINE_CLIENT_NAME`, fourni par Sunshine.
+        #[arg(long, env = "SUNSHINE_CLIENT_NAME")]
+        via: Option<String>,
+        /// Lanceur qui remplace `{bin}` de la fiche (ex. `~/.local/bin/ryu-stream` en flux : manette
+        /// Sunshine, génération d'images). Les arguments de la fiche (profil, ROM) lui sont passés.
+        #[arg(long)]
+        lanceur: Option<String>,
     },
     /// État des sauvegardes connues de cet appareil.
     Statut,
     /// Émulateurs connus et ce qui en est trouvé sur cet appareil (lecture seule, sans cache).
     Emulateurs,
+    /// Synchronise, depuis ce PC, les sauvegardes d'un appareil Android branché en adb (USB ou Wi-Fi),
+    /// décrit par une configuration dédiée (`--config ~/.config/ludo/thor.toml`, section `[adb]`).
+    AdbSync {
+        /// Profil (absent = profil par défaut de la configuration de l'appareil).
+        #[arg(long)]
+        profil: Option<String>,
+        /// Un seul jeu (identifiant ludothèque).
+        #[arg(long)]
+        jeu: Option<String>,
+        /// Choix en cas de conflit de sauvegarde (sinon le conflit est signalé, rien n'est écrit).
+        #[arg(long, value_enum)]
+        resoudre: Option<Choix>,
+    },
     /// Jeux du catalogue et leurs fichiers trouvés sur cet appareil (dossier de la Ludothèque ou
     /// collection existante). Lecture seule.
     Jeux,
@@ -131,9 +152,10 @@ fn exit_for(o: &SyncOutcome) -> Option<ExitCode> {
     }
 }
 
-fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool) -> Result<ExitCode, String> {
+fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool, via: Option<&str>, lanceur: Option<&str>) -> Result<ExitCode, String> {
     let key = key_for(ctx, jeu)?;
-    let device = ctx.cfg.appareil.clone();
+    // En flux (Moonlight), le verrou dit d'où l'on joue : « pc-via-thor ».
+    let device = via.map_or_else(|| ctx.cfg.appareil.clone(), |c| launch::stream_device(&ctx.cfg.appareil, c));
 
     // Verrou de partie (souple). Hors ligne : on joue quand même.
     let online = match ctx.client.acquire_lease(&key, &device, jouer_ici) {
@@ -157,7 +179,10 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool) -> Resu
         return Ok(code);
     }
 
-    let prepared = config::prepare(&ctx.cfg, &jeu.emulateur, &key.profile, &jeu.title_id).map_err(|e| e.to_string())?;
+    let mut prepared = config::prepare(&ctx.cfg, &jeu.emulateur, &key.profile, &jeu.title_id).map_err(|e| e.to_string())?;
+    if let Some(l) = lanceur {
+        prepared.vars.insert("bin", l.to_string());
+    }
     let argv = config::launch_command(&prepared, rom).map_err(|e| e.to_string())?;
     let (bin, args) = argv.split_first().ok_or("commande de lancement vide")?;
     let started = Instant::now();
@@ -169,9 +194,14 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool) -> Resu
         if online {
             s.spawn(|| launch::heartbeat(client, &key, &device, &stop));
         }
-        std::process::Command::new(bin).args(args).status()
+        // SIGTERM (fin du flux Sunshine) : émulateur arrêté proprement, puis sauvegarde envoyée.
+        launch::run_emulator(bin, args, launch::EMULATOR_GRACE)
     })
     .map_err(|e| format!("Échec du lancement : {e}"))?;
+    let (status, stopped) = status;
+    if stopped {
+        println!("Arrêt demandé : émulateur fermé, envoi de la sauvegarde");
+    }
     let elapsed = started.elapsed().as_secs();
     if !status.success() {
         println!("Émulateur terminé avec une erreur ({status}) – sauvegarde quand même synchronisée");
@@ -185,6 +215,114 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool) -> Resu
         let _ = ctx.client.release_lease(&key, &device);
     }
     Ok(exit_for(&after).unwrap_or(ExitCode::SUCCESS))
+}
+
+/// Synchronisation d'un appareil Android par adb, jeu par jeu (voir `ludo_client::adb`).
+fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: Option<Choix>) -> Result<ExitCode, String> {
+    use ludo_client::adb::{self, Adb};
+    let conf = ctx.cfg.adb.as_ref().ok_or("section [adb] absente de la configuration")?;
+    let Some(dev) = Adb::find(&conf.series) else {
+        println!("{} non connecté (adb) : rien à faire", ctx.cfg.appareil);
+        return Ok(ExitCode::SUCCESS);
+    };
+    let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
+    let games = ctx.client.games().map_err(|e| e.to_string())?;
+    // ROM présentes sur l'appareil (par nom, formats équivalents) : jeux à suivre même sans sauvegarde.
+    let roms: std::collections::BTreeSet<(String, String)> = conf
+        .roms
+        .as_deref()
+        .map(|r| ["switch", "switch2", "n3ds", "3ds", "nds", "ds"].iter().flat_map(|c| dev.list(&format!("{r}/{c}"))).map(|n| ludo_client::local::match_key(&n)).collect())
+        .unwrap_or_default();
+    let journal_path = config::journal_path().with_file_name(format!("journal-{}.json", ctx.cfg.appareil));
+    let mut journal = Journal::open(&journal_path).map_err(|e| e.to_string())?;
+    let stamp = chrono_stamp();
+    let mut code = ExitCode::SUCCESS;
+    for g in games.iter().filter(|g| only.as_deref().is_none_or(|j| j == g.id)) {
+        let Some(gc) = ctx.cfg.game_conf(&g.id, &profile, Some(g)) else { continue };
+        let Some(package) = adb::package_of(&ctx.cfg, &gc.emulateur) else { continue };
+        let mirror = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let (prepared, pairs) = match adb::prepare_mirrored(&ctx.cfg, &gc, &profile, mirror.path()) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("{}\t{e}", g.id);
+                continue;
+            }
+        };
+        let present_remote: Vec<bool> = pairs.iter().map(|(_, r)| dev.is_dir(r)).collect();
+        let has_rom = g.files.iter().any(|f| roms.contains(&ludo_client::local::match_key(&f.path)));
+        let key = SaveKey { profile: profile.clone(), game: g.id.clone() };
+        let on_server = ctx.client.head(&key).ok().flatten().is_some();
+        // À suivre : sauvegarde déjà sur l'appareil, ROM présente, ou jeu demandé explicitement.
+        let wanted = present_remote.iter().any(|p| *p) || has_rom || (on_server && only.is_some());
+        if !wanted {
+            continue;
+        }
+        if dev.running(&package) {
+            println!("{}\tÉmulateur en cours sur l'appareil : ignoré", g.id);
+            continue;
+        }
+        let device = ctx.cfg.appareil.clone();
+        match ctx.client.acquire_lease(&key, &device, false) {
+            Ok(LeaseOutcome::HeldElsewhere { lease }) => {
+                println!("{}\tEn cours sur {}", g.id, launch::holder_device(&lease.device));
+                continue;
+            }
+            Ok(LeaseOutcome::Granted { .. }) => {}
+            Err(e) => return Err(format!("serveur injoignable : {e}")),
+        }
+        // Entrée du journal avant la synchronisation : rétablie si la sauvegarde ne peut pas être
+        // reposée sur l'appareil (sinon l'ancienne version restée là passerait pour une modification).
+        let journal_before = journal.get(&key);
+        let result = (|| -> Result<SyncOutcome, String> {
+            for ((local, remote), present) in pairs.iter().zip(&present_remote) {
+                if *present {
+                    dev.pull_dir(remote, local).map_err(|e| e.to_string())?;
+                }
+            }
+            let playtime_s = launch::head_playtime(&ctx.client, &key).unwrap_or(0);
+            let mut engine = Engine { client: &ctx.client, journal: &mut journal, device: device.clone(), emulator: gc.emulateur.clone(), playtime_s };
+            let mut out = engine.sync(&key, prepared.layout.as_ref()).map_err(|e| e.to_string())?;
+            if let (SyncOutcome::Conflict { .. }, Some(choice)) = (&out, resoudre) {
+                let r = match choice {
+                    Choix::Local => Resolution::KeepLocal,
+                    Choix::Serveur => Resolution::KeepServer,
+                };
+                out = engine.resolve(&key, prepared.layout.as_ref(), r).map_err(|e| e.to_string())?;
+            }
+            // Sauvegarde du serveur installée dans le miroir : la reposer sur l'appareil.
+            if matches!(out, SyncOutcome::Downloaded { .. }) {
+                for (local, remote) in &pairs {
+                    if local.is_dir() {
+                        if let Err(e) = dev.push_replace(local, remote, &stamp) {
+                            let _ = engine.journal.set(&key, journal_before.clone());
+                            return Err(format!("{e} (journal rétabli, rien n'a été remplacé sur l'appareil)"));
+                        }
+                    }
+                }
+            }
+            Ok(out)
+        })();
+        let _ = ctx.client.release_lease(&key, &device);
+        match result {
+            Ok(o) => {
+                println!("{}\t{}", g.id, label(&o));
+                if exit_for(&o).is_some() {
+                    code = ExitCode::from(2);
+                }
+            }
+            Err(e) => {
+                println!("{}\tÉchec : {e}", g.id);
+                code = ExitCode::from(1);
+            }
+        }
+    }
+    Ok(code)
+}
+
+/// Horodatage pour nommer les dossiers mis de côté (`.ludo-old-20261116-0712`).
+fn chrono_stamp() -> String {
+    let out = std::process::Command::new("date").arg("+%Y%m%d-%H%M%S").output();
+    out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "ancien".into())
 }
 
 fn main() -> ExitCode {
@@ -202,7 +340,8 @@ fn main() -> ExitCode {
                 println!("{}", label(&o));
                 Ok(exit_for(&o).unwrap_or(ExitCode::SUCCESS))
             }
-            Cmd::Run { jeu, rom, jouer_ici } => run(&mut ctx, &jeu, &rom, jouer_ici),
+            Cmd::Run { jeu, rom, jouer_ici, via, lanceur } => run(&mut ctx, &jeu, &rom, jouer_ici, via.as_deref(), lanceur.as_deref()),
+            Cmd::AdbSync { profil, jeu, resoudre } => adb_sync(&ctx, profil, jeu, resoudre),
             Cmd::Jeux => {
                 let local = ludo_client::local::LocalIndex::scan(&ctx.cfg, &ludo_client::detect::Host::current());
                 for (c, d) in &local.roots {
