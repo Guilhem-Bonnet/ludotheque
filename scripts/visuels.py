@@ -135,10 +135,22 @@ def requete(url, methode="GET", data=None, entetes=None, delai=120):
     return urllib.request.urlopen(req, timeout=delai)
 
 
+def est_image(data):
+    """PNG, JPEG ou WebP, d'après les octets (mêmes règles que le serveur)."""
+    return data[:8] == b"\x89PNG\r\n\x1a\n" or data[:3] == b"\xff\xd8\xff" or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")
+
+
 def telecharger(url, dest):
-    """Télécharge `url` vers `dest` (cache : jamais deux fois). Renvoie True si le fichier est là."""
+    """Télécharge `url` vers `dest` (cache : jamais deux fois). Renvoie True si le fichier est là.
+    Pour une image, le contenu est vérifié : une page d'erreur servie en 200 (libretro renvoie parfois
+    un avertissement PHP) n'est ni gardée ni envoyée, et un tel fichier déjà en cache est ignoré."""
+    image = dest.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
     if os.path.exists(dest) and os.path.getsize(dest) > 0:
-        return True
+        if not image:
+            return True
+        with open(dest, "rb") as f:
+            if est_image(f.read(16)):
+                return True
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     try:
         with requete(url) as r:
@@ -147,7 +159,7 @@ def telecharger(url, dest):
         return False
     finally:
         time.sleep(PAUSE_S)
-    if not data:
+    if not data or (image and not est_image(data)):
         return False
     tmp = dest + ".part"
     with open(tmp, "wb") as f:
