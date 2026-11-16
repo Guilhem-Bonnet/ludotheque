@@ -20,3 +20,17 @@ data = "~/Emulation/storage/eden"
 [appareil.thor]
 bin  = "dev.eden.eden_emulator"
 data = "/sdcard/Android/data/dev.eden.eden_emulator/files"
+
+# Détection (du préféré au moins préféré) : le premier moyen trouvé sur l'appareil l'emporte sur
+# les sections [appareil.*] ci-dessus. Le Flatpak garde exactement les chemins mesurés le 15/11.
+[[detection]]
+flatpak = "dev.eden_emu.eden"
+data    = ["~/.var/app/dev.eden_emu.eden/data/eden"]
+
+[[detection]]
+appimage = "Eden*.AppImage"
+data     = ["~/Emulation/storage/eden", "~/.local/share/eden"]
+
+[[detection]]
+commande = "eden"
+data     = ["~/.local/share/eden"]

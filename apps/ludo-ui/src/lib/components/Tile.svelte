@@ -47,6 +47,20 @@
   // Une image qui ne charge pas (serveur hors ligne, CSP) retombe sur la jaquette illustrée.
   let failed = $state('');
   const cover = $derived(game.cover && failed !== game.cover ? game.cover : undefined);
+  // Boîtier aux couleurs de la console (vraie image seulement) : liseré tout autour et bandeau en haut
+  // avec le nom de la console et l'état, comme la tranche colorée d'une boîte de jeu. Teintes propres
+  // à l'app, inspirées des boîtes de chaque console ; texte sombre sur les bandeaux clairs (3DS, DS).
+  const CASES: Record<string, { band: string; ink: string }> = {
+    switch: { band: '#d8202c', ink: '#ffffff' },
+    switch2: { band: '#1f9ad6', ink: '#ffffff' },
+    '3ds': { band: '#e9ebee', ink: '#b3141f' },
+    ds: { band: '#c3c7cc', ink: '#24272c' },
+    wiiu: { band: '#1593c4', ink: '#ffffff' },
+    gc: { band: '#5c4fa6', ink: '#ffffff' },
+  };
+  const CONSOLE_NAMES: Record<string, string> = { switch: 'SWITCH', switch2: 'SWITCH 2', '3ds': '3DS', ds: 'DS', wiiu: 'WII U', gc: 'GAMECUBE' };
+  const box = $derived(cover ? (CASES[game.console] ?? { band: '#3a3f4b', ink: '#ffffff' }) : undefined);
+  const bandH = $derived(Math.max(22, Math.round(size * 0.13)));
   const titleSize = $derived(Math.round(size * (game.short.length > 14 ? 0.115 : 0.13)));
 </script>
 
@@ -59,6 +73,10 @@
   class:dimmed
   class:lifting
   class:shine
+  class:cased={!!box}
+  style:--band={box?.band}
+  style:--band-ink={box?.ink}
+  style:--band-h="{bandH}px"
   tabindex={still ? -1 : undefined}
   style:width="{size}px"
   style:height="{size}px"
@@ -78,8 +96,13 @@
   <span class="ring" aria-hidden="true"></span>
   <span class="gleam" aria-hidden="true"></span>
   <span class="top">
-    <ConsoleChip console={game.console} size={size > 250 ? 'l' : size < 190 ? 's' : 'm'} />
-    <SyncBadge {game} size={Math.round(size * 0.14)} />
+    {#if box}
+      <span class="band-label" style:font-size="{Math.round(bandH * 0.42)}px">{CONSOLE_NAMES[game.console] ?? game.console}</span>
+      <SyncBadge {game} size={Math.round(bandH * 0.82)} tone="band" />
+    {:else}
+      <ConsoleChip console={game.console} size={size > 250 ? 'l' : size < 190 ? 's' : 'm'} />
+      <SyncBadge {game} size={Math.round(size * 0.14)} />
+    {/if}
   </span>
   <!-- Vraie image : le nom est déjà dans l'image et sous la tuile, il ne la recouvre pas. -->
   {#if !cover}
@@ -111,6 +134,14 @@
     background: linear-gradient(to bottom, rgba(0, 0, 0, 0.38) 0%, transparent 24%);
   }
   .tile.big { border-radius: 18px; padding: 22px; }
+
+  /* Boîtier : fond = couleur de la console ; l'image est posée dessous du bandeau, dans un liseré de 3 px. */
+  .tile.cased { padding: 0; background: var(--band) !important; justify-content: flex-start; }
+  .tile.cased .photo { inset: var(--band-h) 3px 3px 3px; border-radius: 0 0 calc(var(--radius-tile) - 3px) calc(var(--radius-tile) - 3px); }
+  .tile.cased.big .photo { border-radius: 0 0 15px 15px; }
+  .tile.cased .photo::after { display: none; }
+  .tile.cased .top { height: var(--band-h); padding: 0 6px 0 12px; box-sizing: border-box; }
+  .band-label { font-weight: 800; letter-spacing: 0.08em; color: var(--band-ink); line-height: 1; }
 
   /* Focus : se soulève, l'ombre descend et s'adoucit (contre-mouvement). */
   .tile:focus { transform: translateY(-4px); box-shadow: 0 22px 44px rgba(0, 0, 0, 0.5), 0 6px 12px rgba(0, 0, 0, 0.25); }

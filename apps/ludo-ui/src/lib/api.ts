@@ -1,7 +1,7 @@
 // Accès aux données. Dans l'app Tauri, chaque appel passe par une commande Rust (`ludo-client`).
 // Dans un navigateur (développement, démonstration), une source de démonstration répond à la place.
 
-import type { Conflict, ConflictSide, DeviceInfo, Game, Preparation, Profile, SaveRevision, UpdateItem } from './types';
+import type { Conflict, ConflictSide, DeviceInfo, Emulator, Game, Preparation, Profile, SaveRevision, UpdateItem } from './types';
 
 /** Étapes d'un lancement réel, dans l'ordre (événement `ludo://passage`). */
 export type LaunchStep = 'profil' | 'telechargement' | 'sauvegarde' | 'lancement' | 'en_jeu' | 'envoi' | 'termine';
@@ -33,6 +33,8 @@ export interface LudoApi {
   restore(profile: string, game: string, rev: number, onstep?: (step: number, progress: number) => void): Promise<void>;
   /** Temps de réponse du serveur en ms (test de connexion des Réglages) ; erreur si injoignable. */
   ping(): Promise<number>;
+  /** Recherche les émulateurs sur l'appareil (à chaque appel, sans cache). */
+  emulators(): Promise<Emulator[]>;
   /** Installe une mise à jour ou un DLC sur l'appareil ; `onprogress` reçoit 0 à 1 (et `preparing` tant que le serveur convertit le fichier). */
   installContent(game: string, content: number, onprogress?: OnProgress): Promise<void>;
   /** Installe un jeu sur l'appareil (jeu de base et mises à jour) ; `onprogress` reçoit 0 à 1. Erreur : message en français. */
@@ -198,6 +200,13 @@ const demoApi: LudoApi = {
     await wait(600);
     onstep?.(2, 1);
   },
+  async emulators() {
+    await wait(700);
+    return [
+      { id: 'eden', name: 'Eden', consoles: ['switch'], defaultFor: [], found: true, source: 'Flatpak dev.eden_emu.eden', bin: 'flatpak run dev.eden_emu.eden', data: '~/.var/app/dev.eden_emu.eden/data/eden' },
+      { id: 'ryujinx', name: 'Ryujinx', consoles: ['switch'], defaultFor: ['switch'], found: true, source: 'Flatpak io.github.ryubing.Ryujinx', bin: 'flatpak run io.github.ryubing.Ryujinx', data: '~/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx' },
+    ] satisfies Emulator[];
+  },
   async ping() {
     await wait(700);
     return 12;
@@ -320,6 +329,7 @@ const tauriApi: LudoApi = {
   sync: (profile) => call('sync', { profile }),
   saveProfile: (profile) => call('saveProfile', { profile }),
   ping: () => call('ping'),
+  emulators: () => call('emulators'),
   installContent: async (game, content, onprogress) => {
     await withProgress(game, onprogress, () => call('installContent', { game, content }));
     onprogress?.(1);

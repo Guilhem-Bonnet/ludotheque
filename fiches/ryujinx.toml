@@ -18,3 +18,21 @@ data = "~/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx"
 [appareil.deck]
 bin  = "~/Applications/publish/Ryujinx"
 data = "~/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx"
+
+# Détection (du préféré au moins préféré) : le premier moyen trouvé sur l'appareil l'emporte sur
+# les sections [appareil.*] ci-dessus. Le Flatpak garde exactement les chemins mesurés le 14/11.
+[[detection]]
+flatpak = "io.github.ryubing.Ryujinx"
+data    = ["~/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx"]
+
+[[detection]]
+fichier = "~/Applications/publish/Ryujinx"
+data    = ["~/.var/app/io.github.ryubing.Ryujinx/config/Ryujinx", "~/.config/Ryujinx"]
+
+[[detection]]
+appimage = "Ryujinx*.AppImage"
+data     = ["~/.config/Ryujinx"]
+
+[[detection]]
+commande = "Ryujinx"
+data     = ["~/.config/Ryujinx"]
