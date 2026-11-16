@@ -71,6 +71,8 @@ jobs:
           GSTREAMER_HELPERS_DIR: /usr/lib/x86_64-linux-gnu/gstreamer1.0/gstreamer-1.0
         with:
           projectPath: apps/ludo-ui
+          # package.json n'a pas de script « tauri » : la CLI est appelée directement.
+          tauriScript: npx tauri
           args: --bundles appimage
           tagName: ${{ github.ref_name }}
           releaseName: Ludothèque ${{ steps.version.outputs.version }}
