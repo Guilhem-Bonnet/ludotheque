@@ -293,126 +293,51 @@ const demoApi: LudoApi = {
 };
 
 /**
- * Dans Tauri : une commande Rust absente retombe sur la démonstration, le temps que toutes les
- * commandes soient branchées. Une commande présente qui échoue :
- * - lecture (`fallback: true`) : retombe aussi sur la démonstration (serveur éteint, catalogue absent) ;
- * - écriture (restauration, profil) : l'erreur remonte, pour ne jamais afficher un faux succès.
+ * App réelle (Tauri) : chaque appel passe par une commande Rust, et une erreur remonte telle quelle
+ * (message en français) pour que l'écran l'affiche. Aucune donnée de démonstration dans l'app.
  */
 /**
- * Commande absente de l'app Rust (pas encore branchée) : seul cas où l'on retombe toujours sur la
- * démonstration. Motifs exacts de Tauri 2 (« Command xyz not found », refus d'autorisation), pour
- * ne jamais confondre avec une erreur réseau comme « host not found ».
+ * Commande absente de l'app Rust : messages exacts de Tauri 2 (« Command xyz not found », refus
+ * d'autorisation), pour ne jamais confondre avec une erreur réseau comme « host not found ».
  */
 const commandMissing = (e: unknown) => /^Command \S+ not found$| not allowed( on |\. (Plugin|Command) not found)/.test(String(e));
 
-function viaTauri<K extends keyof LudoApi>(cmd: K, args: (...a: Parameters<LudoApi[K]>) => Record<string, unknown>, fallback = true): LudoApi[K] {
-  return (async (...a: Parameters<LudoApi[K]>) => {
-    try {
-      return await invoke(cmd, args(...a));
-    } catch (e) {
-      const missing = commandMissing(e);
-      if (!missing && !fallback) throw new Error(String(e));
-      return (demoApi[cmd] as (...x: unknown[]) => unknown)(...a);
-    }
-  }) as LudoApi[K];
+async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(cmd, args);
+  } catch (e) {
+    throw new Error(commandMissing(e) ? `Fonction indisponible dans cette version (${cmd})` : String(e));
+  }
 }
 
 const tauriApi: LudoApi = {
-  device: viaTauri('device', () => ({})),
-  profiles: viaTauri('profiles', () => ({})),
-  recent: viaTauri('recent', (profile) => ({ profile })),
-  library: viaTauri('library', (profile) => ({ profile })),
-  history: viaTauri('history', (profile, game) => ({ profile, game })),
-  updates: viaTauri('updates', () => ({})),
-  // Écriture (envoi des sauvegardes) : une erreur remonte, jamais un faux « à jour » de démonstration.
-  sync: viaTauri('sync', (profile) => ({ profile }), false),
-  saveProfile: async (profile) => {
-    // Premier enregistrement sur un serveur sans profils : on enregistre aussi les autres profils
-    // affichés, sinon « Qui joue ? » ne montrerait plus que celui-ci au prochain démarrage.
-    try {
-      await invoke('profiles');
-    } catch (e) {
-      if (commandMissing(e)) return demoApi.saveProfile(profile);
-      if (/aucun profil/.test(String(e))) {
-        for (const p of PROFILES) if (p.id !== profile.id) await invoke('saveProfile', { profile: p });
-      }
-    }
-    try {
-      return await invoke<Profile>('saveProfile', { profile });
-    } catch (e) {
-      if (commandMissing(e)) return demoApi.saveProfile(profile);
-      throw new Error(String(e));
-    }
-  },
-  ping: viaTauri('ping', () => ({})),
+  device: () => call('device'),
+  profiles: () => call('profiles'),
+  recent: (profile) => call('recent', { profile }),
+  library: (profile) => call('library', { profile }),
+  history: (profile, game) => call('history', { profile, game }),
+  updates: () => call('updates'),
+  sync: (profile) => call('sync', { profile }),
+  saveProfile: (profile) => call('saveProfile', { profile }),
+  ping: () => call('ping'),
   installContent: async (game, content, onprogress) => {
-    try {
-      await withProgress(game, onprogress, () => invoke('installContent', { game, content }));
-      onprogress?.(1);
-    } catch (e) {
-      if (!commandMissing(e)) throw new Error(String(e));
-      await demoApi.installContent(game, content, onprogress);
-    }
+    await withProgress(game, onprogress, () => call('installContent', { game, content }));
+    onprogress?.(1);
   },
   installGame: async (game, onprogress) => {
-    try {
-      await withProgress(game, onprogress, () => invoke('installGame', { game }));
-      onprogress?.(1);
-    } catch (e) {
-      if (!commandMissing(e)) throw new Error(String(e));
-      await demoApi.installGame(game, onprogress);
-    }
+    await withProgress(game, onprogress, () => call('installGame', { game }));
+    onprogress?.(1);
   },
-  cancelInstall: async (game) => {
-    try {
-      await invoke('cancelInstall', { game });
-    } catch (e) {
-      if (!commandMissing(e)) throw new Error(String(e));
-      await demoApi.cancelInstall(game);
-    }
-  },
-  uninstallGame: async (game) => {
-    try {
-      await invoke('uninstallGame', { game });
-    } catch (e) {
-      if (!commandMissing(e)) throw new Error(String(e));
-      await demoApi.uninstallGame(game);
-    }
-  },
+  cancelInstall: (game) => call('cancelInstall', { game }),
+  uninstallGame: (game) => call('uninstallGame', { game }),
   restore: async (profile, game, rev, onstep) => {
-    try {
-      await invoke('restore', { profile, game, rev });
-      onstep?.(2, 1);
-    } catch (e) {
-      if (!commandMissing(e)) throw new Error(String(e));
-      await demoApi.restore(profile, game, rev, onstep);
-    }
+    await call('restore', { profile, game, rev });
+    onstep?.(2, 1);
   },
-  launchGame: async (profile, game, onstep, onprogress) => {
-    try {
-      return await withSteps(game, onstep, () => withProgress(game, onprogress, () => invoke<LaunchResult>('launchGame', { profile, game })));
-    } catch (e) {
-      // Commande absente seulement : démonstration. Toute autre erreur est celle du lancement réel.
-      if (!commandMissing(e)) throw new Error(String(e));
-      return demoApi.launchGame(profile, game, onstep, onprogress);
-    }
-  },
-  resolveConflict: async (profile, game, choice, rev) => {
-    try {
-      return await invoke<ResolveResult>('resolveConflict', { profile, game, choice, rev });
-    } catch (e) {
-      if (!commandMissing(e)) throw new Error(String(e));
-      return demoApi.resolveConflict(profile, game, choice, rev);
-    }
-  },
-  retrySend: async (profile, game) => {
-    try {
-      return await invoke<LaunchResult>('retrySend', { profile, game });
-    } catch (e) {
-      if (!commandMissing(e)) throw new Error(String(e));
-      return demoApi.retrySend(profile, game);
-    }
-  },
+  launchGame: (profile, game, onstep, onprogress) =>
+    withSteps(game, onstep, () => withProgress(game, onprogress, () => call<LaunchResult>('launchGame', { profile, game }))),
+  resolveConflict: (profile, game, choice, rev) => call('resolveConflict', { profile, game, choice, rev }),
+  retrySend: (profile, game) => call<LaunchResult>('retrySend', { profile, game }),
   onCloseRefused: async (cb) => {
     try {
       const { listen } = await import('@tauri-apps/api/event');
@@ -421,7 +346,8 @@ const tauriApi: LudoApi = {
       return () => {};
     }
   },
-  prepare: viaTauri('prepare', (profile, game) => ({ profile, game })),
+  // Préparation réelle : construite par play.ts (realPreparation) puis menée par launchGame.
+  prepare: () => Promise.reject(new Error('Fonction indisponible dans cette version (prepare)')),
 };
 
 export const api: LudoApi = inTauri ? tauriApi : demoApi;

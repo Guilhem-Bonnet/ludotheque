@@ -32,6 +32,10 @@ pub struct DeviceInfo {
     default_profile: Option<String>,
     server: &'static str,
     free_space: String,
+    /// Adresse du serveur (Réglages).
+    server_url: String,
+    /// Version de l'app.
+    version: &'static str,
 }
 
 /// Type d'appareil déduit de son identifiant dans la configuration.
@@ -68,7 +72,14 @@ async fn device() -> Result<DeviceInfo, String> {
             kind: device_kind(&cfg.appareil),
             default_profile: cfg.profil_defaut.clone(),
             server,
-            free_space: String::new(),
+            free_space: cfg
+                .roms
+                .as_deref()
+                .and_then(ludo_client::install::free_space)
+                .map(|b| format!("{} libres", size_label(b)))
+                .unwrap_or_default(),
+            server_url: cfg.serveur.clone(),
+            version: env!("CARGO_PKG_VERSION"),
         })
     })
     .await
@@ -525,9 +536,6 @@ pub fn select_recent(library: &[UiGame], saves: &[SaveSummary], limit: usize) ->
 fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSummary>), String> {
     let client = Client::new(&cfg.serveur);
     let games = client.games().map_err(|e| e.to_string())?;
-    if games.is_empty() {
-        return Err("aucun jeu dans le catalogue du serveur".into());
-    }
     let saves = client.save_summaries(profile).map_err(|e| e.to_string())?;
     let journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
     let prefix = format!("{profile}/");
@@ -560,6 +568,63 @@ async fn recent(profile: String) -> Result<Vec<UiGame>, String> {
     blocking(move || {
         let (library, saves) = fetch_library(&load_config()?, &profile)?;
         Ok(select_recent(&library, &saves, 5))
+    })
+    .await
+}
+
+/// Temps de réponse du serveur en millisecondes (test de connexion des Réglages).
+#[tauri::command]
+async fn ping() -> Result<u64, String> {
+    blocking(|| {
+        let cfg = load_config()?;
+        let started = std::time::Instant::now();
+        Client::new(&cfg.serveur).health().map_err(|e| e.to_string())?;
+        Ok(started.elapsed().as_millis() as u64)
+    })
+    .await
+}
+
+/// Une mise à jour ou un DLC disponible (`UpdateItem` de `types.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiUpdate {
+    /// « <jeu>|<fichier> » : de quoi installer l'élément (`installContent`).
+    id: String,
+    group: &'static str,
+    title: String,
+    detail: String,
+    console: String,
+    tile: String,
+    action: &'static str,
+}
+
+/// Mises à jour et DLC du catalogue pas encore installés, pour les jeux installés sur l'appareil.
+pub fn build_updates(library: &[UiGame]) -> Vec<UiUpdate> {
+    let mut out = Vec::new();
+    for g in library.iter().filter(|g| g.install != "non_installe") {
+        for c in g.content.iter().filter(|c| !c.installed) {
+            let maj = c.role == "maj";
+            out.push(UiUpdate {
+                id: format!("{}|{}", g.id, c.id),
+                group: "jeux",
+                title: g.title.clone(),
+                detail: if maj { format!("{} · {}", c.name, c.size) } else { format!("DLC disponible : {} · {}", c.name, c.size) },
+                console: g.console.clone(),
+                tile: format!("linear-gradient(160deg, {}, {})", g.art.from, g.art.to),
+                action: if maj { "Mettre à jour" } else { "Installer" },
+            });
+        }
+    }
+    out
+}
+
+/// Mises à jour disponibles pour cet appareil (catalogue du serveur comparé aux ROM installées).
+#[tauri::command]
+async fn updates() -> Result<Vec<UiUpdate>, String> {
+    blocking(|| {
+        let cfg = load_config()?;
+        let profile = cfg.profil_defaut.clone().unwrap_or_default();
+        Ok(build_updates(&fetch_library(&cfg, &profile)?.0))
     })
     .await
 }
@@ -1010,7 +1075,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
@@ -1199,6 +1264,21 @@ mod tests {
             to_local: Box::leak(Box::new(|ts: u64| at(2026, 11, 15, 20, 15) - chrono::Duration::days(ts as i64))),
             today: NaiveDate::from_ymd_opt(2026, 11, 15).unwrap(),
         }
+    }
+
+    #[test]
+    fn mises_a_jour_des_jeux_installes_seulement() {
+        let games = [
+            catalog_game("switch-lm3", "switch", vec![file(1, FileRole::Base, "switch/lm3.nsp", 10), file(2, FileRole::Maj, "switch/MAJ-DLC/lm3 [v1].nsp", 5), file(3, FileRole::Dlc, "switch/MAJ-DLC/lm3 Pack.nsp", 5)]),
+            catalog_game("switch-mk8", "switch", vec![file(4, FileRole::Base, "switch/mk8.nsp", 10), file(5, FileRole::Maj, "switch/MAJ-DLC/mk8 [v1].nsp", 5)]),
+        ];
+        let entries = BTreeMap::new();
+        // LM3 installé avec sa mise à jour, MK8 pas installé : seul le DLC de LM3 est proposé.
+        let lib = build_library(&games, &env(&[], &entries, &["switch/lm3.nsp", "switch/MAJ-DLC/lm3 [v1].nsp"]));
+        let u = build_updates(&lib);
+        assert_eq!(u.len(), 1);
+        assert_eq!((u[0].id.as_str(), u[0].action), ("switch-lm3|3", "Installer"));
+        assert!(u[0].tile.starts_with("linear-gradient("));
     }
 
     #[test]

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StateNotice from '../lib/components/StateNotice.svelte';
   import { onMount, untrack } from 'svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Tile from '../lib/components/Tile.svelte';
@@ -46,11 +47,21 @@
     indicator = { x: el.offsetLeft, w: el.offsetWidth, ready: prev.ready || prev.w > 0 };
   });
 
+  let loadError = $state<string | null>(null);
+  let loaded = $state(false);
+  async function load() {
+    loadError = null;
+    try {
+      games = await api.library(router.profile!.id);
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : String(e);
+    }
+    loaded = true;
+    focusFirst();
+  }
+
   onMount(() => {
-    api.library(router.profile!.id).then((g) => {
-      games = g;
-      focusFirst();
-    });
+    void load();
     const onTab = (ev: Event) => {
       const d = (ev as CustomEvent<number>).detail;
       slide = d > 0 ? 'right' : 'left';
@@ -119,7 +130,11 @@
 
   {#key `${tab}-${filter}`}
   <main class="grid-{slide}">
-    {#if shown.length === 0}
+    {#if loadError}
+      <StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={() => void load()} />
+    {:else if loaded && games.length === 0}
+      <StateNotice icon="grid" title="Aucun jeu dans le catalogue" detail="Ajouter des ROM sur le serveur, puis relancer le balayage." autofocus={false} />
+    {:else if loaded && shown.length === 0}
       <p class="empty">Aucun jeu pour ce filtre</p>
     {/if}
     {#each shown as g, i (g.id)}

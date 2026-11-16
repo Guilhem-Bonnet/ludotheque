@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StateNotice from '../lib/components/StateNotice.svelte';
   import { onMount } from 'svelte';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
@@ -34,12 +35,9 @@
   onMount(() => {
     const t = setInterval(() => (clock = now()), 15_000);
     const profile = router.profile!;
-    Promise.all([api.recent(profile.id), api.updates(), api.library(profile.id)]).then(([g, u, lib]) => {
-      games = g;
-      all = lib;
-      updatesCount = u.length;
-      focusFirst();
-    });
+    void load(profile.id);
+    // Les mises à jour ne bloquent jamais l'accueil : un échec laisse simplement le compteur à 0.
+    api.updates().then((u) => (updatesCount = u.length)).catch(() => (updatesCount = 0));
     const onAction = (ev: Event) => {
       const g = games[focused];
       const onTile = (document.activeElement as HTMLElement | null)?.classList.contains('tile');
@@ -62,6 +60,22 @@
   });
 
   let launching = $state<string | null>(null);
+
+  /* Chargement réel des jeux récents et de la bibliothèque ; erreur = écran « Serveur injoignable ». */
+  let loadError = $state<string | null>(null);
+  let loaded = $state(false);
+  async function load(profile: string) {
+    loadError = null;
+    try {
+      const [g, lib] = await Promise.all([api.recent(profile), api.library(profile)]);
+      games = g;
+      all = lib;
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : String(e);
+    }
+    loaded = true;
+    focusFirst();
+  }
 
   /* Menu Options du jeu sélectionné (X). */
   let options = $state<Game | null>(null);
@@ -136,6 +150,11 @@
     </div>
   </header>
 
+  {#if loadError}
+    <div class="notice-wrap"><StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={() => void load(router.profile!.id)} /></div>
+  {:else if loaded && games.length === 0}
+    <div class="notice-wrap"><StateNotice icon="grid" title="Aucune partie récente" detail="Les jeux joués apparaissent ici. Tous les jeux sont dans la Bibliothèque." action="Bibliothèque" onaction={() => router.go({ name: 'bibliotheque' })} /></div>
+  {/if}
   <section aria-label="Jeux récents" class="row-wrap">
     <div class="row">
       {#each games as game, i (game.id)}
@@ -255,4 +274,5 @@
   .shortcut:focus .round { transform: translateY(-3px) scale(1.06); background: var(--accent-soft); color: var(--accent-ink); box-shadow: 0 0 0 3px var(--ground), 0 0 0 6px var(--accent), 0 10px 20px rgba(0,0,0,.35); }
   .round { transition: transform var(--t-quick) var(--ease-pop), background-color var(--t-quick) ease-out, box-shadow var(--t-quick) var(--ease-land); width: 60px; height: 60px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); display: flex; align-items: center; justify-content: center; position: relative; color: var(--ink); }
   .count { position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; border-radius: 11px; background: var(--accent); color: var(--ground); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .notice-wrap { padding: 40px 48px 0; }
 </style>

@@ -122,6 +122,10 @@ export interface DeviceInfo {
   defaultProfile?: string;
   server: 'connecte' | 'hors_ligne';
   freeSpace: string;
+  /** Adresse du serveur (Réglages ; absente dans la démo). */
+  serverUrl?: string;
+  /** Version de l'app (absente dans la démo). */
+  version?: string;
 }
 
 export interface Preparation {

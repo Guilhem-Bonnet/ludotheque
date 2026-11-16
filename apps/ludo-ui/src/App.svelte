@@ -4,6 +4,7 @@
   import { focusFirst, installNav } from './lib/nav';
   import { reducedMotion } from './lib/motion';
   import { router } from './lib/router.svelte';
+  import StateNotice from './lib/components/StateNotice.svelte';
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
   import Bibliotheque from './screens/Bibliotheque.svelte';
@@ -78,7 +79,29 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
     };
     window.addEventListener('ludo:back', onBack);
 
-    Promise.all([api.device(), api.profiles()]).then(([d, profiles]) => {
+    void boot();
+    return () => window.removeEventListener('ludo:back', onBack);
+  });
+
+  /* Démarrage : appareil (configuration) puis profils (serveur). Échec = écran d'erreur, jamais de démo. */
+  let bootError = $state<{ title: string; detail: string } | null>(null);
+  async function boot() {
+    bootError = null;
+    let d: DeviceInfo;
+    try {
+      d = await api.device();
+    } catch (e) {
+      bootError = { title: 'Configuration introuvable', detail: e instanceof Error ? e.message : String(e) };
+      return;
+    }
+    let profiles: Profile[];
+    try {
+      profiles = await api.profiles();
+    } catch (e) {
+      bootError = { title: 'Serveur injoignable', detail: e instanceof Error ? e.message : String(e) };
+      return;
+    }
+    {
       device = d;
       const mine = profiles.find((p) => p.id === d.defaultProfile);
       if (mine) {
@@ -89,9 +112,8 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
       }
       if (isDemo) openDemoScreen(profiles);
       setTimeout(() => (accentAnim = true), 600);
-    });
-    return () => window.removeEventListener('ludo:back', onBack);
-  });
+    }
+  }
 
   const p = $derived(router.profile);
 </script>
@@ -109,7 +131,9 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
   {#if isDemo}
     <p class="demo-hint">Démo · flèches pour se déplacer · Entrée = A · Échap = B · Q / E = L1 / R1 · Y pour les détails</p>
   {/if}
-  {#if device}
+  {#if bootError}
+    <div class="boot-error"><StateNotice title={bootError.title} detail={bootError.detail} action="Réessayer" onaction={() => void boot()} /></div>
+  {:else if device}
     {#key router.screen}
       <div class="screen-layer" in:screenIn out:screenOut onintroend={focusFirst}>
       {#if router.screen.name === 'qui-joue'}
@@ -151,6 +175,7 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
     animation: drift 16s var(--ease-calm) infinite alternate;
   }
   .screen-layer { position: absolute; inset: 0; }
+  .boot-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
   .demo-hint {
     position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 5; margin: 0;
     font-size: 11px; color: var(--ink-4); background: rgba(21, 23, 28, 0.85); padding: 4px 10px; border-radius: 999px; white-space: nowrap;

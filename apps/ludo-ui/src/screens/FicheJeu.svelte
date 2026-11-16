@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StateNotice from '../lib/components/StateNotice.svelte';
   import Ambiance from '../lib/components/Ambiance.svelte';
   import { onMount } from 'svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
@@ -15,6 +16,7 @@
   let { game }: { game: Game } = $props();
   let history = $state<SaveRevision[]>([]);
   let restored = $state<number | null>(null);
+  let historyError = $state<string | null>(null);
 
   let restoring = $state<SaveRevision | null>(null);
 
@@ -62,7 +64,7 @@
   }
 
   onMount(() => {
-    api.history(router.profile!.id, game.id).then((h) => (history = h));
+    api.history(router.profile!.id, game.id).then((h) => (history = h)).catch((e) => (historyError = e instanceof Error ? e.message : String(e)));
     focusFirst();
     const onTab = (ev: Event) => showTab((ev as CustomEvent<number>).detail > 0 ? 'content' : 'saves');
     window.addEventListener('ludo:tab', onTab);
@@ -208,7 +210,9 @@
         <h1 id="hist">Historique des sauvegardes</h1>
         {#if game.sync === 'a_jour'}<span class="state"><Icon name="cloud-ok" size={20} color="var(--ok)" />À jour</span>{/if}
       </div>
-      {#if history.length === 0}
+      {#if historyError}
+        <StateNotice title="Historique indisponible" detail={historyError} autofocus={false} />
+      {:else if history.length === 0}
         <p class="empty">Aucune sauvegarde</p>
       {:else}
         <ul>
