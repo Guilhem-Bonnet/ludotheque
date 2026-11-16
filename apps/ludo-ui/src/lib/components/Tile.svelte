@@ -4,7 +4,8 @@
   import SyncBadge from './SyncBadge.svelte';
   import type { Game } from '../types';
 
-  // Tuile d'un jeu : jaquette illustrée (motif original, aucune image officielle) + titre + console.
+  // Tuile d'un jeu : image du jeu si le serveur en a une (dégradés en haut et en bas pour garder la pastille
+  // console, l'état et le titre lisibles), sinon jaquette illustrée (motif original) ; + titre + console.
   // Au focus, les deux plans de la jaquette glissent à des vitesses différentes (parallaxe douce).
   //
   // Mouvement au focus (couches primaire / secondaire / ambiance) :
@@ -43,6 +44,9 @@
   } = $props();
 
   let el: HTMLButtonElement | undefined = $state();
+  // Une image qui ne charge pas (serveur hors ligne, CSP) retombe sur la jaquette illustrée.
+  let failed = $state('');
+  const cover = $derived(game.cover && failed !== game.cover ? game.cover : undefined);
   const titleSize = $derived(Math.round(size * (game.short.length > 14 ? 0.115 : 0.13)));
 </script>
 
@@ -67,14 +71,16 @@
   {onfocus}
   onclick={() => el && onclick?.(el)}
 >
-  {#if game.art}<CoverArt art={game.art} />{/if}
+  {#if cover}
+    <span class="photo" aria-hidden="true"><img src={cover} alt="" draggable="false" loading="lazy" onerror={() => (failed = cover)} /></span>
+  {:else if game.art}<CoverArt art={game.art} />{/if}
   <span class="ring" aria-hidden="true"></span>
   <span class="gleam" aria-hidden="true"></span>
   <span class="top">
     <ConsoleChip console={game.console} size={size > 250 ? 'l' : size < 190 ? 's' : 'm'} />
     <SyncBadge {game} size={Math.round(size * 0.14)} />
   </span>
-  <span class="title" style:font-size="{titleSize}px" style:color={game.tileInk} class:shadowed={game.tileInk.toLowerCase() === '#ffffff'}>{game.short}</span>
+  <span class="title" style:font-size="{titleSize}px" style:color={cover ? '#ffffff' : game.tileInk} class:shadowed={cover || game.tileInk.toLowerCase() === '#ffffff'}>{game.short}</span>
 </button>
 
 <style>
@@ -92,6 +98,13 @@
       transform 280ms var(--ease-pop),
       opacity 220ms ease-out,
       filter 220ms ease-out;
+  }
+  /* Image du jeu : remplit la tuile, rognée au cadre ; les dégradés gardent le texte lisible. */
+  .photo { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; z-index: -1; background: rgba(0, 0, 0, 0.25); }
+  .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .photo::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.45) 0%, transparent 28%, transparent 52%, rgba(0, 0, 0, 0.8) 100%);
   }
   .tile.big { border-radius: 18px; padding: 22px; }
 

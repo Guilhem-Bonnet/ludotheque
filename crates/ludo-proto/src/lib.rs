@@ -212,6 +212,10 @@ pub struct CatalogGame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_id: Option<String>,
     pub art: GameArt,
+    /// Chemin relatif (`/api/v1/games/{id}/cover?v=…`) de l'image du jeu, présent seulement si le serveur
+    /// en détient une ; `v` change avec l'image (cache du client).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<String>,
     /// Décrit dans `catalogue.toml` (sinon titre et jaquette déduits du nom de fichier).
     pub catalogued: bool,
     pub files: Vec<GameFile>,

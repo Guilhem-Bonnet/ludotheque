@@ -61,6 +61,8 @@ export interface Game {
   tile: string;
   tileInk: string;
   art?: Art;
+  /** URL absolue de l'image du jeu (absente tant que le serveur n'en a pas). */
+  cover?: string;
   emulator: string;
   install: InstallState;
   progress?: number;

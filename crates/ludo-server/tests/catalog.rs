@@ -444,3 +444,98 @@ async fn taille_du_catalogue_egale_au_total_du_tar_meme_avec_noms_non_utf8() {
     let total: usize = tar_entries(&b).iter().map(|(_, c)| c.len()).sum();
     assert_eq!(total, 109);
 }
+
+// --- Images des jeux ---
+
+/// PNG minimal valide (signature + remplissage) : le serveur ne vérifie que les octets magiques.
+fn png() -> Vec<u8> {
+    let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
+    v.extend_from_slice(&[7; 64]);
+    v
+}
+
+fn put_cover(id: &str, ctype: &str, body: Vec<u8>) -> Request<Body> {
+    Request::put(format!("/api/v1/games/{id}/cover")).header(header::CONTENT_TYPE, ctype).body(Body::from(body)).unwrap()
+}
+
+#[tokio::test]
+async fn image_envoi_lecture_etag() {
+    let a = app();
+    a.store.rescan().unwrap();
+    assert!(catalog(&a).await.iter().all(|g| g.cover.is_none()), "pas d'image au départ");
+    let (s, _, _) = call(&a, Request::get("/api/v1/games/switch-lm3/cover").body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    let (s, _, _) = call(&a, put_cover("switch-lm3", "image/png", png())).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let games = catalog(&a).await;
+    let url = find(&games, "switch-lm3").cover.clone().expect("cover présent");
+    assert!(url.starts_with("/api/v1/games/switch-lm3/cover?v="), "{url}");
+    assert!(find(&games, "ds-pokemon-diamant").cover.is_none());
+
+    let (s, h, b) = call(&a, Request::get(&url).body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(h[header::CONTENT_TYPE], "image/png");
+    assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    assert!(h[header::CACHE_CONTROL].to_str().unwrap().contains("max-age"));
+    assert_eq!(b, png());
+    let etag = h[header::ETAG].to_str().unwrap().to_string();
+    let (s, _, b) = call(&a, Request::get(&url).header(header::IF_NONE_MATCH, &etag).body(Body::empty()).unwrap()).await;
+    assert_eq!((s, b.len()), (StatusCode::NOT_MODIFIED, 0));
+    let (s, _, _) = call(&a, Request::get(&url).header(header::IF_NONE_MATCH, "\"autre\"").body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Remplacement par un JPEG : l'ancien PNG disparaît, le jeton de version change.
+    let mut jpg = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    jpg.extend_from_slice(&[1; 99]);
+    let (s, _, _) = call(&a, put_cover("switch-lm3", "image/jpeg", jpg.clone())).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let url2 = find(&catalog(&a).await, "switch-lm3").cover.clone().unwrap();
+    assert_ne!(url, url2);
+    let (_, h, b) = call(&a, Request::get(&url2).body(Body::empty()).unwrap()).await;
+    assert_eq!((h[header::CONTENT_TYPE].to_str().unwrap(), b), ("image/jpeg", jpg));
+}
+
+#[tokio::test]
+async fn image_refus_magic_taille_jeu_inconnu() {
+    let a = app();
+    a.store.rescan().unwrap();
+    // L'en-tête du client ne compte pas : seuls les octets font foi.
+    let (s, _, _) = call(&a, put_cover("switch-lm3", "image/png", b"<svg onload=alert(1)>".to_vec())).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _, _) = call(&a, put_cover("switch-lm3", "image/png", Vec::new())).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // Trop lourd : refusé (413 par la limite de la route).
+    let mut big = png();
+    big.resize(5 * 1024 * 1024 + 1, 0);
+    let (s, _, _) = call(&a, put_cover("switch-lm3", "image/png", big)).await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
+    // Jeu absent du catalogue, identifiant malsain.
+    let (s, _, _) = call(&a, put_cover("switch-fantome", "image/png", png())).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _, _) = call(&a, put_cover(".caché", "image/png", png())).await;
+    assert!(s == StatusCode::BAD_REQUEST || s == StatusCode::NOT_FOUND, "{s}");
+    assert!(catalog(&a).await.iter().all(|g| g.cover.is_none()));
+}
+
+#[tokio::test]
+async fn image_survit_au_rebalayage() {
+    let a = app();
+    a.store.rescan().unwrap();
+    call(&a, put_cover("ds-pokemon-diamant", "image/png", png())).await;
+    a.store.rescan().unwrap();
+    assert!(find(&catalog(&a).await, "ds-pokemon-diamant").cover.is_some());
+}
+
+#[tokio::test]
+async fn image_lecture_refuse_traversee() {
+    let a = app();
+    a.store.rescan().unwrap();
+    call(&a, put_cover("switch-lm3", "image/png", png())).await;
+    // `..%2Fcovers%2Fswitch-lm3` résoudrait vers une image existante si l'id n'était pas validé.
+    for uri in ["/api/v1/games/..%2Fcovers%2Fswitch-lm3/cover", "/api/v1/games/%2E%2E%2Fcovers%2Fswitch-lm3/cover"] {
+        let (s, _, b) = call(&a, Request::get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
+        assert_ne!(b, png(), "{uri}");
+    }
+}

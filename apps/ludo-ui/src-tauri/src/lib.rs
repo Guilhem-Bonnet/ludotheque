@@ -334,6 +334,9 @@ pub struct UiGame {
     tile: String,
     tile_ink: String,
     art: GameArt,
+    /// URL absolue de l'image du jeu (serveur configuré + chemin du catalogue), si le serveur en a une.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cover: Option<String>,
     emulator: String,
     install: &'static str,
     sync: &'static str,
@@ -487,6 +490,13 @@ pub struct LibraryEnv<'a> {
     pub exists: &'a dyn Fn(&str) -> bool,
     pub to_local: &'a dyn Fn(u64) -> NaiveDateTime,
     pub today: NaiveDate,
+/// Adresse du serveur (préfixe des chemins d'image du catalogue).
+pub server: &'a str,
+}
+
+/// URL absolue d'une image : adresse du serveur (sans `/` final) + chemin du catalogue.
+pub fn cover_url(server: &str, path: &str) -> String {
+    format!("{}/{}", server.trim_end_matches('/'), path.trim_start_matches('/'))
 }
 
 /// Catalogue du serveur vers les jeux de l'interface, dans l'ordre du catalogue.
@@ -504,6 +514,7 @@ pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
                 tile: g.art.to.clone(),
                 tile_ink: tile_ink(&g.art.to).into(),
                 art: g.art.clone(),
+                cover: g.cover.as_ref().map(|c| cover_url(env.server, c)),
                 emulator: emulator_label((env.emulator)(&g.id).as_deref(), &g.console),
                 install: install_state(&g.files, env.exists),
                 sync: sync_state((env.journal)(&g.id).as_ref(), save.is_some()),
@@ -551,6 +562,7 @@ fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSu
             exists: &|p| cfg.roms.as_ref().is_some_and(|r| r.join(p).exists() || install::converted_rel(p).is_some_and(|c| r.join(c).exists())),
             to_local: &local_time,
             today: Local::now().date_naive(),
+            server: &cfg.serveur,
         },
     );
     Ok((library, saves))
@@ -1204,9 +1216,21 @@ mod tests {
             short: "Luigi's\nMansion 3".into(),
             title_id: None,
             art: GameArt { motif: "manoir".into(), from: "#22e08f".into(), to: "#0a5a78".into(), ink: None },
+            cover: None,
             catalogued: true,
             files,
         }
+    }
+
+    #[test]
+    fn url_absolue_de_l_image() {
+        assert_eq!(cover_url("https://ludo.test/", "/api/v1/games/x/cover?v=1"), "https://ludo.test/api/v1/games/x/cover?v=1");
+        let mut g = catalog_game("switch-lm3", "switch", vec![]);
+        g.cover = Some("/api/v1/games/switch-lm3/cover?v=a-b".into());
+        let entries = BTreeMap::new();
+        let lib = build_library(&[g, catalog_game("ds-x", "ds", vec![])], &env(&[], &entries, &[]));
+        assert_eq!(lib[0].cover.as_deref(), Some("https://ludo.test/api/v1/games/switch-lm3/cover?v=a-b"));
+        assert_eq!(lib[1].cover, None);
     }
 
     fn save(game: &str, device: &str, playtime_s: u64, created_at: u64) -> SaveSummary {
@@ -1263,6 +1287,7 @@ mod tests {
             exists: Box::leak(Box::new(move |p: &str| local.contains(&p))),
             to_local: Box::leak(Box::new(|ts: u64| at(2026, 11, 15, 20, 15) - chrono::Duration::days(ts as i64))),
             today: NaiveDate::from_ymd_opt(2026, 11, 15).unwrap(),
+            server: "https://ludo.test/",
         }
     }
 
