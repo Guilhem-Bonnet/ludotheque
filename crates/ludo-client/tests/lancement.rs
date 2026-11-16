@@ -120,6 +120,7 @@ fn rig(bin: Option<&str>) -> Rig {
         jeux: BTreeMap::from([(game.clone(), GameConf { emulateur: "fake".into(), title_id: TITLE.into(), profils: None })]),
         consoles: BTreeMap::new(),
         emulateurs: BTreeMap::new(),
+        dossiers: BTreeMap::new(),
     };
     let journal = dir.path().join("journal.json");
     Rig { url, dir, cfg, journal, lock: Mutex::new(()), game, store }

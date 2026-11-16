@@ -70,6 +70,9 @@ enum Cmd {
     Statut,
     /// Émulateurs connus et ce qui en est trouvé sur cet appareil (lecture seule, sans cache).
     Emulateurs,
+    /// Jeux du catalogue et leurs fichiers trouvés sur cet appareil (dossier de la Ludothèque ou
+    /// collection existante). Lecture seule.
+    Jeux,
 }
 
 struct Ctx {
@@ -200,6 +203,28 @@ fn main() -> ExitCode {
                 Ok(exit_for(&o).unwrap_or(ExitCode::SUCCESS))
             }
             Cmd::Run { jeu, rom, jouer_ici } => run(&mut ctx, &jeu, &rom, jouer_ici),
+            Cmd::Jeux => {
+                let local = ludo_client::local::LocalIndex::scan(&ctx.cfg, &ludo_client::detect::Host::current());
+                for (c, d) in &local.roots {
+                    println!("dossier parcouru\t{c}\t{}", d.display());
+                }
+                let games = ctx.client.games().map_err(|e| e.to_string())?;
+                let (mut present, mut total) = (0, 0);
+                for g in &games {
+                    for f in &g.files {
+                        total += 1;
+                        match local.locate(ctx.cfg.roms.as_deref(), &f.path) {
+                            Some(p) => {
+                                present += 1;
+                                println!("{}\t{:?}\tprésent\t{}", g.id, f.role, p.display());
+                            }
+                            None => println!("{}\t{:?}\tabsent\t{}", g.id, f.role, f.path),
+                        }
+                    }
+                }
+                println!("{present}/{total} fichiers du catalogue présents sur l'appareil");
+                Ok(ExitCode::SUCCESS)
+            }
             Cmd::Emulateurs => {
                 let host = ludo_client::detect::Host::current();
                 for id in ctx.cfg.fiche_ids() {
