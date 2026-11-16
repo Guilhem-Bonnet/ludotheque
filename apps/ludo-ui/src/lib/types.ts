@@ -137,3 +137,17 @@ export interface Preparation {
   profile: string;
   steps: { label: string; state: 'fait' | 'en_cours' | 'a_venir'; detail?: string; progress?: number }[];
 }
+
+/** Émulateur connu (fiche) et ce que la détection a trouvé sur l'appareil (`UiEmulator` côté Rust). */
+export interface Emulator {
+  id: string;
+  name: string;
+  consoles: Console[];
+  /** Consoles dont c'est l'émulateur par défaut sur cet appareil. */
+  defaultFor: Console[];
+  found: boolean;
+  /** « Flatpak io.github… », « AppImage … », « Réglage de l'appareil »… ; vide si absent. */
+  source: string;
+  bin: string;
+  data: string;
+}

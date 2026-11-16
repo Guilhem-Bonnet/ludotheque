@@ -7,7 +7,7 @@
 //! que le temps de chaque synchronisation, jamais pendant la partie.
 
 use crate::api::{ApiError, Client};
-use crate::config::{self, Config};
+use crate::config::{self, Config, GameConf};
 use crate::engine::{Engine, Resolution, SyncOutcome};
 use crate::journal::Journal;
 use ludo_proto::{CatalogGame, FileRole, LeaseOutcome, SaveKey, SaveRevision};
@@ -245,6 +245,28 @@ fn outcome_detail(o: &SyncOutcome) -> Option<String> {
     }
 }
 
+/// Émulateur et title_id du jeu : section `[jeux]` de l'appareil, sinon émulateur par défaut de la
+/// console avec le title_id du catalogue du serveur (lu seulement si le jeu n'est pas configuré).
+fn game_conf(cfg: &Config, key: &SaveKey) -> Result<GameConf, LaunchError> {
+    if let Some(g) = cfg.game_conf(&key.game, &key.profile, None) {
+        return Ok(g);
+    }
+    if cfg.jeux.contains_key(&key.game) {
+        return Err(fail("Jeu non configuré sur cet appareil pour ce profil"));
+    }
+    let catalog = Client::new(&cfg.serveur).games().map_err(fail)?;
+    let game = catalog.iter().find(|g| g.id == key.game);
+    cfg.game_conf(&key.game, &key.profile, game).ok_or_else(|| {
+        fail(match game {
+            None => "Jeu introuvable sur le serveur".to_string(),
+            Some(g) => match cfg.default_emulator(&g.console) {
+                None => format!("Aucun émulateur pour la console {} sur cet appareil", g.console),
+                Some(_) => "Identifiant du jeu (title_id) inconnu : à renseigner dans catalogue.toml".to_string(),
+            },
+        })
+    })
+}
+
 /// Lance un jeu : verrou, installation si besoin, synchronisation avant, émulateur, attente de sa
 /// fermeture, synchronisation après (temps de jeu = tête du serveur + durée de la partie).
 ///
@@ -253,11 +275,7 @@ fn outcome_detail(o: &SyncOutcome) -> Option<String> {
 pub fn launch(env: &Env, key: &SaveKey, obs: &mut dyn Observer) -> Result<LaunchOutcome, LaunchError> {
     let cfg = env.cfg;
     obs.step(Step::Profil, StepState::EnCours, None);
-    let conf = cfg
-        .jeux
-        .get(&key.game)
-        .filter(|g| g.concerns(&key.profile))
-        .ok_or_else(|| fail("Jeu non configuré sur cet appareil pour ce profil"))?;
+    let conf = &game_conf(cfg, key)?;
     // Adaptateur impossible à construire : erreur avant de toucher au serveur.
     let prepared = config::prepare(cfg, &conf.emulateur, &key.profile, &conf.title_id).map_err(fail)?;
     let client = Client::new(&cfg.serveur);
@@ -421,11 +439,7 @@ pub enum Settled {
 /// Le verrou est pris sous `<appareil>-ui` : une partie en cours, même ici, refuse l'opération.
 pub fn resolve(env: &Env, key: &SaveKey, choice: Resolution, shown_rev: u64) -> Result<Settled, LaunchError> {
     let cfg = env.cfg;
-    let conf = cfg
-        .jeux
-        .get(&key.game)
-        .filter(|g| g.concerns(&key.profile))
-        .ok_or_else(|| fail("Jeu non configuré sur cet appareil pour ce profil"))?;
+    let conf = &game_conf(cfg, key)?;
     let prepared = config::prepare(cfg, &conf.emulateur, &key.profile, &conf.title_id).map_err(fail)?;
     let client = Client::new(&cfg.serveur);
     let ui_device = format!("{}-ui", cfg.appareil);
@@ -450,11 +464,7 @@ pub fn resolve(env: &Env, key: &SaveKey, choice: Resolution, shown_rev: u64) -> 
 /// Le temps de jeu n'est jamais inférieur à celui de la tête du serveur.
 pub fn send(env: &Env, key: &SaveKey, playtime_s: u64) -> Result<Settled, LaunchError> {
     let cfg = env.cfg;
-    let conf = cfg
-        .jeux
-        .get(&key.game)
-        .filter(|g| g.concerns(&key.profile))
-        .ok_or_else(|| fail("Jeu non configuré sur cet appareil pour ce profil"))?;
+    let conf = &game_conf(cfg, key)?;
     let prepared = config::prepare(cfg, &conf.emulateur, &key.profile, &conf.title_id).map_err(fail)?;
     let client = Client::new(&cfg.serveur);
     let _lease = take_lease(&client, key, &app_device(&cfg.appareil))?;

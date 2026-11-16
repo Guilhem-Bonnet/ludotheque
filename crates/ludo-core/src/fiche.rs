@@ -25,6 +25,23 @@ pub struct DeviceSettings {
     pub data: String,
 }
 
+/// Une façon de trouver l'émulateur installé sur un appareil (essayées dans l'ordre de la fiche).
+/// Exactement un des quatre moyens est renseigné ; `data` liste les dossiers de données possibles
+/// pour cette installation (le premier qui existe est retenu, sinon le premier de la liste).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Candidate {
+    /// Application Flatpak (`flatpak run <id>`), installée pour l'utilisateur ou le système.
+    pub flatpak: Option<String>,
+    /// Motif de nom d'AppImage (`Eden*.AppImage`) cherché dans les dossiers d'applications usuels.
+    pub appimage: Option<String>,
+    /// Programme cherché dans le `PATH`.
+    pub commande: Option<String>,
+    /// Exécutable à un emplacement fixe (`~/Applications/publish/Ryujinx`).
+    pub fichier: Option<String>,
+    #[serde(default)]
+    pub data: Vec<String>,
+}
+
 /// Une fiche d'émulateur.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Fiche {
@@ -40,8 +57,13 @@ pub struct Fiche {
     pub exclusions: Vec<String>,
     #[serde(default)]
     pub systeme: Vec<String>,
+    /// Réglages relevés à la main par appareil : dernier recours si la détection ne trouve rien
+    /// (appareils où elle ne s'applique pas, comme Android).
     #[serde(default)]
     pub appareil: BTreeMap<String, DeviceSettings>,
+    /// Moyens de détection, du préféré au moins préféré.
+    #[serde(default)]
+    pub detection: Vec<Candidate>,
 }
 
 #[derive(Debug, thiserror::Error)]
