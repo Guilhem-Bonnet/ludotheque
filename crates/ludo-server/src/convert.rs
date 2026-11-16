@@ -44,14 +44,7 @@ impl ConvertConfig {
     pub const DEFAULT_MAX_BYTES: u64 = 80 * 1_000_000_000;
 
     pub fn new(cache: PathBuf) -> Self {
-        Self {
-            cache,
-            max_bytes: Self::DEFAULT_MAX_BYTES,
-            keys: None,
-            command: "nsz".into(),
-            timeout: Duration::from_secs(3 * 3600),
-            failure_backoff: Duration::from_secs(600),
-        }
+        Self { cache, max_bytes: Self::DEFAULT_MAX_BYTES, keys: None, command: "nsz".into(), timeout: Duration::from_secs(3 * 3600), failure_backoff: Duration::from_secs(600) }
     }
 }
 
@@ -64,10 +57,7 @@ pub struct UseGuard {
 
 impl Drop for UseGuard {
     fn drop(&mut self) {
-        let mut u = self
-            .uses
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut u = self.uses.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(n) = u.get_mut(&self.key) {
             *n -= 1;
             if *n == 0 {
@@ -82,13 +72,7 @@ impl Drop for UseGuard {
 pub enum Outcome {
     /// Conversion disponible, déjà ouverte (une éviction ne peut plus la faire disparaître en cours
     /// d'envoi) : taille, identifiant stable (pour l'ETag), format, et la garde à garder pendant l'envoi.
-    Ready {
-        file: std::fs::File,
-        len: u64,
-        key: String,
-        format: &'static str,
-        guard: UseGuard,
-    },
+    Ready { file: std::fs::File, len: u64, key: String, format: &'static str, guard: UseGuard },
     /// En cours ou en attente.
     Pending(ConvertProgress),
     /// Échec récent (message pour l'utilisateur) ; rendu tant que dure le délai d'attente de `failure_backoff`.
@@ -132,12 +116,7 @@ impl Converter {
         let work = cfg.cache.join("work");
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work)?;
-        Ok(Arc::new(Self {
-            cfg,
-            jobs: Mutex::new(HashMap::new()),
-            uses: Arc::default(),
-            one_at_a_time: Arc::new(tokio::sync::Semaphore::new(1)),
-        }))
+        Ok(Arc::new(Self { cfg, jobs: Mutex::new(HashMap::new()), uses: Arc::default(), one_at_a_time: Arc::new(tokio::sync::Semaphore::new(1)) }))
     }
 
     /// Clés présentes ? Le fichier est testé à chaque demande : un secret monté en optionnel peut
@@ -155,9 +134,7 @@ impl Converter {
     }
 
     fn jobs(&self) -> std::sync::MutexGuard<'_, HashMap<String, Job>> {
-        self.jobs
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Identifiant d'une conversion : change si le fichier source change (taille, date) ou de format.
@@ -173,42 +150,20 @@ impl Converter {
     fn ready(&self, key: &str, target: &'static str) -> Option<Outcome> {
         let path = self.ready_dir(key).join(format!("file.{target}"));
         let guard = {
-            let mut u = self
-                .uses
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut u = self.uses.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             *u.entry(key.to_string()).or_insert(0) += 1;
-            UseGuard {
-                key: key.to_string(),
-                uses: self.uses.clone(),
-            }
+            UseGuard { key: key.to_string(), uses: self.uses.clone() }
         };
-        let f = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .ok()?;
+        let f = std::fs::OpenOptions::new().read(true).write(true).open(&path).ok()?;
         let len = f.metadata().ok()?.len();
         let _ = f.set_modified(std::time::SystemTime::now());
-        Some(Outcome::Ready {
-            file: f,
-            len,
-            key: key.to_string(),
-            format: target,
-            guard,
-        })
+        Some(Outcome::Ready { file: f, len, key: key.to_string(), format: target, guard })
     }
 
     /// Demande le fichier `src` (compressé, `source_len` octets, modifié à `mtime`) converti en
     /// `target` : prêt, ou lance la conversion (une seule, quel que soit le nombre de demandes).
     /// Aucune E/S disque n'est faite sous le verrou ni sur le runtime.
-    pub async fn request(
-        self: &Arc<Self>,
-        src: &Path,
-        source_len: u64,
-        mtime: u64,
-        target: &'static str,
-    ) -> Outcome {
+    pub async fn request(self: &Arc<Self>, src: &Path, source_len: u64, mtime: u64, target: &'static str) -> Outcome {
         if !self.available() {
             return Outcome::Unavailable;
         }
@@ -236,12 +191,7 @@ impl Converter {
                 }
                 Snapshot::of(job)
             } else {
-                let job = Job {
-                    state: State::Queued,
-                    since: Instant::now(),
-                    source_bytes: source_len,
-                    percent: percent.clone(),
-                };
+                let job = Job { state: State::Queued, since: Instant::now(), source_bytes: source_len, percent: percent.clone() };
                 let snap = Snapshot::of(&job);
                 jobs.insert(key.clone(), job);
                 let me = self.clone();
@@ -268,9 +218,7 @@ impl Converter {
 
     async fn progress_of(self: &Arc<Self>, key: &str, snap: Snapshot) -> ConvertProgress {
         let dir = self.work_dir(key).join("out");
-        let written = tokio::task::spawn_blocking(move || dir_bytes(&dir))
-            .await
-            .unwrap_or(0);
+        let written = tokio::task::spawn_blocking(move || dir_bytes(&dir)).await.unwrap_or(0);
         let p = snap.percent;
         ConvertProgress {
             state: if snap.queued { "queued" } else { "converting" }.into(),
@@ -290,23 +238,11 @@ impl Converter {
         }
     }
 
-    async fn run(
-        self: Arc<Self>,
-        key: String,
-        src: PathBuf,
-        source_len: u64,
-        target: &'static str,
-        percent: Arc<AtomicU64>,
-    ) {
+    async fn run(self: Arc<Self>, key: String, src: PathBuf, source_len: u64, target: &'static str, percent: Arc<AtomicU64>) {
         let _permit = self.one_at_a_time.clone().acquire_owned().await.ok();
         // Une demande a pu arriver entre « pas prêt » et la création de la tâche : déjà converti ?
         let (me, k) = (self.clone(), key.clone());
-        if tokio::task::spawn_blocking(move || {
-            me.ready_dir(&k).join(format!("file.{target}")).is_file()
-        })
-        .await
-        .unwrap_or(false)
-        {
+        if tokio::task::spawn_blocking(move || me.ready_dir(&k).join(format!("file.{target}")).is_file()).await.unwrap_or(false) {
             self.jobs().remove(&key);
             return;
         }
@@ -324,14 +260,7 @@ impl Converter {
         }
     }
 
-    async fn convert(
-        &self,
-        key: &str,
-        src: &Path,
-        source_len: u64,
-        target: &'static str,
-        percent: &Arc<AtomicU64>,
-    ) -> Result<(), String> {
+    async fn convert(&self, key: &str, src: &Path, source_len: u64, target: &'static str, percent: &Arc<AtomicU64>) -> Result<(), String> {
         let work = self.work_dir(key);
         let out = work.join("out");
         let cfg = &self.cfg;
@@ -341,16 +270,13 @@ impl Converter {
             let (keep, uses) = (key.to_string(), self.uses.clone());
             tokio::task::spawn_blocking(move || {
                 // Place pour la nouvelle conversion avant de commencer (estimation : 2 × la source).
-                evict(&cache.join("ready"), max, need, &|k| {
-                    k == keep || in_use(&uses, k)
-                });
+                evict(&cache.join("ready"), max, need, &|k| k == keep || in_use(&uses, k));
                 let _ = std::fs::remove_dir_all(&work);
                 std::fs::create_dir_all(&out)
             })
             .await
         };
-        prep.map_err(|e| e.to_string())?
-            .map_err(|e| format!("dossier de travail : {e}"))?;
+        prep.map_err(|e| e.to_string())?.map_err(|e| format!("dossier de travail : {e}"))?;
         let keys = cfg.keys.as_ref().ok_or("clés absentes")?;
         let mut cmd = tokio::process::Command::new(&cfg.command);
         cmd.args(["-D", "--minimal-output", "--keys"])
@@ -367,9 +293,7 @@ impl Converter {
             // Groupe de processus propre : nsz lance des processus fils (multiprocessing) ; on tue le groupe entier.
             .process_group(0)
             .kill_on_drop(true);
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("lancement de {} : {e}", cfg.command))?;
+        let mut child = cmd.spawn().map_err(|e| format!("lancement de {} : {e}", cfg.command))?;
         let group = child.id().map(GroupKill);
         let stdout = child.stdout.take().ok_or("sortie standard absente")?;
         let stderr = child.stderr.take().ok_or("sortie d'erreur absente")?;
@@ -394,33 +318,19 @@ impl Converter {
         if let Some(g) = &group {
             g.kill();
         }
-        let tail = match tokio::time::timeout(Duration::from_secs(5), async {
-            (out_task.await, err_task.await)
-        })
-        .await
-        {
+        let tail = match tokio::time::timeout(Duration::from_secs(5), async { (out_task.await, err_task.await) }).await {
             Ok((_, Ok(e))) => e,
             _ => String::new(),
         };
         let status = status.map_err(|e| format!("attente du convertisseur : {e}"))?;
         if !status.success() {
-            return Err(format!(
-                "{} a échoué ({status}) : {}",
-                cfg.command,
-                tail.trim()
-            ));
+            return Err(format!("{} a échoué ({status}) : {}", cfg.command, tail.trim()));
         }
-        let (work2, ready, key2, max) = (
-            work.clone(),
-            self.ready_dir(key),
-            key.to_string(),
-            cfg.max_bytes,
-        );
+        let (work2, ready, key2, max) = (work.clone(), self.ready_dir(key), key.to_string(), cfg.max_bytes);
         let ready_root = cfg.cache.join("ready");
         let uses = self.uses.clone();
         tokio::task::spawn_blocking(move || -> Result<(), String> {
-            let produced =
-                find_output(&out, target).ok_or_else(|| format!("aucun .{target} produit"))?;
+            let produced = find_output(&out, target).ok_or_else(|| format!("aucun .{target} produit"))?;
             std::fs::create_dir_all(&ready).map_err(|e| e.to_string())?;
             let dest = ready.join(format!("file.{target}"));
             std::fs::rename(&produced, &dest).map_err(|e| format!("mise en cache : {e}"))?;
@@ -444,12 +354,7 @@ struct Snapshot {
 
 impl Snapshot {
     fn of(j: &Job) -> Self {
-        Self {
-            queued: matches!(j.state, State::Queued),
-            elapsed_s: j.since.elapsed().as_secs(),
-            source_bytes: j.source_bytes,
-            percent: j.percent.load(Ordering::Relaxed),
-        }
+        Self { queued: matches!(j.state, State::Queued), elapsed_s: j.since.elapsed().as_secs(), source_bytes: j.source_bytes, percent: j.percent.load(Ordering::Relaxed) }
     }
 }
 
@@ -475,10 +380,7 @@ impl Drop for GroupKill {
 
 /// Lit un tube jusqu'à sa fin. Découpe sur `\r` et `\n` (nsz redessine sa barre avec `\r`), tampon borné ;
 /// publie le dernier pourcentage `N%` vu (si `percent`). Renvoie la FIN du flux (2 Kio) pour le journal.
-async fn drain(
-    mut r: impl tokio::io::AsyncRead + Unpin,
-    percent: Option<Arc<AtomicU64>>,
-) -> String {
+async fn drain(mut r: impl tokio::io::AsyncRead + Unpin, percent: Option<Arc<AtomicU64>>) -> String {
     const TAIL: usize = 2048;
     const MAX_SEGMENT: usize = 4096;
     let mut tail: VecDeque<u8> = VecDeque::with_capacity(TAIL);
@@ -517,64 +419,35 @@ async fn drain(
 pub fn parse_percent(seg: &[u8]) -> Option<u64> {
     let s = std::str::from_utf8(seg).ok()?;
     let (before, _) = s.split_once('%')?;
-    let digits: String = before
-        .trim_end()
-        .chars()
-        .rev()
-        .take_while(char::is_ascii_digit)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
+    let digits: String = before.trim_end().chars().rev().take_while(char::is_ascii_digit).collect::<Vec<_>>().into_iter().rev().collect();
     digits.parse::<u64>().ok().filter(|v| *v <= 100)
 }
 
 fn in_use(uses: &Mutex<HashMap<String, usize>>, key: &str) -> bool {
-    uses.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .contains_key(key)
+    uses.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains_key(key)
 }
 
 /// Premier fichier `*.<ext>` d'un dossier.
 fn find_output(dir: &Path, ext: &str) -> Option<PathBuf> {
-    std::fs::read_dir(dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .find(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)))
+    std::fs::read_dir(dir).ok()?.filter_map(Result::ok).map(|e| e.path()).find(|p| p.is_file() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)))
 }
 
 /// Somme des tailles des fichiers d'un dossier (un niveau).
 fn dir_bytes(dir: &Path) -> u64 {
-    std::fs::read_dir(dir)
-        .map(|rd| {
-            rd.filter_map(Result::ok)
-                .filter_map(|e| e.metadata().ok())
-                .filter(|m| m.is_file())
-                .map(|m| m.len())
-                .sum()
-        })
-        .unwrap_or(0)
+    std::fs::read_dir(dir).map(|rd| rd.filter_map(Result::ok).filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum()).unwrap_or(0)
 }
 
 /// Supprime les conversions les moins récemment servies tant que `total + needed > max`. Les
 /// conversions pour lesquelles `keep` renvoie vrai (en cours d'envoi, ou celle qu'on vient de produire)
 /// ne sont jamais supprimées.
 pub fn evict(ready_root: &Path, max: u64, needed: u64, keep: &dyn Fn(&str) -> bool) {
-    let Ok(rd) = std::fs::read_dir(ready_root) else {
-        return;
-    };
+    let Ok(rd) = std::fs::read_dir(ready_root) else { return };
     let mut entries: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
     for dir in rd.filter_map(Result::ok) {
         let p = dir.path();
-        let Ok(files) = std::fs::read_dir(&p) else {
-            continue;
-        };
+        let Ok(files) = std::fs::read_dir(&p) else { continue };
         let (mut len, mut newest) = (0, std::time::UNIX_EPOCH);
-        for f in files
-            .filter_map(Result::ok)
-            .filter_map(|f| f.metadata().ok())
-        {
+        for f in files.filter_map(Result::ok).filter_map(|f| f.metadata().ok()) {
             len += f.len();
             newest = newest.max(f.modified().unwrap_or(std::time::UNIX_EPOCH));
         }
@@ -604,10 +477,7 @@ mod tests {
     fn pourcentage_de_la_sortie_reelle_de_nsz() {
         // Forme mesurée : séparateurs « \r », un seul « \n » final, toupie devant le pourcentage.
         let reelle = "| 0% Decompress\r/ 1% Decompress\r- 2% Decompress\r\\ 3% Decompress\r| 99% Decompress\r100% Decompress\r100% Done\n";
-        let vus: Vec<u64> = reelle
-            .split(['\r', '\n'])
-            .filter_map(|s| parse_percent(s.as_bytes()))
-            .collect();
+        let vus: Vec<u64> = reelle.split(['\r', '\n']).filter_map(|s| parse_percent(s.as_bytes())).collect();
         assert_eq!(vus, [0, 1, 2, 3, 99, 100, 100]);
         assert_eq!(parse_percent(b"pas de pourcentage"), None);
         assert_eq!(parse_percent(b"150% trop"), None);
