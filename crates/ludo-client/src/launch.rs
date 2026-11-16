@@ -169,6 +169,116 @@ pub fn holder_device(id: &str) -> &str {
     id.strip_suffix("-app").or_else(|| id.strip_suffix("-ui")).unwrap_or(id)
 }
 
+#[cfg(test)]
+mod tests_flux {
+    use super::*;
+
+    /// Les essais de signal partagent l'indicateur d'arrêt du processus : un à la fois.
+    static SERIE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn nom_d_appareil_en_flux() {
+        assert_eq!(stream_device("pc", "AYN Thor"), "pc-via-thor");
+        assert_eq!(stream_device("pc", "Steam Deck"), "pc-via-deck");
+        assert_eq!(stream_device("pc", "iPhone de G"), "pc-via-iphone-de-g");
+        assert_eq!(stream_device("pc", "  "), "pc");
+    }
+
+    #[test]
+    fn signal_d_arret_termine_l_emulateur_puis_rend_la_main() {
+        let _serie = SERIE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Faux émulateur : dort longtemps ; on simule le SIGTERM reçu par `ludo` depuis un fil.
+        let t = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(300));
+            // SAFETY : signal envoyé à ce processus de test ; le gestionnaire ne fait qu'une écriture atomique.
+            unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
+        });
+        let started = Instant::now();
+        let (status, stopped) = run_emulator("sleep", &["30".to_string()], Duration::from_secs(5)).unwrap();
+        t.join().unwrap();
+        assert!(stopped, "arrêt demandé par signal");
+        assert!(!status.success());
+        assert!(started.elapsed() < Duration::from_secs(5), "émulateur arrêté par SIGTERM, sans attendre SIGKILL");
+    }
+
+    #[test]
+    fn emulateur_qui_ignore_sigterm_recoit_sigkill() {
+        let _serie = SERIE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let t = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(300));
+            unsafe { libc::kill(libc::getpid(), libc::SIGTERM) };
+        });
+        let started = Instant::now();
+        let (_, stopped) = run_emulator("sh", &["-c".to_string(), "trap '' TERM; sleep 30".to_string()], Duration::from_millis(800)).unwrap();
+        t.join().unwrap();
+        assert!(stopped);
+        assert!(started.elapsed() < Duration::from_secs(5), "SIGKILL après le délai de grâce");
+    }
+}
+
+/// Arrêt demandé au processus `ludo run` (SIGTERM de Sunshine en fin de flux, Ctrl+C, fermeture du
+/// terminal) : l'émulateur est arrêté proprement, puis la sauvegarde est envoyée quand même.
+static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_stop_signal(_: libc::c_int) {
+    // Seule opération faite dans le gestionnaire : une écriture atomique (sûre en contexte de signal).
+    STOP_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+/// Délai laissé à l'émulateur pour écrire sa sauvegarde et se fermer après SIGTERM, avant SIGKILL.
+pub const EMULATOR_GRACE: Duration = Duration::from_secs(20);
+
+/// Lance l'émulateur dans son propre groupe de processus et attend sa fin. Si `ludo` reçoit SIGTERM,
+/// SIGINT ou SIGHUP pendant la partie, l'émulateur (tout son groupe) reçoit SIGTERM, puis SIGKILL
+/// après `grace`. Renvoie le statut et `true` si la fin a été demandée par un signal.
+pub fn run_emulator(bin: &str, args: &[String], grace: Duration) -> std::io::Result<(std::process::ExitStatus, bool)> {
+    STOP_REQUESTED.store(false, Ordering::SeqCst);
+    // SAFETY : gestionnaire minimal (écriture atomique seulement), installé pour trois signaux d'arrêt.
+    unsafe {
+        for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            libc::signal(sig, on_stop_signal as *const () as libc::sighandler_t);
+        }
+    }
+    let mut cmd = std::process::Command::new(bin);
+    cmd.args(args);
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd.spawn()?;
+    let pgid = i32::try_from(child.id()).unwrap_or(0);
+    let mut stopped_at: Option<Instant> = None;
+    let mut killed = false;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok((status, stopped_at.is_some()));
+        }
+        if stopped_at.is_none() && STOP_REQUESTED.load(Ordering::SeqCst) {
+            // SAFETY : kill(2) sur le groupe de processus créé pour cet émulateur (pgid = pid).
+            unsafe { libc::kill(-pgid, libc::SIGTERM) };
+            stopped_at = Some(Instant::now());
+        }
+        if !killed && stopped_at.is_some_and(|t| t.elapsed() >= grace) {
+            // SAFETY : idem, l'émulateur n'a pas quitté dans le délai.
+            unsafe { libc::kill(-pgid, libc::SIGKILL) };
+            killed = true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Nom d'appareil du verrou pour une partie jouée en flux (Moonlight → Sunshine) : `pc-via-thor`.
+/// Sunshine fournit le nom du client dans `SUNSHINE_CLIENT_NAME` (ex. « AYN Thor ») ; un nom qui
+/// contient « thor » ou « deck » est abrégé pour que l'interface reconnaisse l'appareil.
+pub fn stream_device(appareil: &str, client: &str) -> String {
+    let lower = client.to_lowercase();
+    let short = if lower.contains("thor") {
+        "thor".to_string()
+    } else if lower.contains("deck") {
+        "deck".to_string()
+    } else {
+        lower.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>().trim_matches('-').to_string()
+    };
+    if short.is_empty() { appareil.to_string() } else { format!("{appareil}-via-{short}") }
+}
+
 /// Le verrou expire au bout de 120 s : il est renouvelé tant que la partie dure.
 const HEARTBEAT: Duration = Duration::from_secs(40);
 
