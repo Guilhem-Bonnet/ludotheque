@@ -44,17 +44,22 @@
   // Le fondu d'accent n'est activé qu'après le premier affichage (sinon l'accent part du bleu par défaut).
   let accentAnim = $state(false);
 
-  // L'interface est dessinée pour 1280×800 (Steam Deck) et s'adapte à la fenêtre : canevas logique de la
-  // taille de la fenêtre divisée par l'échelle, agrandi par `transform: scale` (pas `zoom` : WebKitGTK
-  // applique déjà le zoom aux unités vh, la hauteur était corrigée deux fois et l'app ne remplissait plus
-  // la fenêtre). Recalcul sur l'événement de redimensionnement.
-  let scale = $state(1);
-  let view = $state({ w: 1280, h: 800 });
-  function rescale() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    scale = Math.max(0.75, Math.min(w / 1280, h / 800));
-    view = { w: w / scale, h: h / scale };
+  // L'interface est dessinée pour 1280×800 (Steam Deck) et s'adapte à la fenêtre par le ZOOM NATIF de la
+  // vue (comme Ctrl+ d'un navigateur) : le moteur redessine textes et images à la résolution réelle (net)
+  // et la page voit directement une fenêtre de ~1280×800 px logiques (100vh juste). Ni `zoom` CSS
+  // (WebKitGTK l'applique aussi aux vh : hauteur corrigée deux fois) ni `transform: scale` (image agrandie,
+  // floue). Recalcul sur l'événement de redimensionnement ; dans un navigateur (démo), échelle 1.
+  let zoom = 1;
+  async function rescale() {
+    if (isDemo) return;
+    // Taille de la fenêtre en pixels « 100 % » : la vue zoomée rapporte des pixels logiques.
+    const w = window.innerWidth * zoom;
+    const h = window.innerHeight * zoom;
+    const next = Math.max(0.75, Math.min(w / 1280, h / 800));
+    if (Math.abs(next - zoom) < 0.005) return;
+    zoom = next;
+    const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+    await getCurrentWebview().setZoom(next);
   }
 
   /** Démonstration seulement : `?ecran=bibliotheque|fiche|maj|passage|conflit` ouvre un écran directement. */
@@ -131,9 +136,6 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
 <div
   class="app"
   class:accent-anim={accentAnim}
-  style:width="{view.w}px"
-  style:height="{view.h}px"
-  style:transform="scale({scale})"
   style:--accent={p?.accent ?? '#4cc3ff'}
   style:--accent-soft={p?.accentSoft ?? '#1c3546'}
   style:--accent-ink={p?.accentInk ?? '#8ad8ff'}
@@ -173,7 +175,7 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
 
 <style>
   .app {
-    transform-origin: 0 0;
+    height: 100vh;
     position: relative;
     isolation: isolate;
   }
