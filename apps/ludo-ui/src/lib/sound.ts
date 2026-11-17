@@ -124,3 +124,12 @@ export function setMuted(m: boolean) {
   muted = m;
   if (master && ctx) master.gain.setTargetAtTime(m ? 0 : volume * 0.8, ctx.currentTime, 0.02);
 }
+
+/**
+ * Cliquetis régulier pendant une synchronisation : un RYTHME sonore (comme une animation), pas une
+ * scrutation — il ne lit aucun état, la fin de l'opération l'arrête (fonction renvoyée).
+ */
+export function syncRhythm(): () => void {
+  const t = setInterval(() => play('syncTick'), 900);
+  return () => clearInterval(t);
+}

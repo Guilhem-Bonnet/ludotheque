@@ -10,7 +10,7 @@
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
   import { focusFirst } from '../nav';
-  import { play as playSound } from '../sound';
+  import { syncRhythm, play as playSound } from '../sound';
   import type { Game } from '../types';
 
   // Menu Options d'un jeu (touche X), panneau qui glisse depuis la droite, à la manière de Steam.
@@ -81,7 +81,7 @@
     if (syncing) return;
     syncing = true;
     feedback('syncStart');
-    const tick = setInterval(() => playSound('syncTick'), 900);
+    const stopRhythm = syncRhythm();
     let lib: Game[];
     try {
       lib = await api.sync(profile);
@@ -92,7 +92,7 @@
       feedback('err');
       return;
     } finally {
-      clearInterval(tick);
+      stopRhythm();
     }
     syncing = false;
     const g = lib.find((x) => x.id === game.id);

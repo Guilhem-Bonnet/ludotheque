@@ -41,7 +41,16 @@ fn worker(rx: Receiver<Vec<Pulse>>) {
     };
     let mut alive: Vec<(Effect, Instant)> = Vec::new();
     loop {
-        match rx.recv_timeout(Duration::from_millis(100)) {
+        // Événementiel : on dort jusqu'à la prochaine demande ; s'il reste des effets en cours, au plus
+        // jusqu'à la fin du premier (échéance calculée, pas de réveil périodique).
+        let next = alive.iter().map(|(_, until)| *until).min();
+        let got = match next {
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            Some(t) => rx.recv_timeout(t.saturating_duration_since(Instant::now())),
+        };
+        // Branchements / débranchements des manettes : file d'événements gilrs vidée au réveil.
+        while gilrs.next_event().is_some() {}
+        match got {
             Ok(pulses) => {
                 let pads: Vec<_> = gilrs.gamepads().filter(|(_, g)| g.is_ff_supported()).map(|(id, _)| id).collect();
                 if pads.is_empty() || pulses.is_empty() {
@@ -74,8 +83,7 @@ fn worker(rx: Receiver<Vec<Pulse>>) {
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
         }
-        // Suit les branchements / débranchements ; libère les effets terminés.
-        while gilrs.next_event().is_some() {}
+        // Libère les effets terminés.
         let now = Instant::now();
         alive.retain(|(_, until)| *until > now);
     }

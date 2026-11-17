@@ -332,7 +332,16 @@ async fn get_game_file(
         let m = tokio::fs::metadata(&path).await.map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { StoreError::NotFound } else { StoreError::Io(e) })?;
         (m.len(), m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs()))
     };
-    match conv.request(&path, len, mtime, target).await {
+    // Requête longue (`?attendre=1`) : si la conversion n'est pas prête, on attend son prochain
+    // changement (25 s au plus) avant de répondre — le client n'a pas à redemander en boucle.
+    let long_poll = q.contains_key("attendre");
+    let mut changes = conv.subscribe();
+    let mut outcome = conv.request(&path, len, mtime, target).await;
+    if long_poll && matches!(outcome, Outcome::Pending(_)) {
+        let _ = tokio::time::timeout(conv.long_poll(), changes.changed()).await;
+        outcome = conv.request(&path, len, mtime, target).await;
+    }
+    match outcome {
         Outcome::Ready { file, len, key, format, guard } => {
             // Validateur stable : identifiant de conversion et taille (la date du cache change à chaque accès).
             let etag = format!("\"c{}-{len:x}\"", &key[..16]);
@@ -341,6 +350,8 @@ async fn get_game_file(
         Outcome::Pending(p) => Ok(Response::builder()
             .status(StatusCode::ACCEPTED)
             .header(header::RETRY_AFTER, "5")
+            // Le serveur a déjà attendu un changement : le client peut redemander aussitôt.
+            .header("x-ludo-attente", if long_poll { "1" } else { "0" })
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_vec(&p).unwrap_or_default()))
             .map_err(|e| StoreError::Io(std::io::Error::other(e.to_string())))?),

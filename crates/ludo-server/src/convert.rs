@@ -38,13 +38,15 @@ pub struct ConvertConfig {
     /// Après un échec, durée pendant laquelle la même conversion n'est pas relancée (une cause
     /// déterministe — clés invalides… — ne doit pas coûter des heures de CPU à chaque demande).
     pub failure_backoff: Duration,
+    /// Durée maximale d'une requête longue (`?attendre=1`) sans changement de la conversion.
+    pub long_poll: Duration,
 }
 
 impl ConvertConfig {
     pub const DEFAULT_MAX_BYTES: u64 = 80 * 1_000_000_000;
 
     pub fn new(cache: PathBuf) -> Self {
-        Self { cache, max_bytes: Self::DEFAULT_MAX_BYTES, keys: None, command: "nsz".into(), timeout: Duration::from_secs(3 * 3600), failure_backoff: Duration::from_secs(600) }
+        Self { cache, max_bytes: Self::DEFAULT_MAX_BYTES, keys: None, command: "nsz".into(), timeout: Duration::from_secs(3 * 3600), failure_backoff: Duration::from_secs(600), long_poll: Duration::from_secs(25) }
     }
 }
 
@@ -105,6 +107,9 @@ pub struct Converter {
     jobs: Mutex<HashMap<String, Job>>,
     uses: Arc<Mutex<HashMap<String, usize>>>,
     one_at_a_time: Arc<tokio::sync::Semaphore>,
+    /// Compteur incrémenté à chaque changement d'une tâche (création, démarrage, pourcentage,
+    /// fin, échec) : les requêtes longues (`?attendre=1`) dorment dessus au lieu d'être relancées.
+    changes: tokio::sync::watch::Sender<u64>,
 }
 
 impl Converter {
@@ -116,7 +121,7 @@ impl Converter {
         let work = cfg.cache.join("work");
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work)?;
-        Ok(Arc::new(Self { cfg, jobs: Mutex::new(HashMap::new()), uses: Arc::default(), one_at_a_time: Arc::new(tokio::sync::Semaphore::new(1)) }))
+        Ok(Arc::new(Self { cfg, jobs: Mutex::new(HashMap::new()), uses: Arc::default(), one_at_a_time: Arc::new(tokio::sync::Semaphore::new(1)), changes: tokio::sync::watch::channel(0).0 }))
     }
 
     /// Clés présentes ? Le fichier est testé à chaque demande : un secret monté en optionnel peut
@@ -131,6 +136,21 @@ impl Converter {
 
     fn work_dir(&self, key: &str) -> PathBuf {
         self.cfg.cache.join("work").join(key)
+    }
+
+    /// Signale un changement de l'état des conversions.
+    fn bump(&self) {
+        self.changes.send_modify(|n| *n = n.wrapping_add(1));
+    }
+
+    /// Durée maximale d'une requête longue.
+    pub fn long_poll(&self) -> Duration {
+        self.cfg.long_poll
+    }
+
+    /// Abonnement aux changements (requête longue).
+    pub fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changes.subscribe()
     }
 
     fn jobs(&self) -> std::sync::MutexGuard<'_, HashMap<String, Job>> {
@@ -194,6 +214,8 @@ impl Converter {
                 let job = Job { state: State::Queued, since: Instant::now(), source_bytes: source_len, percent: percent.clone() };
                 let snap = Snapshot::of(&job);
                 jobs.insert(key.clone(), job);
+        drop(jobs);
+        self.bump();
                 let me = self.clone();
                 let (key, src) = (key.clone(), src.to_path_buf());
                 tokio::spawn(async move { me.run(key, src, source_len, target, percent).await });
@@ -236,6 +258,7 @@ impl Converter {
             }
             j.state = state;
         }
+        self.bump();
     }
 
     async fn run(self: Arc<Self>, key: String, src: PathBuf, source_len: u64, target: &'static str, percent: Arc<AtomicU64>) {
@@ -251,6 +274,7 @@ impl Converter {
             Ok(()) => {
                 // Terminé : la table des tâches n'a plus rien à dire, `ready/` fait foi.
                 self.jobs().remove(&key);
+                self.bump();
             }
             Err(msg) => {
                 tracing::error!(erreur = %msg, fichier = %src.display(), "conversion échouée");
@@ -299,7 +323,7 @@ impl Converter {
         let stderr = child.stderr.take().ok_or("sortie d'erreur absente")?;
         // Les deux sorties sont lues en continu jusqu'à la fin (un tube plein bloquerait le convertisseur).
         let pct = percent.clone();
-        let out_task = tokio::spawn(drain(stdout, Some(pct)));
+        let out_task = tokio::spawn(drain(stdout, Some((pct, self.changes.clone()))));
         let err_task = tokio::spawn(drain(stderr, None));
         let waited = tokio::time::timeout(cfg.timeout, child.wait()).await;
         let status = match waited {
@@ -380,7 +404,7 @@ impl Drop for GroupKill {
 
 /// Lit un tube jusqu'à sa fin. Découpe sur `\r` et `\n` (nsz redessine sa barre avec `\r`), tampon borné ;
 /// publie le dernier pourcentage `N%` vu (si `percent`). Renvoie la FIN du flux (2 Kio) pour le journal.
-async fn drain(mut r: impl tokio::io::AsyncRead + Unpin, percent: Option<Arc<AtomicU64>>) -> String {
+async fn drain(mut r: impl tokio::io::AsyncRead + Unpin, percent: Option<(Arc<AtomicU64>, tokio::sync::watch::Sender<u64>)>) -> String {
     const TAIL: usize = 2048;
     const MAX_SEGMENT: usize = 4096;
     let mut tail: VecDeque<u8> = VecDeque::with_capacity(TAIL);
@@ -397,8 +421,10 @@ async fn drain(mut r: impl tokio::io::AsyncRead + Unpin, percent: Option<Arc<Ato
             }
             tail.push_back(b);
             if b == b'\r' || b == b'\n' {
-                if let (Some(p), Some(v)) = (&percent, parse_percent(&seg)) {
-                    p.store(v, Ordering::Relaxed);
+                if let (Some((p, tx)), Some(v)) = (&percent, parse_percent(&seg)) {
+                    if p.swap(v, Ordering::Relaxed) != v {
+                        tx.send_modify(|n| *n = n.wrapping_add(1));
+                    }
                 }
                 seg.clear();
             } else if seg.len() < MAX_SEGMENT {
@@ -407,8 +433,10 @@ async fn drain(mut r: impl tokio::io::AsyncRead + Unpin, percent: Option<Arc<Ato
         }
     }
     // Dernier segment sans fin de ligne.
-    if let (Some(p), Some(v)) = (&percent, parse_percent(&seg)) {
-        p.store(v, Ordering::Relaxed);
+    if let (Some((p, tx)), Some(v)) = (&percent, parse_percent(&seg)) {
+        if p.swap(v, Ordering::Relaxed) != v {
+            tx.send_modify(|n| *n = n.wrapping_add(1));
+        }
     }
     let (a, b) = tail.as_slices();
     String::from_utf8_lossy(&[a, b].concat()).into_owned()
@@ -489,8 +517,11 @@ mod tests {
         let mut data = b"| 0% Decompress\r/ 41% Decompress\r".to_vec();
         data.extend(std::iter::repeat_n(b'x', 1 << 20)); // 1 Mio sans fin de ligne
         data.extend(b"\r- 77% Decompress");
-        let tail = drain(std::io::Cursor::new(data), Some(p.clone())).await;
+        let (tx, rx) = tokio::sync::watch::channel(0u64);
+        let tail = drain(std::io::Cursor::new(data), Some((p.clone(), tx))).await;
         assert_eq!(p.load(Ordering::Relaxed), 77);
+        // Chaque pourcentage NOUVEAU publie un changement (0, 41, 77) : réveil des requêtes longues.
+        assert_eq!(*rx.borrow(), 3);
         assert!(tail.len() <= 2048 && tail.ends_with("77% Decompress"));
     }
 }

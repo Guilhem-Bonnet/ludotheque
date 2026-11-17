@@ -13,9 +13,8 @@ use ludo_proto::{conversion_target, ConvertProgress, GameFile, CONVERTIBLE};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Délai sans aucun octet reçu avant d'abandonner (le `.part` est gardé pour reprendre).
@@ -185,6 +184,72 @@ impl<'a> Ticker<'a> {
     }
 }
 
+/// Annulation d'une installation : réveille aussitôt les attentes (`Condvar`) et les lectures
+/// bloquées (message d'erreur poussé dans leur canal). Aucun drapeau relu en boucle.
+#[derive(Clone, Default)]
+pub struct Cancel(Arc<CancelInner>);
+
+#[derive(Default)]
+struct CancelInner {
+    state: Mutex<CancelState>,
+    cv: std::sync::Condvar,
+}
+
+#[derive(Default)]
+struct CancelState {
+    cancelled: bool,
+    /// Réveils à faire à l'annulation (lecture bloquée, requête en attente).
+    wakers: Vec<Box<dyn FnOnce() + Send>>,
+}
+
+impl std::fmt::Debug for Cancel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Cancel").field("cancelled", &self.is_cancelled()).finish()
+    }
+}
+
+impl Cancel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, CancelState> {
+        self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Annule : les lectures en attente reçoivent une erreur, les attentes se terminent.
+    pub fn cancel(&self) {
+        let mut s = self.lock();
+        s.cancelled = true;
+        for wake in s.wakers.drain(..) {
+            wake();
+        }
+        self.0.cv.notify_all();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.lock().cancelled
+    }
+
+    /// Dort au plus `d` ; `true` si l'annulation est arrivée entre-temps (réveil immédiat).
+    pub fn wait(&self, d: Duration) -> bool {
+        let g = self.lock();
+        let (g, _) = self.0.cv.wait_timeout_while(g, d, |s| !s.cancelled).unwrap_or_else(std::sync::PoisonError::into_inner);
+        g.cancelled
+    }
+
+    /// Inscrit un réveil exécuté à l'annulation (tout de suite si elle a déjà eu lieu).
+    fn on_cancel(&self, wake: impl FnOnce() + Send + 'static) {
+        let mut s = self.lock();
+        if s.cancelled {
+            drop(s);
+            wake();
+        } else {
+            s.wakers.push(Box::new(wake));
+        }
+    }
+}
+
 /// Corps de réponse lu par un fil dédié ; la lecture rend la main sur annulation ou inactivité.
 struct Stream {
     rx: mpsc::Receiver<std::io::Result<Vec<u8>>>,
@@ -192,19 +257,29 @@ struct Stream {
     pos: usize,
     idle: Duration,
     last: Instant,
-    cancel: Arc<AtomicBool>,
+    cancel: Cancel,
 }
 
 impl Stream {
-    fn new(resp: ureq::http::Response<ureq::Body>, idle: Duration, cancel: Arc<AtomicBool>) -> Self {
+    fn new(resp: ureq::http::Response<ureq::Body>, idle: Duration, cancel: Cancel) -> Self {
         let (tx, rx) = mpsc::sync_channel(4);
+        let wake = tx.clone();
+        // Canal plein = des données arrivent : la lecture verra l'annulation au morceau suivant.
+        cancel.on_cancel(move || {
+            let _ = wake.try_send(Err(std::io::Error::other("annulé")));
+        });
         std::thread::spawn(move || {
             let mut body = resp.into_body();
             let mut reader = body.as_reader();
             loop {
                 let mut chunk = vec![0u8; 64 * 1024];
                 match reader.read(&mut chunk) {
-                    Ok(0) => break,
+                    // Fin explicite (morceau vide) : le canal reste ouvert tant que l'annulation peut
+                    // y écrire, la fin ne peut donc pas se lire à sa fermeture.
+                    Ok(0) => {
+                        let _ = tx.send(Ok(Vec::new()));
+                        break;
+                    }
                     Ok(n) => {
                         chunk.truncate(n);
                         if tx.send(Ok(chunk)).is_err() {
@@ -225,7 +300,7 @@ impl Stream {
 impl Read for Stream {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
         loop {
-            if self.cancel.load(Ordering::SeqCst) {
+            if self.cancel.is_cancelled() {
                 return Err(std::io::Error::other("annulé"));
             }
             if self.pos < self.buf.len() {
@@ -234,7 +309,9 @@ impl Read for Stream {
                 self.pos += n;
                 return Ok(n);
             }
-            match self.rx.recv_timeout(Duration::from_millis(100)) {
+            // Une seule échéance : la fin du délai d'inactivité ; l'annulation arrive par le canal.
+            match self.rx.recv_timeout(self.idle.saturating_sub(self.last.elapsed())) {
+                Ok(Ok(chunk)) if chunk.is_empty() => return Ok(0),
                 Ok(Ok(chunk)) => {
                     self.buf = chunk;
                     self.pos = 0;
@@ -253,8 +330,8 @@ impl Read for Stream {
 }
 
 /// Erreur de lecture du flux : annulation demandée, ou interruption (reprise possible).
-fn read_err(e: &std::io::Error, cancel: &AtomicBool) -> InstallError {
-    if cancel.load(Ordering::SeqCst) { InstallError::Cancelled } else { InstallError::Interrupted(e.to_string()) }
+fn read_err(e: &std::io::Error, cancel: &Cancel) -> InstallError {
+    if cancel.is_cancelled() { InstallError::Cancelled } else { InstallError::Interrupted(e.to_string()) }
 }
 
 pub struct Installer<'a> {
@@ -264,7 +341,7 @@ pub struct Installer<'a> {
     /// Délai sans octet reçu avant d'abandonner.
     pub idle: Duration,
     /// Mis à `true` (depuis un autre fil) pour annuler l'installation en cours.
-    pub cancel: Arc<AtomicBool>,
+    pub cancel: Cancel,
     /// Formats que l'émulateur sait lire (`nsp`, `xci`…) : le serveur convertit un NSZ / XCZ si besoin.
     /// Vide = fichier servi tel quel.
     pub formats: Vec<String>,
@@ -285,7 +362,7 @@ pub const PREPARE_STALL: Duration = Duration::from_secs(600);
 
 impl<'a> Installer<'a> {
     pub fn new(client: &'a Client, roms: &'a Path) -> Self {
-        Self { client, roms, idle: IDLE_TIMEOUT, cancel: Arc::new(AtomicBool::new(false)), formats: Vec::new(), on_prepare: None, retry_cap: RETRY_CAP, prepare_stall: PREPARE_STALL }
+        Self { client, roms, idle: IDLE_TIMEOUT, cancel: Cancel::new(), formats: Vec::new(), on_prepare: None, retry_cap: RETRY_CAP, prepare_stall: PREPARE_STALL }
     }
 
     /// Formats lus par l'émulateur du jeu (fiche : `formats`).
@@ -324,10 +401,22 @@ impl<'a> Installer<'a> {
         let mut last: Option<(String, u64, Option<u8>)> = None;
         let mut since = Instant::now();
         loop {
-            if self.cancel.load(Ordering::SeqCst) {
+            if self.cancel.is_cancelled() {
                 return Err(InstallError::Cancelled);
             }
-            let mut resp = match self.client.download_as(game, file.id, from, if_range, &self.formats) {
+            // Requête (éventuellement longue côté serveur) dans un fil : une annulation rend la main
+            // tout de suite, sans attendre la réponse (le fil se termine seul, réponse ignorée).
+            let (tx, rx) = mpsc::channel();
+            let on_cancel = tx.clone();
+            self.cancel.on_cancel(move || {
+                let _ = on_cancel.send(None);
+            });
+            let (c, g, fid, fm, ir) = (self.client.clone(), game.to_string(), file.id, self.formats.clone(), if_range.map(str::to_string));
+            std::thread::spawn(move || {
+                let _ = tx.send(Some(c.download_as(&g, fid, from, ir.as_deref(), &fm)));
+            });
+            let Ok(Some(answer)) = rx.recv() else { return Err(InstallError::Cancelled) };
+            let mut resp = match answer {
                 Err(ApiError::Http { status: 500 | 503, body }) if conversion_target(&file.format, &self.formats).is_some() => return Err(InstallError::Convert(body)),
                 r => r?,
             };
@@ -335,7 +424,10 @@ impl<'a> Installer<'a> {
                 return Ok(resp);
             }
             let wait = resp.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).map_or(5, |s| s.max(1));
-            let wait = Duration::from_secs(wait).min(self.retry_cap);
+            // Serveur à requête longue (`x-ludo-attente: 1`) : il a déjà attendu le changement, on
+            // redemande aussitôt ; sinon (serveur ancien) on respecte Retry-After.
+            let long_poll = resp.headers().get("x-ludo-attente").is_some_and(|v| v.as_bytes() == b"1");
+            let wait = if long_poll { Duration::ZERO } else { Duration::from_secs(wait).min(self.retry_cap) };
             let body = resp.body_mut().read_to_string().unwrap_or_default();
             let p: ConvertProgress = serde_json::from_str(&body).unwrap_or(ConvertProgress { state: "converting".into(), elapsed_s: 0, written_bytes: 0, source_bytes: 0, percent: None });
             if let Some(cb) = &self.on_prepare {
@@ -352,17 +444,14 @@ impl<'a> Installer<'a> {
             } else if since.elapsed() >= self.prepare_stall {
                 return Err(InstallError::Interrupted(format!("la préparation sur le serveur n'avance plus depuis {:.0?} ; elle continue, une nouvelle tentative la retrouvera", self.prepare_stall)));
             }
-            let until = Instant::now() + wait;
-            while Instant::now() < until {
-                if self.cancel.load(Ordering::SeqCst) {
-                    return Err(InstallError::Cancelled);
-                }
-                std::thread::sleep(Duration::from_millis(50).min(until - Instant::now()));
+            // Attente demandée par le serveur (Retry-After), interrompue aussitôt par une annulation.
+            if self.cancel.wait(wait) {
+                return Err(InstallError::Cancelled);
             }
         }
     }
 
-    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
+    pub fn with_cancel(mut self, cancel: Cancel) -> Self {
         self.cancel = cancel;
         self
     }
@@ -374,7 +463,7 @@ impl<'a> Installer<'a> {
 
     /// Installe un fichier du catalogue. `progress(octets reçus, total du catalogue)`.
     pub fn install(&self, game: &str, file: &GameFile, progress: &mut dyn FnMut(u64, u64)) -> Result<Installed, InstallError> {
-        if self.cancel.load(Ordering::SeqCst) {
+        if self.cancel.is_cancelled() {
             return Err(InstallError::Cancelled);
         }
         let dest = self.roms.join(self.local_rel(file)?);
@@ -611,7 +700,7 @@ fn dir_size(dir: &Path) -> Option<u64> {
 /// Extrait un tar dans `into` (dossier vide) : seuls fichiers réguliers et dossiers sont acceptés ;
 /// chemins absolus, `..`, liens (symboliques ou durs) et autres types sont refusés. S'arrête dès
 /// que les octets extraits dépassent `max`. Renvoie le nombre d'octets de fichiers extraits.
-fn extract_tar(reader: impl Read, into: &Path, t: &mut Ticker, max: u64, cancel: &AtomicBool) -> Result<u64, InstallError> {
+fn extract_tar(reader: impl Read, into: &Path, t: &mut Ticker, max: u64, cancel: &Cancel) -> Result<u64, InstallError> {
     let mut ar = tar::Archive::new(reader);
     let mut done = 0u64;
     let entries = ar.entries().map_err(|e| read_err(&e, cancel))?;

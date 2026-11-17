@@ -7,7 +7,6 @@ use axum::routing::get;
 use ludo_client::api::Client;
 use ludo_client::install::{uninstall, InstallError, Installed, Installer};
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use ludo_proto::{CatalogGame, FileRole, GameFile};
 use ludo_server::store::{Store, SystemClock};
@@ -242,11 +241,11 @@ fn delai_d_inactivite_interrompt_et_garde_le_partiel() {
 fn annulation_garde_le_partiel_d_un_fichier() {
     let url = stall_server(STALL_HEAD, vec![7; 10]);
     let dev = tempfile::tempdir().unwrap();
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = ludo_client::install::Cancel::new();
     let c2 = cancel.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(500));
-        c2.store(true, Ordering::SeqCst);
+        c2.cancel();
     });
     let client = Client::new(&url);
     let t0 = Instant::now();
@@ -265,11 +264,11 @@ fn annulation_supprime_le_dossier_partiel_d_un_tar() {
         raw_entry("a.bin", tar::EntryType::Regular, None, b"12345"),
     );
     let dev = tempfile::tempdir().unwrap();
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = ludo_client::install::Cancel::new();
     let c2 = cancel.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(500));
-        c2.store(true, Ordering::SeqCst);
+        c2.cancel();
     });
     let client = Client::new(&url);
     let err = Installer::new(&client, dev.path()).with_cancel(cancel).install("g", &file("wiiu/Jeu", 100, "dir"), &mut |_, _| {}).unwrap_err();
@@ -513,6 +512,8 @@ fn conv_env() -> ConvEnv {
     let store = Store::open(&tmp.path().join("data"), Box::new(SystemClock)).unwrap().with_roms(tmp.path().join("roms"));
     store.rescan().unwrap();
     let mut cfg = ludo_server::convert::ConvertConfig::new(tmp.path().join("cache"));
+    // Requête longue raccourcie : les essais ne doivent pas attendre 25 s sans changement.
+    cfg.long_poll = std::time::Duration::from_millis(300);
     cfg.command = script.to_string_lossy().into_owned();
     cfg.keys = Some(tmp.path().join("keys/prod.keys"));
     let url = spawn_with_converter(store, cfg);
@@ -595,11 +596,11 @@ fn annulation_pendant_la_preparation() {
     fs::write(&e.gate, "").unwrap();
     let client = Client::new(&e.url);
     let (id, f) = jeu(&client, "Jeu [");
-    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel = ludo_client::install::Cancel::new();
     let c2 = cancel.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
-        c2.store(true, Ordering::SeqCst);
+        c2.cancel();
     });
     let installer = Installer::new(&client, e.device.path()).with_formats(vec!["nsp".into()]).with_retry_cap(Duration::from_millis(100)).with_cancel(cancel);
     let t = Instant::now();
