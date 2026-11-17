@@ -229,7 +229,9 @@
     const tile = art?.querySelector<HTMLElement>('.tile');
     if (!from || !tile || reducedMotion()) return;
     const to = tile.getBoundingClientRect();
-    const zoom = parseFloat(getComputedStyle(document.querySelector('.app') as Element).zoom || '1') || 1;
+    // Échelle de l'interface (transform: scale sur .app) : écart en pixels d'écran ramené en pixels du canevas.
+    const app = document.querySelector<HTMLElement>('.app');
+    const zoom = app && app.offsetWidth ? app.getBoundingClientRect().width / app.offsetWidth : 1;
     const dx = (from.left - to.left) / zoom;
     const dy = (from.top - to.top) / zoom;
     const s = from.width / to.width;
