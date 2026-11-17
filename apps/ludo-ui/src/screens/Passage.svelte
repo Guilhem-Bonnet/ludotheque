@@ -229,9 +229,8 @@
     const tile = art?.querySelector<HTMLElement>('.tile');
     if (!from || !tile || reducedMotion()) return;
     const to = tile.getBoundingClientRect();
-    // Échelle de l'interface (transform: scale sur .app) : écart en pixels d'écran ramené en pixels du canevas.
-    const app = document.querySelector<HTMLElement>('.app');
-    const zoom = app && app.offsetWidth ? app.getBoundingClientRect().width / app.offsetWidth : 1;
+    // Zoom natif de la vue : les rectangles sont déjà en pixels logiques de la page.
+    const zoom = 1;
     const dx = (from.left - to.left) / zoom;
     const dy = (from.top - to.top) / zoom;
     const s = from.width / to.width;
