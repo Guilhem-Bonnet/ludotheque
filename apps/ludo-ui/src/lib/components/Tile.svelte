@@ -87,7 +87,6 @@
   data-hero={hero ? '' : undefined}
   aria-label={game.title}
   {onfocus}
-  onpointerenter={(e) => { if (!still && e.pointerType === 'mouse') el?.focus({ preventScroll: true }); }}
   onclick={() => el && onclick?.(el)}
 >
   {#if cover}

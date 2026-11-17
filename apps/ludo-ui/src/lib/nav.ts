@@ -7,12 +7,33 @@
 // - B / Échap / Retour arrière : événement `ludo:back`.
 // - X, Y : événement `ludo:action` (detail = 'x' | 'y').
 // - L1 / R1 (Q / E au clavier) : événement `ludo:tab` (detail = -1 | 1).
+//
+// Répétition (flèche, croix ou stick maintenus) : un pas toutes les REPEAT_MS au plus, quelle que
+// soit la cadence du clavier du système (25 à 33 par seconde) ; pendant la répétition, la racine
+// porte `data-rush` (les écrans raccourcissent leurs animations), retiré au relâchement.
+// Souris : le survol donne le focus, mais seulement sur un vrai déplacement du pointeur — un
+// contenu qui défile sous un pointeur immobile ne vole jamais le focus.
 
 import { feedback } from './feedback';
+import { glideIntoView } from './glide';
 import { reducedMotion } from './motion';
 import { unlock, type SoundName } from './sound';
 
 type Dir = 'up' | 'down' | 'left' | 'right';
+
+/** Cadence de la répétition (ms) : lisible (≈ 9 pas par seconde) sans paraître lent. */
+export const REPEAT_MS = 110;
+/** Délai avant la première répétition de la croix et du stick (le clavier garde celui du système). */
+const REPEAT_DELAY_MS = 380;
+
+/** Dernière source d'entrée : directionnelle (`key`, `pad`) ou de pointage (`mouse`, `touch`). */
+export const input: { kind: 'key' | 'pad' | 'mouse' | 'touch' } = { kind: 'key' };
+
+function setRush(on: boolean) {
+  const root = document.documentElement;
+  if (on) root.dataset.rush = '';
+  else delete root.dataset.rush;
+}
 
 function focusables(): HTMLElement[] {
   // Un menu ouvert (`[data-modal]`) garde le focus : seuls ses éléments sont navigables.
@@ -50,7 +71,7 @@ export function neighbour(from: DOMRect, candidates: { el: HTMLElement; r: DOMRe
   return best;
 }
 
-export function move(dir: Dir) {
+export function move(dir: Dir, repeat = false) {
   const all = focusables();
   const active = document.activeElement as HTMLElement | null;
   if (!active || !all.includes(active)) {
@@ -67,10 +88,12 @@ export function move(dir: Dir) {
   if (next) {
     // Sans `preventScroll`, le navigateur défile d'un coup avant le défilement doux (saccade).
     // Un conteneur `data-own-scroll` gère lui-même son défilement (rangée de l'accueil).
+    // Défilement par ressort (voir glide.ts) : une répétition infléchit le mouvement sans le relancer.
     next.focus({ preventScroll: true });
-    if (!next.closest('[data-own-scroll]')) next.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    if (!next.closest('[data-own-scroll]')) glideIntoView(next);
     feedback('move');
-  } else {
+  } else if (!repeat) {
+    // Bord atteint : une seule oscillation au premier appui, pas une vibration continue en maintenant.
     wobble(active, dir);
   }
 }
@@ -129,11 +152,9 @@ function key(k: 'A' | 'B' | 'X' | 'Y' | 'L1' | 'R1') {
   emit('ludo:key', k);
 }
 
+const ARROWS: Record<string, Dir> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+
 const KEYS: Record<string, () => void> = {
-  ArrowUp: () => move('up'),
-  ArrowDown: () => move('down'),
-  ArrowLeft: () => move('left'),
-  ArrowRight: () => move('right'),
   Enter: () => (key('A'), press(document.activeElement as HTMLElement | null)),
   ' ': () => (key('A'), press(document.activeElement as HTMLElement | null)),
   Escape: () => (key('B'), emit('ludo:back')),
@@ -167,12 +188,26 @@ const PAD: Record<number, () => void> = {
 };
 
 export function installNav() {
+  let lastStep = 0;
   window.addEventListener('keydown', (ev) => {
     unlock();
+    input.kind = 'key';
     // Saisie de texte (nom du profil) : les touches tapent ; Échap quitte le champ sans revenir en arrière.
     const t = ev.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) {
       if (ev.key === 'Escape') { ev.preventDefault(); t.blur(); t.closest<HTMLElement>('.field')?.focus(); }
+      return;
+    }
+    const dir = ARROWS[ev.key];
+    if (dir) {
+      ev.preventDefault();
+      if (ev.repeat) {
+        // Répétition du système : cadencée ici, les événements en trop sont ignorés.
+        if (ev.timeStamp - lastStep < REPEAT_MS) return;
+        setRush(true);
+      }
+      lastStep = ev.timeStamp;
+      move(dir, ev.repeat);
       return;
     }
     const handler = KEYS[ev.key];
@@ -181,30 +216,65 @@ export function installNav() {
       handler();
     }
   });
+  window.addEventListener('keyup', (ev) => { if (ARROWS[ev.key]) setRush(false); });
+  window.addEventListener('blur', () => setRush(false));
   window.addEventListener('pointerdown', unlock, { once: true });
+  window.addEventListener('pointerdown', (e) => { input.kind = e.pointerType === 'mouse' ? 'mouse' : 'touch'; }, { capture: true, passive: true });
 
+  // Survol = focus, sur un VRAI déplacement de la souris (coordonnées changées). Les moteurs
+  // envoient aussi des mouvements simulés quand le contenu défile sous un pointeur immobile : sans
+  // ce garde, défiler la rangée ferait sauter le focus de tuile en tuile (et relancerait le défilement).
+  let px = NaN;
+  let py = NaN;
+  window.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    if (e.clientX === px && e.clientY === py) return;
+    px = e.clientX;
+    py = e.clientY;
+    const el = (e.target as Element | null)?.closest?.<HTMLElement>('.tile.focusable, [data-hover-focus]');
+    if (!el || el === document.activeElement || el.hasAttribute('disabled')) return;
+    const modals = document.querySelectorAll<HTMLElement>('[data-modal]');
+    if (modals.length && !modals[modals.length - 1].contains(el)) return;
+    input.kind = 'mouse';
+    el.focus({ preventScroll: true });
+  }, { passive: true });
+
+  // Manette : l'API Gamepad n'émet aucun événement pour les boutons, on lit son état à chaque image
+  // (rythme d'affichage, comme une boucle de jeu). Croix et stick : un pas, puis répétition après
+  // REPEAT_DELAY_MS, toutes les REPEAT_MS.
   const pressed = new Set<string>();
-  let stickHeld: Dir | null = null;
-  let stickRepeatAt = 0;
+  const DPAD: Record<number, Dir> = { 12: 'up', 13: 'down', 14: 'left', 15: 'right' };
+  let held: Dir | null = null;
+  let repeatAt = 0;
+  let repeating = false;
   const poll = (t: number) => {
+    let dir: Dir | null = null;
     for (const pad of navigator.getGamepads?.() ?? []) {
       if (!pad) continue;
       pad.buttons.forEach((b, i) => {
         const id = `${pad.index}:${i}`;
+        if (b.pressed && DPAD[i]) dir ??= DPAD[i];
         if (b.pressed && !pressed.has(id)) {
           pressed.add(id);
           unlock();
-          PAD[i]?.();
+          input.kind = 'pad';
+          if (!DPAD[i]) PAD[i]?.();
         } else if (!b.pressed) pressed.delete(id);
       });
       const [ax, ay] = pad.axes;
-      const dir: Dir | null = ax > 0.6 ? 'right' : ax < -0.6 ? 'left' : ay > 0.6 ? 'down' : ay < -0.6 ? 'up' : null;
-      if (dir && (dir !== stickHeld || t > stickRepeatAt)) {
-        move(dir);
-        stickRepeatAt = t + (dir === stickHeld ? 120 : 380);
-      }
-      stickHeld = dir;
+      dir ??= ax > 0.6 ? 'right' : ax < -0.6 ? 'left' : ay > 0.6 ? 'down' : ay < -0.6 ? 'up' : null;
     }
+    if (dir && dir !== held) {
+      input.kind = 'pad';
+      move(dir);
+      repeatAt = t + REPEAT_DELAY_MS;
+    } else if (dir && t >= repeatAt) {
+      if (!repeating) setRush((repeating = true));
+      move(dir, true);
+      repeatAt = t + REPEAT_MS;
+    }
+    if (!dir && repeating) setRush((repeating = false));
+    held = dir;
     requestAnimationFrame(poll);
   };
   requestAnimationFrame(poll);
