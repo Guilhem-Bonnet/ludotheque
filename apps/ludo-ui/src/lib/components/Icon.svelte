@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Jeu d'icônes de la Ludothèque : traits de 1,8 à 2,2 px, coins arrondis, viewBox 24.
+  // Jeu d'icônes de la Ludothèque : coins arrondis, viewBox 24, trait d'épaisseur constante à l'écran.
   export type IconName =
     | 'cloud-ok' | 'cloud-pending' | 'cloud-sync' | 'cloud-off' | 'conflict'
     | 'update' | 'download' | 'grid' | 'people' | 'settings' | 'battery'
@@ -7,9 +7,13 @@
     | 'cloud-download' | 'play' | 'history' | 'trash' | 'pencil' | 'check' | 'volume' | 'rumble' | 'pin';
 
   let { name, size = 24, color = 'currentColor', label }: { name: IconName; size?: number; color?: string; label?: string } = $props();
-  // Épaisseur de trait compensée au zoom de l'interface (--icon-optique = 1/√zoom, posé par App) :
-  // au zoom natif le trait grossissait comme le reste et les icônes paraissaient plus épaisses que le texte.
-  const stroke = $derived(['cloud-ok', 'cloud-pending', 'conflict', 'check-circle', 'spinner'].includes(name) ? 2.1 : 1.8);
+  // Épaisseur du trait fixée en pixels d'interface, pas en unités du viewBox : avant, une icône de 26 px
+  // avait un trait de 1,95 px et une de 48 px un trait de 3,6 px, plus gras que le texte voisin (Rubik
+  // 400/500, fût ≈ 1,3-1,5 px à 15 px). Cible : 1,5 px (≈ graisse 500), 1,35 px sous 20 px, à peine plus
+  // au-delà de 36 px. Le zoom natif de l'interface est compensé en plus par --icon-optique (= 1/√zoom,
+  // posé par App) : à 1,74× le trait fait ≈ 2 px physiques au lieu de 2,6.
+  const px = $derived(size < 20 ? 1.35 : size < 36 ? 1.5 : Math.min(2, 1.5 + (size - 36) * 0.03));
+  const stroke = $derived(Math.round(((px * 24) / size) * 100) / 100);
 </script>
 
 <svg
