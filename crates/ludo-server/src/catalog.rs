@@ -141,10 +141,11 @@ pub fn clean_name(stem: &str) -> String {
     joined.trim_matches(|c: char| "-. ".contains(c)).to_string()
 }
 
-/// Identifiant de titre Switch (16 chiffres hexadécimaux commençant par `01`) lu dans un nom.
+/// Identifiant de titre lu dans un nom : 16 chiffres hexadécimaux commençant par `01` (Switch) ou
+/// `04` (Switch 2, ex. `0400486024DEC000`).
 pub fn title_id_in(name: &str) -> Option<u64> {
     name.split(|c: char| !c.is_ascii_alphanumeric())
-        .find(|run| run.len() == 16 && run.starts_with("01") && run.chars().all(|c| c.is_ascii_hexdigit()))
+        .find(|run| run.len() == 16 && (run.starts_with("01") || run.starts_with("04")) && run.chars().all(|c| c.is_ascii_hexdigit()))
         .and_then(|run| u64::from_str_radix(run, 16).ok())
 }
 
@@ -504,6 +505,14 @@ pub fn scan(root: &Path) -> Result<ScanResult, StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identifiant_switch_2() {
+        assert_eq!(title_id_in("The Legend of Zelda Ocarina of Time [0400486024DEC000][v131072].nup"), Some(0x0400_4860_24DE_C000));
+        assert_eq!(title_id_in("Pokemon Pokopia [0400A3A01EE4C000]"), Some(0x0400_A3A0_1EE4_C000));
+        assert_eq!(title_id_in("Mario Kart 8 Deluxe [0100152000022000][v0].nsp"), Some(0x0100_1520_0002_2000));
+        assert_eq!(title_id_in("Jeu [0200000000000000]"), None);
+    }
 
     #[test]
     fn noms_nettoyes() {

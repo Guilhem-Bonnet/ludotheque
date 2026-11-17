@@ -95,6 +95,10 @@ enum Cmd {
     /// `adb track-devices`), fermeture d'un émulateur (`am_proc_died` du journal Android),
     /// écriture d'une sauvegarde (`inotifyd` sur l'appareil, anti-rebond). Aucune scrutation.
     AdbWatch,
+    /// Démon : surveille (inotify) les dossiers de sauvegarde des émulateurs de CET appareil et
+    /// synchronise un jeu 20 s après sa dernière écriture — y compris pour un émulateur lancé
+    /// hors de la Ludothèque. Une partie en cours via la Ludothèque (verrou) est laissée à celle-ci.
+    Watch,
     /// Jeux du catalogue et leurs fichiers trouvés sur cet appareil (dossier de la Ludothèque ou
     /// collection existante). Lecture seule.
     Jeux,
@@ -187,7 +191,7 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool, via: Op
     if let Some(l) = lanceur {
         prepared.vars.insert("bin", l.to_string());
     }
-    let argv = config::launch_command(&prepared, rom).map_err(|e| e.to_string())?;
+    let argv = config::launch_command(&prepared, &launch::boot_file(rom)).map_err(|e| e.to_string())?;
     let (bin, args) = argv.split_first().ok_or("commande de lancement vide")?;
     let started = Instant::now();
     // Le verrou expire au bout de 120 s : renouvelé pendant toute la partie (comme l'app).
@@ -607,6 +611,104 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
     }
 }
 
+/// Démon de surveillance des sauvegardes de cet appareil (voir `Cmd::Watch`).
+fn local_watch(ctx: &mut Ctx) -> Result<ExitCode, String> {
+    use notify::{RecursiveMode, Watcher};
+    use std::collections::BTreeMap;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    const QUIET: Duration = Duration::from_secs(20);
+    let roots = ludo_client::watch::roots(&ctx.cfg);
+    let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
+    let mut watcher = notify::recommended_watcher(tx).map_err(|e| format!("inotify : {e}"))?;
+    let mut watched = 0;
+    for r in &roots {
+        if r.path.is_dir() {
+            watcher.watch(&r.path, RecursiveMode::Recursive).map_err(|e| format!("{} : {e}", r.path.display()))?;
+            println!("surveillé\t{}\t{}", r.emulator, r.path.display());
+            watched += 1;
+        }
+    }
+    if watched == 0 {
+        return Err("aucun dossier de sauvegarde trouvé sur cet appareil".into());
+    }
+    // Catalogue : relu quand un titre inconnu apparaît (événement), pas à intervalle.
+    let mut catalog = ctx.client.games().unwrap_or_default();
+    // Anti-rebond par (profil, émulateur, titre) : échéance repoussée à chaque écriture.
+    let mut due: BTreeMap<(String, String, String), Instant> = BTreeMap::new();
+    let lease_device = format!("{}-ui", ctx.cfg.appareil);
+    loop {
+        let next = due.values().min().copied();
+        let ev = match next {
+            None => Some(rx.recv().map_err(|e| e.to_string())?),
+            Some(t) => match rx.recv_timeout(t.saturating_duration_since(Instant::now())) {
+                Ok(ev) => Some(ev),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(e) => return Err(e.to_string()),
+            },
+        };
+        if let Some(ev) = ev {
+            let Ok(ev) = ev else { continue };
+            if matches!(ev.kind, notify::EventKind::Access(_)) {
+                continue;
+            }
+            for path in &ev.paths {
+                if let Some(c) = ludo_client::watch::classify(&ctx.cfg, &roots, path) {
+                    for p in c.profiles {
+                        due.insert((p, c.emulator.clone(), c.title_id.clone()), Instant::now() + QUIET);
+                    }
+                }
+            }
+            continue;
+        }
+        // Échéances atteintes : synchroniser ces jeux.
+        let now = Instant::now();
+        let ready: Vec<(String, String, String)> = due.iter().filter(|(_, t)| **t <= now).map(|(k, _)| k.clone()).collect();
+        for k in ready {
+            due.remove(&k);
+            let (profile, emulator, title) = k;
+            let find = |cat: &[ludo_proto::CatalogGame]| {
+                cat.iter()
+                    .find(|g| g.title_id.as_deref().is_some_and(|t| t.eq_ignore_ascii_case(&title)) && ctx.cfg.game_conf(&g.id, &profile, Some(g)).is_some_and(|c| c.emulateur == emulator))
+                    .cloned()
+            };
+            let game = match find(&catalog) {
+                Some(g) => g,
+                None => {
+                    catalog = ctx.client.games().unwrap_or_default();
+                    match find(&catalog) {
+                        Some(g) => g,
+                        None => {
+                            println!("{title} ({emulator}) : jeu absent du catalogue, ignoré");
+                            continue;
+                        }
+                    }
+                }
+            };
+            let Some(conf) = ctx.cfg.game_conf(&game.id, &profile, Some(&game)) else { continue };
+            let key = SaveKey { profile: profile.clone(), game: game.id.clone() };
+            match ctx.client.acquire_lease(&key, &lease_device, false) {
+                Ok(LeaseOutcome::HeldElsewhere { lease }) => {
+                    println!("{}\tpartie en cours sur {} : synchronisée par elle", game.id, launch::holder_device(&lease.device));
+                    continue;
+                }
+                Ok(LeaseOutcome::Granted { .. }) | Err(_) => {}
+            }
+            let result = (|| -> Result<SyncOutcome, String> {
+                let prepared = config::prepare(&ctx.cfg, &conf.emulateur, &profile, &conf.title_id).map_err(|e| e.to_string())?;
+                let playtime_s = launch::head_playtime(&ctx.client, &key).unwrap_or(0);
+                let mut engine = Engine { client: &ctx.client, journal: &mut ctx.journal, device: ctx.cfg.appareil.clone(), emulator: conf.emulateur.clone(), playtime_s };
+                engine.sync(&key, prepared.layout.as_ref()).map_err(|e| e.to_string())
+            })();
+            let _ = ctx.client.release_lease(&key, &lease_device);
+            match result {
+                Ok(o) => println!("{}\t{}\t{}", game.id, profile, label(&o)),
+                Err(e) => println!("{}\t{}\tÉchec : {e}", game.id, profile),
+            }
+        }
+    }
+}
+
 /// Horodatage pour nommer les dossiers mis de côté (`.ludo-old-20261116-0712`).
 fn chrono_stamp() -> String {
     let out = std::process::Command::new("date").arg("+%Y%m%d-%H%M%S").output();
@@ -631,6 +733,7 @@ fn main() -> ExitCode {
             Cmd::Run { jeu, rom, jouer_ici, via, lanceur } => run(&mut ctx, &jeu, &rom, jouer_ici, via.as_deref(), lanceur.as_deref()),
             Cmd::AdbSync { profil, jeu, resoudre } => adb_sync(&ctx, profil, jeu, resoudre),
             Cmd::AdbWatch => adb_watch(&ctx),
+            Cmd::Watch => local_watch(&mut ctx),
             Cmd::Jeux => {
                 let local = ludo_client::local::LocalIndex::scan(&ctx.cfg, &ludo_client::detect::Host::current());
                 for (c, d) in &local.roots {

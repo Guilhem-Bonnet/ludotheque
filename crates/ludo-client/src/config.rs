@@ -20,6 +20,17 @@ pub struct ProfileIds {
     pub eden_uuid: Option<String>,
     /// Index du profil Eden/Lichii (option `-u`).
     pub eden_index: Option<u32>,
+    /// Identifiants par émulateur à profils natifs, quand ils diffèrent de ceux d'Eden
+    /// (`[profils.guilhem.natifs.lichii] uuid = "…"`).
+    #[serde(default)]
+    pub natifs: BTreeMap<String, NativeIds>,
+}
+
+/// Profil d'un émulateur à profils natifs : dossier (UUID) et index (option `-u`, facultatif).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct NativeIds {
+    pub uuid: String,
+    pub index: Option<u32>,
 }
 
 /// Un jeu synchronisé par cet appareil (section `[jeux.<identifiant>]`), en attendant le
@@ -92,7 +103,7 @@ fn oui() -> bool {
 }
 
 /// Émulateur par défaut de chaque console (décision du 14/11 : Ryujinx pour la Switch).
-pub const DEFAULT_EMULATORS: &[(&str, &str)] = &[("switch", "ryujinx")];
+pub const DEFAULT_EMULATORS: &[(&str, &str)] = &[("switch", "ryujinx"), ("switch2", "lichii")];
 
 /// D'où vient l'emplacement retenu pour un émulateur.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +146,8 @@ pub enum ConfigError {
 const BUILTIN: &[(&str, &str)] = &[
     ("ryujinx", include_str!("../../../fiches/ryujinx.toml")),
     ("eden", include_str!("../../../fiches/eden.toml")),
+    ("lichii", include_str!("../../../fiches/lichii.toml")),
+    ("triforce", include_str!("../../../fiches/triforce.toml")),
 ];
 
 pub fn home() -> PathBuf {
@@ -284,8 +297,19 @@ pub fn prepare(cfg: &Config, emulator: &str, profile: &str, title_id: &str) -> R
         Box::new(RyujinxLayout { save_root: data.join("bis/user/save"), title_id: tid, user_id: uid, exclude: fiche.exclusions.clone() })
     } else {
         if fiche.profils == ProfileMode::Natifs {
-            vars.insert("profil_uuid", need(&ids.eden_uuid, profile, "eden_uuid")?);
-            vars.insert("profil_index", need(&ids.eden_index, profile, "eden_index")?.to_string());
+            // Identifiants propres à l'émulateur s'ils sont déclarés, sinon ceux d'Eden.
+            match ids.natifs.get(&fiche.id) {
+                Some(n) => {
+                    vars.insert("profil_uuid", n.uuid.clone());
+                    if let Some(i) = n.index {
+                        vars.insert("profil_index", i.to_string());
+                    }
+                }
+                None => {
+                    vars.insert("profil_uuid", need(&ids.eden_uuid, profile, "eden_uuid")?);
+                    vars.insert("profil_index", need(&ids.eden_index, profile, "eden_index")?.to_string());
+                }
+            }
         }
         let account = expand(&render(&fiche.sauvegardes, &vars)?);
         // Sauvegarde « appareil » des émulateurs à profils natifs : UUID nul.
@@ -414,8 +438,8 @@ mod tests {
         std::fs::write(t.path().join("azahar.toml"), "").unwrap();
         std::fs::write(t.path().join("notes.txt"), "").unwrap();
         let mut cfg: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"").unwrap();
-        assert_eq!(cfg.fiche_ids(), ["eden", "ryujinx"]);
+        assert_eq!(cfg.fiche_ids(), ["eden", "lichii", "ryujinx", "triforce"]);
         cfg.fiches = Some(t.path().into());
-        assert_eq!(cfg.fiche_ids(), ["azahar", "eden", "ryujinx"]);
+        assert_eq!(cfg.fiche_ids(), ["azahar", "eden", "lichii", "ryujinx", "triforce"]);
     }
 }

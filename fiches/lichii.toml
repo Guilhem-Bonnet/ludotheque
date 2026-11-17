@@ -1,0 +1,24 @@
+# Lichii — émulateur Switch 2 (github.com/zortos293/Lichii), fork d'Eden : même rangement des
+# sauvegardes, profils natifs. Sur le PC, données isolées d'Eden (XDG_*_HOME=…/lichii-root, sinon
+# fenêtre « Migration » bloquante) : lanceur ~/.local/bin/lichii-pc. Relevé le 16/11 sur le PC.
+id        = "lichii"
+consoles  = ["switch2"]
+formats   = ["nup", "nsp", "xci"]
+# Pas d'option de profil : Lichii démarre sur son profil par défaut (un seul profil sur le PC).
+lancement = "{bin} -f -g {rom}"
+profils   = "natifs"
+sauvegardes = "{data}/nand/user/save/0000000000000000/{profil_uuid}/{title_id_maj}"
+exclusions  = ["*.tmp"]
+systeme     = ["keys/prod.keys", "keys/title.keys"]
+
+[appareil.pc]
+bin  = "~/.local/bin/lichii-pc"
+data = "~/.local/share/lichii-root/lichii"
+
+[[detection]]
+fichier = "~/.local/bin/lichii-pc"
+data    = ["~/.local/share/lichii-root/lichii"]
+
+[[detection]]
+appimage = "lichii*.AppImage"
+data     = ["~/.local/share/lichii"]
