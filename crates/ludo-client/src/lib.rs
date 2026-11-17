@@ -10,4 +10,5 @@ pub mod install;
 pub mod journal;
 pub mod launch;
 pub mod local;
+pub mod watch;
 pub mod layout;

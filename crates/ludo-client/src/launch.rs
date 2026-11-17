@@ -196,6 +196,29 @@ pub fn holder_device(id: &str) -> &str {
 }
 
 #[cfg(test)]
+mod tests_demarrage {
+    use super::*;
+
+    #[test]
+    fn jeu_extrait_demarre_sur_la_mise_a_jour_la_plus_recente() {
+        let t = tempfile::tempdir().unwrap();
+        let g = t.path().join("Pokemon Pokopia [0400A3A01EE4C000]");
+        for d in ["base/exefs", "updates/65536/exefs", "updates/327680/exefs"] {
+            std::fs::create_dir_all(g.join(d)).unwrap();
+            std::fs::write(g.join(d).join("main"), b"x").unwrap();
+        }
+        assert_eq!(boot_file(&g), g.join("updates/327680/exefs/main"));
+        let base_seule = t.path().join("Jeu [0400000000000000]");
+        std::fs::create_dir_all(base_seule.join("base/exefs")).unwrap();
+        std::fs::write(base_seule.join("base/exefs/main"), b"x").unwrap();
+        assert_eq!(boot_file(&base_seule), base_seule.join("base/exefs/main"));
+        let f = t.path().join("Zelda [0400486024DEC000][v131072].nup");
+        std::fs::write(&f, b"x").unwrap();
+        assert_eq!(boot_file(&f), f, "un fichier est rendu tel quel");
+    }
+}
+
+#[cfg(test)]
 mod tests_flux {
     use super::*;
 
@@ -355,6 +378,30 @@ pub fn installed_rom(roms: &Path, catalog_rel: &str) -> Option<PathBuf> {
     crate::install::converted_rel(catalog_rel).map(|r| roms.join(r)).filter(|p| p.exists())
 }
 
+/// Fichier à donner à l'émulateur. Un jeu EXTRAIT (dossier, ex. Switch 2 « Pokopia [id]/ ») démarre
+/// sur `exefs/main` : celui de la mise à jour la plus récente (`updates/<version>/`), sinon de
+/// `base/`, sinon du dossier lui-même. Un fichier est rendu tel quel.
+pub fn boot_file(rom: &Path) -> PathBuf {
+    if !rom.is_dir() {
+        return rom.to_path_buf();
+    }
+    let main_of = |d: &Path| Some(d.join("exefs/main")).filter(|m| m.is_file());
+    let mut updates: Vec<(u64, PathBuf)> = std::fs::read_dir(rom.join("updates"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| Some((e.file_name().to_str()?.parse::<u64>().ok()?, e.path())))
+        .collect();
+    updates.sort();
+    updates
+        .iter()
+        .rev()
+        .find_map(|(_, d)| main_of(d))
+        .or_else(|| main_of(&rom.join("base")))
+        .or_else(|| main_of(rom))
+        .unwrap_or_else(|| rom.to_path_buf())
+}
+
 /// Retrouve la ROM de base d'un jeu sans le catalogue (serveur injoignable) : fichier `nsp`/`xci`
 /// dont le nom contient `[<identifiant du titre>]`, hors dossier des mises à jour et DLC.
 pub fn find_rom_offline(roms: &Path, title_id: &str) -> Option<PathBuf> {
@@ -499,7 +546,7 @@ fn play(
 
     // Émulateur, dans son propre groupe de processus (il peut être terminé proprement si l'app s'arrête).
     obs.step(Step::Lancement, StepState::EnCours, None);
-    let argv = config::launch_command(prepared, &rom).map_err(fail)?;
+    let argv = config::launch_command(prepared, &boot_file(&rom)).map_err(fail)?;
     let (bin, args) = argv.split_first().ok_or_else(|| fail("commande de lancement vide"))?;
     let mut cmd = std::process::Command::new(bin);
     cmd.args(args).stdin(std::process::Stdio::null());

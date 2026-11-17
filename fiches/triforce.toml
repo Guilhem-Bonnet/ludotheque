@@ -1,0 +1,29 @@
+# Triforce (ex-Hookshot, NotRexed ; NX2navi y a fusionné) — portage natif PC d'Ocarina of Time
+# (Switch 2, version 1.1.1) par recompilation statique : un seul jeu. Sources lues le 16/11 :
+# git.triforceproject.com/triforce/source (docs/saves.md, host/hos_main.c, builder/linux/hookshot-launch).
+# Sauvegardes : MÊMES fichiers que la console et que Lichii (account.sav, option.sav, slot_NN/…),
+# donc une partie passe de Triforce à Lichii (et retour) par la Ludothèque.
+# À CONFIRMER à l'installation : emplacement du jeu construit, identifiant d'utilisateur (32 hex).
+id        = "triforce"
+titre     = "0400486024DEC000"
+consoles  = ["switch2"]
+formats   = ["nup"]
+# Le jeu est déjà construit par le portage : la ROM n'est pas passée en argument.
+lancement = "{bin}"
+profils   = "natifs"
+# Linux : $XDG_DATA_HOME/hookshot/save/<utilisateur>/ (le code garde le nom « hookshot »).
+sauvegardes = "{data}/save/{profil_uuid}"
+# Écriture transactionnelle et copies de secours du portage : jamais synchronisées.
+exclusions  = ["save-tx/", "save-backup/", "*.tmp", "instance.lock"]
+
+[[detection]]
+commande = "hookshot-launch"
+data     = ["~/.local/share/hookshot"]
+
+[[detection]]
+appimage = "Triforce*.AppImage"
+data     = ["~/.local/share/hookshot"]
+
+[[detection]]
+appimage = "Hookshot*.AppImage"
+data     = ["~/.local/share/hookshot"]

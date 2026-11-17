@@ -64,6 +64,10 @@ pub struct Fiche {
     /// Moyens de détection, du préféré au moins préféré.
     #[serde(default)]
     pub detection: Vec<Candidate>,
+    /// Portage natif d'UN jeu (recompilation statique) : identifiant de titre du seul jeu qu'il
+    /// fait tourner. Ses sauvegardes ne sont pas rangées par titre.
+    #[serde(default)]
+    pub titre: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
