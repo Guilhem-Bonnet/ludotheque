@@ -1,7 +1,7 @@
 <script lang="ts">
   import ConsoleChip from './ConsoleChip.svelte';
   import CoverArt from './CoverArt.svelte';
-  import SyncBadge from './SyncBadge.svelte';
+  import SyncBadge, { tileState } from './SyncBadge.svelte';
   import type { Game } from '../types';
 
   // Tuile d'un jeu : image du jeu si le serveur en a une (léger dégradé en haut pour la pastille console
@@ -61,6 +61,10 @@
   const CONSOLE_NAMES: Record<string, string> = { switch: 'SWITCH', switch2: 'SWITCH 2', '3ds': '3DS', ds: 'DS', wiiu: 'WII U', gc: 'GAMECUBE' };
   const box = $derived(cover ? (CASES[game.console] ?? { band: '#3a3f4b', ink: '#ffffff' }) : undefined);
   const bandH = $derived(Math.max(22, Math.round(size * 0.13)));
+  // Le mot d'état s'ajoute au pictogramme quand la tuile est assez large (tuile en focus de l'accueil) ;
+  // dans la grille, la ligne sous la tuile le dit déjà.
+  const state = $derived(tileState(game));
+  const stateWords = $derived(size >= 250);
   const titleSize = $derived(Math.round(size * (game.short.length > 14 ? 0.115 : 0.13)));
 </script>
 
@@ -85,7 +89,7 @@
   data-autofocus={autofocus ? '' : undefined}
   data-sound={sound}
   data-hero={hero ? '' : undefined}
-  aria-label={game.title}
+  aria-label={state ? `${game.title}, ${state.label}` : game.title}
   {onfocus}
   onpointerenter={(e) => { if (!still && e.pointerType === 'mouse') el?.focus({ preventScroll: true }); }}
   onclick={() => el && onclick?.(el)}
@@ -97,8 +101,8 @@
   <span class="gleam" aria-hidden="true"></span>
   <span class="top">
     {#if box}
-      <span class="band-label" style:font-size="{Math.round(bandH * 0.42)}px">{CONSOLE_NAMES[game.console] ?? game.console}</span>
-      <SyncBadge {game} size={Math.round(bandH * 0.82)} tone="band" />
+      <span class="band-label" style:font-size="{Math.round(bandH * 0.4)}px">{CONSOLE_NAMES[game.console] ?? game.console}</span>
+      <SyncBadge {game} size={Math.round(bandH * (stateWords ? 0.66 : 0.74))} tone="band" labelled={stateWords} />
     {:else}
       <ConsoleChip console={game.console} size={size > 250 ? 'l' : size < 190 ? 's' : 'm'} />
       <SyncBadge {game} size={Math.round(size * 0.14)} />
@@ -135,13 +139,20 @@
   }
   .tile.big { border-radius: 18px; padding: 22px; }
 
-  /* Boîtier : fond = couleur de la console ; l'image est posée dessous du bandeau, dans un liseré de 3 px. */
+  /* Boîtier : fond = couleur de la console ; l'image est posée sous le bandeau, dans un liseré de 3 px,
+     comme la fenêtre d'une cartouche : coins hauts à peine arrondis, bord intérieur ombré d'un cheveu
+     (l'image paraît enchâssée), arête haute du boîtier légèrement éclairée (plastique moulé). */
   .tile.cased { padding: 0; background: var(--band) !important; justify-content: flex-start; }
-  .tile.cased .photo { inset: var(--band-h) 3px 3px 3px; border-radius: 0 0 calc(var(--radius-tile) - 3px) calc(var(--radius-tile) - 3px); }
-  .tile.cased.big .photo { border-radius: 0 0 15px 15px; }
-  .tile.cased .photo::after { display: none; }
-  .tile.cased .top { height: var(--band-h); padding: 0 6px 0 12px; box-sizing: border-box; }
-  .band-label { font-weight: 800; letter-spacing: 0.08em; color: var(--band-ink); line-height: 1; }
+  .tile.cased::before {
+    content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -1px 0 rgba(0, 0, 0, 0.16);
+  }
+  .tile.cased .photo { inset: var(--band-h) 3px 3px 3px; border-radius: 3px 3px calc(var(--radius-tile) - 3px) calc(var(--radius-tile) - 3px); }
+  .tile.cased.big .photo { border-radius: 3px 3px 15px 15px; }
+  .tile.cased .photo::after { background: none; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2); border-radius: inherit; }
+  .tile.cased .top { height: var(--band-h); padding: 0 calc(var(--band-h) * 0.28) 0 calc(var(--band-h) * 0.4); box-sizing: border-box; gap: 8px; }
+  /* Nom de la console : graisse 700 (800 bavait au zoom), approche resserrée, posé sur la ligne optique du bandeau. */
+  .band-label { font-weight: 700; letter-spacing: 0.06em; color: var(--band-ink); line-height: 1; padding-top: 1px; white-space: nowrap; }
 
   /* Focus : se soulève, l'ombre descend et s'adoucit (contre-mouvement). */
   .tile:focus { transform: translateY(-4px); box-shadow: 0 22px 44px rgba(0, 0, 0, 0.5), 0 6px 12px rgba(0, 0, 0, 0.25); }
