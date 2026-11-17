@@ -44,10 +44,17 @@
   // Le fondu d'accent n'est activé qu'après le premier affichage (sinon l'accent part du bleu par défaut).
   let accentAnim = $state(false);
 
-  // L'interface est dessinée pour 1280×800 (Steam Deck) et s'agrandit d'un bloc sur une TV (1920×1080 → ×1,35).
+  // L'interface est dessinée pour 1280×800 (Steam Deck) et s'adapte à la fenêtre : canevas logique de la
+  // taille de la fenêtre divisée par l'échelle, agrandi par `transform: scale` (pas `zoom` : WebKitGTK
+  // applique déjà le zoom aux unités vh, la hauteur était corrigée deux fois et l'app ne remplissait plus
+  // la fenêtre). Recalcul sur l'événement de redimensionnement.
   let scale = $state(1);
+  let view = $state({ w: 1280, h: 800 });
   function rescale() {
-    scale = Math.max(0.75, Math.min(window.innerWidth / 1280, window.innerHeight / 800));
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    scale = Math.max(0.75, Math.min(w / 1280, h / 800));
+    view = { w: w / scale, h: h / scale };
   }
 
   /** Démonstration seulement : `?ecran=bibliotheque|fiche|maj|passage|conflit` ouvre un écran directement. */
@@ -124,8 +131,9 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
 <div
   class="app"
   class:accent-anim={accentAnim}
-  style:zoom={scale}
-  style:--z={scale}
+  style:width="{view.w}px"
+  style:height="{view.h}px"
+  style:transform="scale({scale})"
   style:--accent={p?.accent ?? '#4cc3ff'}
   style:--accent-soft={p?.accentSoft ?? '#1c3546'}
   style:--accent-ink={p?.accentInk ?? '#8ad8ff'}
@@ -165,7 +173,7 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
 
 <style>
   .app {
-    height: calc(100vh / var(--z, 1));
+    transform-origin: 0 0;
     position: relative;
     isolation: isolate;
   }
