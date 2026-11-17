@@ -58,6 +58,8 @@
     const next = Math.max(0.75, Math.min(w / 1280, h / 800));
     if (Math.abs(next - zoom) < 0.005) return;
     zoom = next;
+    // Compensation optique des icônes : trait affiné quand l'interface grandit (1 à 1×, 0,76 à 1,74×).
+    document.documentElement.style.setProperty('--icon-optique', String(Math.max(0.6, 1 / Math.sqrt(next))));
     const { getCurrentWebview } = await import('@tauri-apps/api/webview');
     await getCurrentWebview().setZoom(next);
   }

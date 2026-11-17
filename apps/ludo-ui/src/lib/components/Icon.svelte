@@ -7,6 +7,8 @@
     | 'cloud-download' | 'play' | 'history' | 'trash' | 'pencil' | 'check' | 'volume' | 'rumble' | 'pin';
 
   let { name, size = 24, color = 'currentColor', label }: { name: IconName; size?: number; color?: string; label?: string } = $props();
+  // Épaisseur de trait compensée au zoom de l'interface (--icon-optique = 1/√zoom, posé par App) :
+  // au zoom natif le trait grossissait comme le reste et les icônes paraissaient plus épaisses que le texte.
   const stroke = $derived(['cloud-ok', 'cloud-pending', 'conflict', 'check-circle', 'spinner'].includes(name) ? 2.1 : 1.8);
 </script>
 
@@ -17,6 +19,7 @@
   fill="none"
   stroke={color}
   stroke-width={stroke}
+  style:stroke-width="calc({stroke}px * var(--icon-optique, 1))"
   stroke-linecap="round"
   stroke-linejoin="round"
   role={label ? 'img' : undefined}
