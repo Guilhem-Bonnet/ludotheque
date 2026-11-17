@@ -25,6 +25,8 @@
     lifting = false,
     shine = false,
     autofocus = false,
+    words,
+    scale = 1,
     sound,
     onfocus,
     onclick,
@@ -38,6 +40,10 @@
     lifting?: boolean;
     shine?: boolean;
     autofocus?: boolean;
+    /** Mot d'état dans le bandeau (« Nouvelle sauvegarde »…) ; par défaut selon la taille (≥ 250 px). */
+    words?: boolean;
+    /** Agrandissement appliqué par le parent (transformation) : l'anneau de focus le compense pour garder 4 px. */
+    scale?: number;
     sound?: string;
     onfocus?: () => void;
     onclick?: (el: HTMLElement) => void;
@@ -64,7 +70,7 @@
   // Le mot d'état s'ajoute au pictogramme quand la tuile est assez large (tuile en focus de l'accueil) ;
   // dans la grille, la ligne sous la tuile le dit déjà.
   const state = $derived(tileState(game));
-  const stateWords = $derived(size >= 250);
+  const stateWords = $derived(words ?? size >= 250);
   const titleSize = $derived(Math.round(size * (game.short.length > 14 ? 0.115 : 0.13)));
 </script>
 
@@ -78,6 +84,7 @@
   class:lifting
   class:shine
   class:cased={!!box}
+  style:--ring-k={scale}
   style:--band={box?.band}
   style:--band-ink={box?.ink}
   style:--band-h="{bandH}px"
@@ -158,8 +165,8 @@
 
   /* Anneau d'accent : se pose en grandissant de 95 % à 100 %. */
   .ring {
-    position: absolute; inset: -8px; border-radius: calc(var(--radius-tile) + 8px); pointer-events: none;
-    box-shadow: inset 0 0 0 4px var(--accent); opacity: 0; transform: scale(0.95);
+    position: absolute; inset: calc(-8px / var(--ring-k, 1)); border-radius: calc(var(--radius-tile) + 8px); pointer-events: none;
+    box-shadow: inset 0 0 0 calc(4px / var(--ring-k, 1)) var(--accent); opacity: 0; transform: scale(0.95);
     transition: opacity 150ms ease-out, transform 220ms var(--ease-pop);
   }
   .big .ring { border-radius: 26px; }
