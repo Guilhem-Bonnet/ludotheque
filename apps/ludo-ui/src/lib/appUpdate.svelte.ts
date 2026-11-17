@@ -72,13 +72,19 @@ export async function installAppUpdate(): Promise<void> {
   }
 }
 
-/** Vérifications régulières (toutes les 30 min) : une app laissée ouverte voit les nouvelles versions
- *  sans être relancée. Une vérification en cours ou une mise à jour déjà trouvée n'est pas refaite. */
-let timer: ReturnType<typeof setInterval> | undefined;
-export function startAppUpdateChecks(everyMs = 30 * 60 * 1000): void {
+/** Recherche déclenchée par des événements, jamais par minuterie : au démarrage, quand la fenêtre
+ *  reprend le focus (retour devant l'écran) et à l'ouverture de l'écran Mises à jour. Au focus, pas
+ *  plus d'une recherche par tranche de 10 min (on ne sollicite pas GitHub à chaque alt-tab). */
+const FOCUS_MIN_GAP_MS = 10 * 60 * 1000;
+let listening = false;
+export function startAppUpdateChecks(): void {
   void checkAppUpdate();
-  if (timer) return;
-  timer = setInterval(() => {
-    if (appUpdate.status === 'idle' || appUpdate.status === 'none' || appUpdate.status === 'error') void checkAppUpdate();
-  }, everyMs);
+  if (listening || isDemo) return;
+  listening = true;
+  void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
+    getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      const recent = appUpdate.checkedAt && Date.now() - appUpdate.checkedAt.getTime() < FOCUS_MIN_GAP_MS;
+      if (focused && !recent && (appUpdate.status === 'idle' || appUpdate.status === 'none' || appUpdate.status === 'error')) void checkAppUpdate();
+    }),
+  );
 }

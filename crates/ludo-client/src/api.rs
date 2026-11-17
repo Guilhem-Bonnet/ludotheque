@@ -24,6 +24,7 @@ impl From<ureq::Error> for ApiError {
 /// Taille maximale d'une sauvegarde téléchargée.
 const MAX_DOWNLOAD: u64 = 1024 * 1024 * 1024;
 
+#[derive(Clone)]
 pub struct Client {
     agent: Agent,
     /// Agent des téléchargements de jeux : pas de délai global (une ROM pèse jusqu'à 15 Go) ; le
@@ -215,7 +216,8 @@ impl Client {
     pub fn download_as(&self, game: &str, file_id: u64, from: u64, if_range: Option<&str>, formats: &[String]) -> Result<ureq::http::Response<ureq::Body>, ApiError> {
         let mut url = self.url(&format!("games/{game}/files/{file_id}"));
         if !formats.is_empty() {
-            url.push_str(&format!("?formats={}", formats.join(",")));
+            // `attendre` : requête longue pendant une conversion (le serveur répond au changement).
+            url.push_str(&format!("?formats={}&attendre=1", formats.join(",")));
         }
         let mut req = self.download_agent.get(url);
         if from > 0 {

@@ -12,7 +12,7 @@ use crate::engine::{Engine, Resolution, SyncOutcome};
 use crate::journal::Journal;
 use ludo_proto::{CatalogGame, FileRole, LeaseOutcome, SaveKey, SaveRevision};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -148,12 +148,38 @@ fn take_lease<'a>(client: &'a Client, key: &'a SaveKey, device: &str) -> Result<
     }
 }
 
-/// Pose `stop` à la destruction : le fil de renouvellement s'arrête même si la partie panique.
-pub struct StopOnDrop<'a>(pub &'a AtomicBool);
+/// Demande d'arrêt d'un fil : `wait` dort jusqu'à l'arrêt OU l'échéance, et se réveille aussitôt
+/// qu'on appelle `request` (Condvar) — aucune relecture périodique d'un drapeau.
+#[derive(Default)]
+pub struct Stop {
+    stopped: Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+impl Stop {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn request(&self) {
+        *self.stopped.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.cv.notify_all();
+    }
+
+    /// `true` si l'arrêt a été demandé avant l'échéance `d`.
+    pub fn wait(&self, d: Duration) -> bool {
+        let g = self.stopped.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (g, _) = self.cv.wait_timeout_while(g, d, |s| !*s).unwrap_or_else(std::sync::PoisonError::into_inner);
+        *g
+    }
+}
+
+/// Demande l'arrêt à la destruction : le fil de renouvellement s'arrête même si la partie panique.
+pub struct StopOnDrop<'a>(pub &'a Stop);
 
 impl Drop for StopOnDrop<'_> {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.0.request();
     }
 }
 
@@ -216,51 +242,67 @@ mod tests_flux {
     }
 }
 
-/// Arrêt demandé au processus `ludo run` (SIGTERM de Sunshine en fin de flux, Ctrl+C, fermeture du
-/// terminal) : l'émulateur est arrêté proprement, puis la sauvegarde est envoyée quand même.
-static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn on_stop_signal(_: libc::c_int) {
-    // Seule opération faite dans le gestionnaire : une écriture atomique (sûre en contexte de signal).
-    STOP_REQUESTED.store(true, Ordering::SeqCst);
-}
-
 /// Délai laissé à l'émulateur pour écrire sa sauvegarde et se fermer après SIGTERM, avant SIGKILL.
 pub const EMULATOR_GRACE: Duration = Duration::from_secs(20);
 
 /// Lance l'émulateur dans son propre groupe de processus et attend sa fin. Si `ludo` reçoit SIGTERM,
-/// SIGINT ou SIGHUP pendant la partie, l'émulateur (tout son groupe) reçoit SIGTERM, puis SIGKILL
-/// après `grace`. Renvoie le statut et `true` si la fin a été demandée par un signal.
+/// SIGINT ou SIGHUP pendant la partie (fin du flux Sunshine, Ctrl+C), l'émulateur (tout son groupe)
+/// reçoit SIGTERM, puis SIGKILL s'il n'est pas sorti après `grace`. Renvoie le statut et `true` si la
+/// fin a été demandée par un signal.
+///
+/// Événementiel : un fil attend la sortie de l'émulateur (`wait`), un autre les signaux
+/// (`signal-hook`) ; les deux écrivent dans un canal sur lequel on dort. Seul délai : la garde
+/// unique de SIGKILL.
 pub fn run_emulator(bin: &str, args: &[String], grace: Duration) -> std::io::Result<(std::process::ExitStatus, bool)> {
-    STOP_REQUESTED.store(false, Ordering::SeqCst);
-    // SAFETY : gestionnaire minimal (écriture atomique seulement), installé pour trois signaux d'arrêt.
-    unsafe {
-        for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-            libc::signal(sig, on_stop_signal as *const () as libc::sighandler_t);
-        }
+    enum Ev {
+        Exited(std::io::Result<std::process::ExitStatus>),
+        Stop,
     }
+    let mut signals = signal_hook::iterator::Signals::new([libc::SIGTERM, libc::SIGINT, libc::SIGHUP])?;
+    let signals_handle = signals.handle();
     let mut cmd = std::process::Command::new(bin);
     cmd.args(args);
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn()?;
     let pgid = i32::try_from(child.id()).unwrap_or(0);
-    let mut stopped_at: Option<Instant> = None;
-    let mut killed = false;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok((status, stopped_at.is_some()));
+    let (tx, rx) = std::sync::mpsc::channel::<Ev>();
+    let tx_sig = tx.clone();
+    let sig_thread = std::thread::spawn(move || {
+        if signals.forever().next().is_some() {
+            let _ = tx_sig.send(Ev::Stop);
         }
-        if stopped_at.is_none() && STOP_REQUESTED.load(Ordering::SeqCst) {
+    });
+    std::thread::spawn(move || {
+        let _ = tx.send(Ev::Exited(child.wait()));
+    });
+    let finish = |status: std::io::Result<std::process::ExitStatus>, stopped: bool| {
+        signals_handle.close();
+        let _ = sig_thread.join();
+        status.map(|s| (s, stopped))
+    };
+    match rx.recv() {
+        Ok(Ev::Exited(status)) => finish(status, false),
+        Ok(Ev::Stop) => {
             // SAFETY : kill(2) sur le groupe de processus créé pour cet émulateur (pgid = pid).
             unsafe { libc::kill(-pgid, libc::SIGTERM) };
-            stopped_at = Some(Instant::now());
+            // Garde unique : SIGKILL si l'émulateur n'a pas quitté dans le délai.
+            let status = match rx.recv_timeout(grace) {
+                Ok(Ev::Exited(status)) => status,
+                _ => {
+                    // SAFETY : idem.
+                    unsafe { libc::kill(-pgid, libc::SIGKILL) };
+                    loop {
+                        match rx.recv() {
+                            Ok(Ev::Exited(status)) => break status,
+                            Ok(Ev::Stop) => continue,
+                            Err(e) => break Err(std::io::Error::other(e)),
+                        }
+                    }
+                }
+            };
+            finish(status, true)
         }
-        if !killed && stopped_at.is_some_and(|t| t.elapsed() >= grace) {
-            // SAFETY : idem, l'émulateur n'a pas quitté dans le délai.
-            unsafe { libc::kill(-pgid, libc::SIGKILL) };
-            killed = true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
+        Err(e) => finish(Err(std::io::Error::other(e)), false),
     }
 }
 
@@ -282,14 +324,11 @@ pub fn stream_device(appareil: &str, client: &str) -> String {
 /// Le verrou expire au bout de 120 s : il est renouvelé tant que la partie dure.
 const HEARTBEAT: Duration = Duration::from_secs(40);
 
-pub fn heartbeat(client: &Client, key: &SaveKey, device: &str, stop: &AtomicBool) {
-    let mut last = Instant::now();
-    while !stop.load(Ordering::SeqCst) {
-        std::thread::sleep(Duration::from_millis(250));
-        if last.elapsed() >= HEARTBEAT {
-            let _ = client.acquire_lease(key, device, false);
-            last = Instant::now();
-        }
+/// Renouvelle le bail toutes les 40 s (exigé par le protocole : TTL 120 s côté serveur, pour libérer
+/// une partie si l'appareil disparaît) ; s'arrête dès que `stop` est demandé, sans attendre l'échéance.
+pub fn heartbeat(client: &Client, key: &SaveKey, device: &str, stop: &Stop) {
+    while !stop.wait(HEARTBEAT) {
+        let _ = client.acquire_lease(key, device, false);
     }
 }
 
@@ -393,7 +432,7 @@ pub fn launch(env: &Env, key: &SaveKey, obs: &mut dyn Observer) -> Result<Launch
     let lease = take_lease(&client, key, &device)?;
     obs.step(Step::Profil, StepState::Fait, None);
 
-    let stop = AtomicBool::new(false);
+    let stop = Stop::new();
     let result = std::thread::scope(|s| {
         let _stop = StopOnDrop(&stop);
         if lease.is_some() {

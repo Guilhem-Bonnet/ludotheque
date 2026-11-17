@@ -91,6 +91,10 @@ enum Cmd {
         #[arg(long, value_enum)]
         resoudre: Option<Choix>,
     },
+    /// Démon : synchronise l'appareil adb à chaque événement — branchement (USB ou Wi-Fi, flux
+    /// `adb track-devices`), fermeture d'un émulateur (`am_proc_died` du journal Android),
+    /// écriture d'une sauvegarde (`inotifyd` sur l'appareil, anti-rebond). Aucune scrutation.
+    AdbWatch,
     /// Jeux du catalogue et leurs fichiers trouvés sur cet appareil (dossier de la Ludothèque ou
     /// collection existante). Lecture seule.
     Jeux,
@@ -187,7 +191,7 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool, via: Op
     let (bin, args) = argv.split_first().ok_or("commande de lancement vide")?;
     let started = Instant::now();
     // Le verrou expire au bout de 120 s : renouvelé pendant toute la partie (comme l'app).
-    let stop = std::sync::atomic::AtomicBool::new(false);
+    let stop = launch::Stop::new();
     let client = &ctx.client;
     let status = std::thread::scope(|s| {
         let _stop = launch::StopOnDrop(&stop);
@@ -382,6 +386,227 @@ fn sunshine_roms() -> std::collections::BTreeSet<(String, String)> {
     out
 }
 
+/// Événements qui déclenchent une synchronisation de l'appareil adb.
+enum WatchEv {
+    /// Liste des séries présentes (état « device »), poussée par `adb track-devices`.
+    Devices(Vec<String>),
+    /// `adb track-devices` s'est arrêté (serveur adb relancé) : à relancer.
+    TrackerEnded,
+    /// Processus terminé sur l'appareil (paquet Android).
+    ProcDied(String),
+    /// Écriture dans un dossier de sauvegarde (chemin du dossier surveillé).
+    SaveWritten(String),
+    /// Nouveau dossier de jeu créé : la surveillance doit l'inclure.
+    NewSaveDir,
+}
+
+/// Lit le flux de `adb track-devices` : trames « longueur sur 4 hex + lignes série\tétat ».
+fn spawn_tracker(tx: std::sync::mpsc::Sender<WatchEv>) -> std::io::Result<std::process::Child> {
+    use std::io::Read;
+    let mut child = std::process::Command::new("adb").arg("track-devices").stdout(std::process::Stdio::piped()).spawn()?;
+    let mut out = child.stdout.take().ok_or_else(|| std::io::Error::other("sortie de adb indisponible"))?;
+    std::thread::spawn(move || {
+        loop {
+            let mut len = [0u8; 4];
+            if out.read_exact(&mut len).is_err() {
+                break;
+            }
+            let Ok(n) = usize::from_str_radix(&String::from_utf8_lossy(&len), 16) else { break };
+            let mut body = vec![0u8; n];
+            if out.read_exact(&mut body).is_err() {
+                break;
+            }
+            let present = String::from_utf8_lossy(&body)
+                .lines()
+                .filter_map(|l| l.split_once('\t'))
+                .filter(|(_, state)| *state == "device")
+                .map(|(s, _)| s.to_string())
+                .collect();
+            if tx.send(WatchEv::Devices(present)).is_err() {
+                return;
+            }
+        }
+        let _ = tx.send(WatchEv::TrackerEnded);
+    });
+    Ok(child)
+}
+
+/// Lance une commande sur l'appareil et transforme chaque ligne de sortie en événement.
+fn spawn_device_stream(serial: &str, script: &str, tx: std::sync::mpsc::Sender<WatchEv>, map: fn(&str) -> Option<WatchEv>) -> Option<std::process::Child> {
+    use std::io::BufRead;
+    let mut child = std::process::Command::new("adb").args(["-s", serial, "shell", script]).stdout(std::process::Stdio::piped()).spawn().ok()?;
+    let out = child.stdout.take()?;
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+            if let Some(ev) = map(&line) {
+                if tx.send(ev).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    Some(child)
+}
+
+/// `am_proc_died: [user,pid,paquet,…]` → paquet.
+fn proc_died(line: &str) -> Option<WatchEv> {
+    let inner = line.split("am_proc_died:").nth(1)?.trim().trim_start_matches('[');
+    inner.split(',').nth(2).map(|p| WatchEv::ProcDied(p.trim().to_string()))
+}
+
+/// Ligne d'`inotifyd -` : « <événement>\t<dossier>[\t<nom>] ». `n` (création) dans une racine
+/// de sauvegardes = nouveau jeu.
+fn save_event(line: &str) -> Option<WatchEv> {
+    let mut parts = line.split('\t');
+    let ev = parts.next()?;
+    let dir = parts.next()?.to_string();
+    Some(if ev.contains('n') && parts.next().is_some() && dir.matches('/').count() > 0 && dir.ends_with(|c: char| c.is_ascii_hexdigit()) && dir.rsplit('/').next().is_some_and(|d| d.len() == 32) {
+        WatchEv::NewSaveDir
+    } else {
+        WatchEv::SaveWritten(dir)
+    })
+}
+
+/// Dossiers de sauvegarde à surveiller sur l'appareil : racines par profil (création d'un jeu)
+/// et dossier de chaque jeu (écritures). inotify n'est pas récursif.
+fn watch_dirs(ctx: &Ctx, dev: &ludo_client::adb::Adb) -> (Vec<String>, Vec<String>) {
+    use ludo_client::adb;
+    let mut emulators: Vec<String> = ctx.cfg.consoles.values().cloned().collect();
+    emulators.extend(ctx.cfg.jeux.values().map(|g| g.emulateur.clone()));
+    emulators.sort();
+    emulators.dedup();
+    let mut roots = Vec::new();
+    let mut packages = Vec::new();
+    for e in emulators {
+        if let Some(p) = adb::package_of(&ctx.cfg, &e) {
+            packages.push(p);
+        }
+        for profile in ctx.cfg.profils.keys() {
+            let probe = config::GameConf { emulateur: e.clone(), title_id: "0000000000000000".into(), profils: None };
+            let Ok(tmp) = tempfile::tempdir() else { continue };
+            if let Ok((_, pairs)) = adb::prepare_mirrored(&ctx.cfg, &probe, profile, tmp.path()) {
+                for (_, remote) in pairs {
+                    if let Some(root) = std::path::Path::new(&remote).parent().and_then(|p| p.to_str()) {
+                        if !roots.contains(&root.to_string()) && dev.is_dir(root) {
+                            roots.push(root.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut dirs = roots.clone();
+    for r in &roots {
+        dirs.extend(dev.list(r).into_iter().filter(|n| !n.contains(".ludo-")).map(|n| format!("{r}/{n}")));
+    }
+    (dirs, packages)
+}
+
+/// Démon événementiel de synchronisation d'un appareil adb (voir `Cmd::AdbWatch`).
+fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let conf = ctx.cfg.adb.as_ref().ok_or("section [adb] absente de la configuration")?;
+    // Wi-Fi : une tentative de connexion au démarrage ; ensuite le serveur adb signale lui-même
+    // les connexions (et reconnecte les appareils appairés en débogage sans fil, via mDNS).
+    for s in conf.series.iter().filter(|s| s.contains(':')) {
+        let _ = std::process::Command::new("adb").args(["connect", s]).output();
+    }
+    let (tx, rx) = mpsc::channel::<WatchEv>();
+    let mut tracker = spawn_tracker(tx.clone()).map_err(|e| format!("adb track-devices : {e}"))?;
+    let mut watchers: Vec<std::process::Child> = Vec::new();
+    let mut connected: Option<String> = None;
+    let mut last_present: Vec<String> = Vec::new();
+    let mut packages: Vec<String> = Vec::new();
+    // Anti-rebond : échéance de synchronisation repoussée à chaque événement, calculée (pas de tick).
+    let mut due: Option<Instant> = None;
+    const AFTER_WRITE: Duration = Duration::from_secs(20);
+    const AFTER_EXIT: Duration = Duration::from_secs(3);
+    let kill_all = |w: &mut Vec<std::process::Child>| {
+        for c in w.iter_mut() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        w.clear();
+    };
+    println!("Surveillance de {} : en attente d'événements", ctx.cfg.appareil);
+    loop {
+        let ev = match due {
+            None => rx.recv().map_err(|e| e.to_string())?,
+            Some(t) => match rx.recv_timeout(t.saturating_duration_since(Instant::now())) {
+                Ok(ev) => ev,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    due = None;
+                    if let Err(e) = adb_sync(ctx, None, None, None) {
+                        println!("Synchronisation impossible : {e}");
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e.to_string()),
+            },
+        };
+        match ev {
+            WatchEv::Devices(present) => {
+                last_present.clone_from(&present);
+                // Connexion en cours gardée tant qu'elle reste présente (pas de bascule USB ↔ Wi-Fi inutile).
+                let ours = if connected.as_ref().is_some_and(|c| present.contains(c)) {
+                    connected.clone()
+                } else {
+                    conf.series.iter().find(|s| present.contains(s)).cloned()
+                };
+                if ours != connected {
+                    kill_all(&mut watchers);
+                    connected = ours.clone();
+                    if let Some(serial) = ours {
+                        println!("{} connecté ({serial}) : synchronisation", ctx.cfg.appareil);
+                        let dev = ludo_client::adb::Adb { serial: serial.clone() };
+                        let (dirs, pk) = watch_dirs(ctx, &dev);
+                        packages = pk;
+                        // Fin de partie : mort du processus de l'émulateur (journal d'événements Android).
+                        if let Some(c) = spawn_device_stream(&serial, "logcat -b events -T 1 -s am_proc_died", tx.clone(), proc_died) {
+                            watchers.push(c);
+                        }
+                        // Écritures de sauvegarde (inotifyd de toybox : w = fichier fermé après écriture, m = renommé vers
+                        // le dossier (sauvegarde écrite à côté puis renommée), n = créé). Vérifié sur la Thor le 16/11.
+                        if !dirs.is_empty() {
+                            let args: Vec<String> = dirs.iter().map(|d| format!("'{d}':wmn")).collect();
+                            if let Some(c) = spawn_device_stream(&serial, &format!("inotifyd - {}", args.join(" ")), tx.clone(), save_event) {
+                                watchers.push(c);
+                            }
+                        }
+                        due = Some(Instant::now());
+                    } else {
+                        println!("{} déconnecté", ctx.cfg.appareil);
+                        due = None;
+                    }
+                }
+            }
+            WatchEv::TrackerEnded => {
+                // Serveur adb relancé : on se réabonne (une seule attente si adb ne répond plus du tout).
+                let _ = tracker.wait();
+                std::thread::sleep(Duration::from_secs(2));
+                tracker = spawn_tracker(tx.clone()).map_err(|e| format!("adb track-devices : {e}"))?;
+            }
+            WatchEv::ProcDied(pkg) if packages.contains(&pkg) => {
+                println!("{pkg} fermé : synchronisation");
+                due = Some(Instant::now() + AFTER_EXIT);
+            }
+            WatchEv::ProcDied(_) => {}
+            WatchEv::SaveWritten(dir) => {
+                if due.is_none() {
+                    println!("Sauvegarde modifiée ({dir}) : synchronisation après {} s sans nouvelle écriture", AFTER_WRITE.as_secs());
+                }
+                due = Some(Instant::now() + AFTER_WRITE);
+            }
+            WatchEv::NewSaveDir => {
+                // Relance la surveillance pour inclure le nouveau dossier de jeu.
+                connected = None;
+                let _ = tx.send(WatchEv::Devices(last_present.clone()));
+            }
+        }
+    }
+}
+
 /// Horodatage pour nommer les dossiers mis de côté (`.ludo-old-20261116-0712`).
 fn chrono_stamp() -> String {
     let out = std::process::Command::new("date").arg("+%Y%m%d-%H%M%S").output();
@@ -405,6 +630,7 @@ fn main() -> ExitCode {
             }
             Cmd::Run { jeu, rom, jouer_ici, via, lanceur } => run(&mut ctx, &jeu, &rom, jouer_ici, via.as_deref(), lanceur.as_deref()),
             Cmd::AdbSync { profil, jeu, resoudre } => adb_sync(&ctx, profil, jeu, resoudre),
+            Cmd::AdbWatch => adb_watch(&ctx),
             Cmd::Jeux => {
                 let local = ludo_client::local::LocalIndex::scan(&ctx.cfg, &ludo_client::detect::Host::current());
                 for (c, d) in &local.roots {
@@ -467,4 +693,26 @@ fn main() -> ExitCode {
         eprintln!("{e}");
         ExitCode::FAILURE
     })
+}
+
+#[cfg(test)]
+mod tests_evenements {
+    use super::*;
+
+    #[test]
+    fn mort_de_processus() {
+        let l = "11-16 21:39:17.846  2143  8889 I am_proc_died: [0,18736,dev.eden.eden_emulator,905,19]";
+        assert!(matches!(proc_died(l), Some(WatchEv::ProcDied(p)) if p == "dev.eden.eden_emulator"));
+        assert!(proc_died("--------- beginning of events").is_none());
+    }
+
+    #[test]
+    fn evenements_inotifyd() {
+        let root = "/sdcard/Android/data/dev.eden.eden_emulator/files/nand/user/save/0000000000000000/A2D2DFD2700F51C158E87A336C77FE55";
+        // Écriture dans le dossier d'un jeu.
+        assert!(matches!(save_event(&format!("w\t{root}/0100152000022000\tuserdata.dat")), Some(WatchEv::SaveWritten(_))));
+        // Création d'un dossier de jeu dans la racine du profil : surveillance à relancer.
+        assert!(matches!(save_event(&format!("n\t{root}\t0100ABCD00000000")), Some(WatchEv::NewSaveDir)));
+        assert!(save_event("ligne-incomplète").is_none());
+    }
 }

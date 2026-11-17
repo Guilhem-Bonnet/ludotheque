@@ -6,7 +6,7 @@
   import { api, isDemo } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
-  import { play as playSound, setVolume } from '../lib/sound';
+  import { syncRhythm, play as playSound, setVolume } from '../lib/sound';
   import { appUpdate, checkAppUpdate, installAppUpdate } from '../lib/appUpdate.svelte';
   import type { DeviceInfo, Emulator } from '../lib/types';
 
@@ -44,7 +44,7 @@
     if (test === 'busy') return;
     test = 'busy';
     feedback('syncStart');
-    const tick = setInterval(() => playSound('syncTick'), 900);
+    const stopRhythm = syncRhythm();
     try {
       latency = await api.ping();
       test = 'ok';
@@ -53,7 +53,7 @@
       test = 'ko';
       feedback('err');
     } finally {
-      clearInterval(tick);
+      stopRhythm();
     }
   }
 

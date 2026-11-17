@@ -20,8 +20,7 @@ use ludo_proto::{CatalogGame, FileRole, GameArt, GameFile, LeaseOutcome, Profile
 use serde::Serialize;
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 #[derive(Debug, Serialize)]
@@ -840,7 +839,7 @@ pub struct Preparation {
 }
 
 /// Opérations en cours : jeu → drapeau d'annulation. Une seule opération à la fois par jeu.
-pub type Occupes = Mutex<BTreeMap<String, Arc<AtomicBool>>>;
+pub type Occupes = Mutex<BTreeMap<String, install::Cancel>>;
 
 static EN_COURS: Occupes = Mutex::new(BTreeMap::new());
 
@@ -850,7 +849,7 @@ pub struct JeuOccupe<'a> {
     set: &'a Occupes,
     game: String,
     /// Passe à `true` quand l'interface demande l'annulation (`cancelInstall`).
-    pub cancel: Arc<AtomicBool>,
+    pub cancel: install::Cancel,
 }
 
 impl<'a> JeuOccupe<'a> {
@@ -860,7 +859,7 @@ impl<'a> JeuOccupe<'a> {
         if g.contains_key(game) {
             return Err("Une opération sur ce jeu est déjà en cours".into());
         }
-        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel = install::Cancel::new();
         g.insert(game.to_string(), cancel.clone());
         Ok(Self { set, game: game.to_string(), cancel })
     }
@@ -875,8 +874,8 @@ impl Drop for JeuOccupe<'_> {
 /// Demande l'annulation de l'opération en cours sur ce jeu ; `false` si aucune.
 pub fn annuler(set: &Occupes, game: &str) -> bool {
     match set.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(game) {
-        Some(flag) => {
-            flag.store(true, Ordering::SeqCst);
+        Some(cancel) => {
+            cancel.cancel();
             true
         }
         None => false,
@@ -931,7 +930,7 @@ fn accepted_formats(cfg: &Config, game: &CatalogGame) -> Vec<String> {
 ///
 /// Un fichier converti par le serveur (NSZ → NSP) change de taille : le total cumulé remplace la
 /// taille du catalogue par la taille réelle dès qu'elle est connue.
-fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &[GameFile], cancel: Arc<AtomicBool>) -> Result<(), String> {
+fn run_install(app: &tauri::AppHandle, cfg: &Config, game: &CatalogGame, plan: &[GameFile], cancel: install::Cancel) -> Result<(), String> {
     let roms = roms_dir(cfg)?;
     let client = Client::new(&cfg.serveur);
     let formats = accepted_formats(cfg, game);
@@ -1032,7 +1031,7 @@ struct PassageObserver {
     app: tauri::AppHandle,
     cfg: Config,
     game: String,
-    cancel: Arc<AtomicBool>,
+    cancel: install::Cancel,
 }
 
 impl Observer for PassageObserver {
@@ -1550,7 +1549,7 @@ mod tests {
         let _b = JeuOccupe::prendre(&set, "ds-x").unwrap();
         // Annulation : lève le drapeau du jeu concerné seulement.
         assert!(annuler(&set, "switch-lm3"));
-        assert!(a.cancel.load(Ordering::SeqCst) && !_b.cancel.load(Ordering::SeqCst));
+        assert!(a.cancel.is_cancelled() && !_b.cancel.is_cancelled());
         assert!(!annuler(&set, "inconnu"));
         drop(a);
         assert!(JeuOccupe::prendre(&set, "switch-lm3").is_ok());

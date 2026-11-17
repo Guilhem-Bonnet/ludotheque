@@ -6,7 +6,7 @@
   import { api } from '../api';
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
-  import { play as playSound } from '../sound';
+  import { syncRhythm, play as playSound } from '../sound';
   import type { Game, SaveRevision } from '../types';
 
   // Restauration d'une sauvegarde : fenêtre de chargement (on ne joue pas pendant qu'on remplace la
@@ -20,9 +20,9 @@
 
   onMount(() => {
     feedback('syncStart');
-    const tick = setInterval(() => playSound('syncTick'), 900);
+    const stopRhythm = syncRhythm();
     api.restore(profile, game.id, rev.rev, (s, p) => { step = s; progress = s === 0 ? p : 1; })
-      .finally(() => clearInterval(tick))
+      .finally(stopRhythm)
       .then(() => {
         step = 2;
         feedback('saved');

@@ -4,7 +4,7 @@
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { feedback } from '../lib/feedback';
-  import { play as playSound } from '../lib/sound';
+  import { syncRhythm, play as playSound } from '../lib/sound';
   import { reducedMotion } from '../lib/motion';
   import Ambiance from '../lib/components/Ambiance.svelte';
   import Avatar from '../lib/components/Avatar.svelte';
@@ -34,7 +34,13 @@
   }
 
   onMount(() => {
-    const t = setInterval(() => (clock = now()), 15_000);
+    // Horloge : mise à jour au changement de minute (échéance calculée, pas de rafraîchissement périodique).
+    let t: ReturnType<typeof setTimeout>;
+    const nextMinute = () => {
+      clock = now();
+      t = setTimeout(nextMinute, 60_000 - (Date.now() % 60_000) + 50);
+    };
+    t = setTimeout(nextMinute, 60_000 - (Date.now() % 60_000) + 50);
     const profile = router.profile!;
     void load(profile.id);
     // Les mises à jour ne bloquent jamais l'accueil : un échec laisse simplement le compteur à 0.
@@ -54,7 +60,7 @@
     };
     window.addEventListener('ludo:action', onAction);
     return () => {
-      clearInterval(t);
+      clearTimeout(t);
       window.removeEventListener('ludo:action', onAction);
     };
   });
@@ -102,7 +108,7 @@
     if (offline) { feedback('err'); return; }
     syncing = true;
     feedback('syncStart');
-    const tick = setInterval(() => playSound('syncTick'), 900);
+    const stopRhythm = syncRhythm();
     let lib: Game[];
     try {
       lib = await api.sync(router.profile!.id);
@@ -112,7 +118,7 @@
       feedback('err');
       return;
     } finally {
-      clearInterval(tick);
+      stopRhythm();
     }
     const byId = new Map(lib.map((g) => [g.id, g]));
     all = lib;
