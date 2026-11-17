@@ -92,3 +92,24 @@ Maquette : https://claude.ai/artifact/NSBRvReHdaGeZR1KapYfxh. Les couleurs terne
 | Réglages (raccourci de l'accueil) | Son (volume 0 à 10), Serveur (adresse, Tester la connexion), Synchronisation (au démarrage, à la fin de chaque partie), Appareil (nom, espace libre), À propos. Enregistrés sur l'appareil | Volume : gauche / droite règlent (attribut `data-adjust`), aperçu sonore `move` à chaque cran, `err` en butée ; test de connexion avec `CloudIcon` (arc qui tourne autour du nuage), `syncStart`, `syncTick`, puis `saved` ou `err` |
 | Bibliothèque | X sur une tuile ouvre le même menu Options qu'à l'accueil | Identique à l'accueil |
 | Chargements nuage | `CloudIcon.svelte` partout : le nuage reste immobile et respire, l'arc tourne autour ; jamais le nuage entier qui tourne | — |
+
+## Rangée de l'accueil (17/11) — mouvement par type d'entrée
+
+Maquette interactive (2 chorégraphies, A retenue) : https://claude.ai/artifact/QCxawWGTmL8wtY12YpLqCd
+
+Principe : la mise en page de la rangée ne bouge jamais (emplacements de 232 px + 20 px). La tuile choisie est agrandie (×272/232, ancrée à gauche) et les emplacements suivants glissent de 40 px, par transformations, sur la même durée et la même courbe : l'écart de 20 px reste constant pendant le mouvement. Le défilement est un ressort amorti critique (`src/lib/glide.ts`, ω = 20 : 90 % du trajet en 195 ms) qui garde sa vitesse quand la cible change.
+
+| Entrée | Ce qui se passe |
+|---|---|
+| Flèche, croix, stick (un appui) | La tuile choisie grandit (260 ms, `--ease-land`) et se place en 2e position ; son `move` |
+| Maintien (clavier, croix, stick) | 1 pas toutes les 110 ms (croix et stick : 1re répétition après 380 ms ; clavier : délai du système). Racine en `data-rush` : tuile en 150 ms, titre remplacé sans montée, ligne de l'appareil masquée, fond figé. La rangée suit avec environ une tuile de retard, sans à-coup ; au relâchement, tout se pose |
+| Bord atteint | Une seule oscillation au premier appui, rien en maintenant |
+| Survol à la souris | Choisit la tuile, sans défiler (seule une tuile coupée au bord est révélée). Un contenu qui défile sous un pointeur immobile ne change jamais le choix |
+| Molette à crans | La rangée avance d'une tuile par cran, alignée sur les tuiles ; le choix ne bouge pas |
+| Pavé tactile | Défilement horizontal natif ; un défilement vertical est converti, direct, sans ressort |
+| Doigt | Glisser avec l'inertie native (le ressort se retire). 1er toucher : choisit ; 2e : ouvre. Un toucher qui arrête l'inertie (`scrollend`, sinon 200 ms) ne choisit rien |
+| Clic | Ouvre la tuile cliquée (déjà choisie par le survol) |
+| Retour d'écran | Le choix revient sur la tuile quittée ; la rangée est replacée sans glisser |
+| Titre sous la rangée | L'ancien s'efface (100 ms), puis le nouveau monte de 8 px (240 ms) : jamais deux titres superposés |
+| Fond d'ambiance | Suit 140 ms après le dernier changement : la tuile répond d'abord, le monde suit |
+| Animations réduites | Tuile, décalage et défilement instantanés ; sons et vibrations restent |
