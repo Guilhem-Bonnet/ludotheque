@@ -206,6 +206,15 @@
           {/if}
         </div>
       {/each}
+      {#if games.length}
+        <!-- Fin de rangée : toute la collection (comme « Tous les logiciels » de la console). -->
+        <div class="slot rise" class:focused={focused === games.length} style:--i={games.length}>
+          <button class="all-games focusable" class:big={focused === games.length} onfocus={() => (focused = games.length)} onclick={() => router.go({ name: 'bibliotheque' })}>
+            <Icon name="grid" size={focused === games.length ? 48 : 40} />
+            <span>Tous les jeux</span>
+          </button>
+        </div>
+      {/if}
     </div>
 
     {#if current}
@@ -272,6 +281,15 @@
   .row::-webkit-scrollbar { display: none; }
   .slot { display: flex; flex-direction: column; flex-shrink: 0; margin-top: 20px; }
   .slot.focused { width: 272px; margin-top: 0; }
+  .all-games {
+    all: unset; cursor: pointer; box-sizing: border-box; width: 232px; height: 232px; border-radius: var(--radius-tile);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.12);
+    font-size: 18px; font-weight: 600; color: var(--ink);
+    transition: width 280ms var(--ease-land), height 280ms var(--ease-land), background-color var(--t-quick) ease-out, box-shadow var(--t-std) var(--ease-land);
+  }
+  .all-games.big { width: 272px; height: 272px; }
+  .all-games:focus { background: rgba(255, 255, 255, 0.14); box-shadow: inset 0 0 0 4px var(--accent), 0 22px 44px rgba(0, 0, 0, 0.45); }
 
   /* Ligne discrète sous la tuile en focus : appareil et heure de la dernière partie, en gris neutre. */
   .device-tab {

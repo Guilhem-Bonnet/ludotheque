@@ -667,12 +667,20 @@ pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
         .collect()
 }
 
-/// Jeux avec une sauvegarde pour le profil, du plus récent au plus ancien, au plus `limit`.
+/// Rangée de l'accueil, comme la console : d'abord les jeux joués (sauvegarde du profil), du plus
+/// récent au plus ancien, puis les jeux installés jamais joués (ordre de la bibliothèque) ; au plus `limit`.
 pub fn select_recent(library: &[UiGame], saves: &[SaveSummary], limit: usize) -> Vec<UiGame> {
     let mut ordered: Vec<&SaveSummary> = saves.iter().collect();
     ordered.sort_by(|a, b| b.created_at.cmp(&a.created_at).then_with(|| a.game.cmp(&b.game)));
-    ordered.iter().filter_map(|s| library.iter().find(|g| g.id == s.game)).take(limit).cloned().collect()
+    let mut out: Vec<UiGame> = ordered.iter().filter_map(|s| library.iter().find(|g| g.id == s.game)).cloned().collect();
+    let played: std::collections::BTreeSet<String> = out.iter().map(|g| g.id.clone()).collect();
+    out.extend(library.iter().filter(|g| g.install != "non_installe" && !played.contains(&g.id)).cloned());
+    out.truncate(limit);
+    out
 }
+
+/// Nombre de jeux de la rangée de l'accueil (suivi d'une tuile « Bibliothèque »).
+const HOME_ROW: usize = 12;
 
 /// Bibliothèque du profil et têtes de sauvegarde, lues sur le serveur (erreur si injoignable) et
 /// sur l'appareil (journal, dossier des ROM).
@@ -718,7 +726,7 @@ async fn library(profile: String) -> Result<Vec<UiGame>, String> {
 async fn recent(profile: String) -> Result<Vec<UiGame>, String> {
     blocking(move || {
         let (library, saves) = fetch_library(&load_config()?, &profile)?;
-        Ok(select_recent(&library, &saves, 5))
+        Ok(select_recent(&library, &saves, HOME_ROW))
     })
     .await
 }
@@ -1510,7 +1518,16 @@ mod tests {
         let lib = build_library(&games, &env(&saves, &entries, &[]));
         let ids: Vec<_> = select_recent(&lib, &saves, 5).into_iter().map(|g| g.id).collect();
         assert_eq!(ids, ["g7", "g6", "g5", "g4", "g3"]);
+        // Aucun jeu installé dans ce banc d'essai : sans sauvegarde, rangée vide.
         assert!(select_recent(&lib, &[], 5).is_empty());
+        // Jeu installé jamais joué : après les jeux joués.
+        let mut lib2 = lib.clone();
+        if let Some(g) = lib2.iter_mut().find(|g| g.id == "g1") {
+            g.install = "installe";
+        }
+        let only: Vec<_> = vec![save("g7", "pc", 60, 200)];
+        let ids: Vec<_> = select_recent(&lib2, &only, 5).into_iter().map(|g| g.id).collect();
+        assert_eq!(ids, ["g7", "g1"]);
     }
 
     fn plan_game() -> CatalogGame {
