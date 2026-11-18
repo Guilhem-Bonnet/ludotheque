@@ -311,6 +311,8 @@
               {game}
               size={SMALL}
               big={false}
+              words={i === focused}
+              scale={i === focused ? BIG / SMALL : 1}
               hero={router.heroGame === game.id}
               dimmed={launching !== null && launching !== game.id}
               lifting={launching === game.id}
