@@ -28,6 +28,8 @@
       const pct = game.progress === undefined ? '' : `${Math.round(game.progress)} %`;
       return { icon: 'download', color: 'var(--accent-ink)', bg: 'var(--accent-soft)', short: pct || 'Téléchargement…', label: `Téléchargement… ${pct}`.trim(), attention: false };
     }
+    // Android : jeu absent de l'appareil mais jouable en flux depuis le PC.
+    if (game.install === 'non_installe' && game.stream) return { icon: 'pc', color: 'var(--accent-ink)', bg: 'transparent', short: 'Via Moonlight', label: 'Jouable en flux depuis le PC (Moonlight)', attention: false };
     if (game.install === 'non_installe') return { icon: 'download', color: 'var(--ink-3)', bg: 'transparent', short: 'Non installé', label: 'Non installé', attention: false };
     return null;
   }

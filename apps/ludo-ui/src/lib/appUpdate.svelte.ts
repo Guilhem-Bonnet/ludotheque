@@ -3,7 +3,7 @@
 // Vérification au démarrage et sur demande (Réglages) ; l'installation remplace l'AppImage puis relance.
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { isDemo } from './api';
+import { isAndroid, isDemo } from './api';
 
 export type AppUpdateStatus = 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'restarting' | 'error';
 
@@ -24,7 +24,8 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Cherche une version plus récente. Sans effet hors de l'app (démo dans un navigateur). */
 export async function checkAppUpdate(): Promise<void> {
-  if (isDemo || appUpdate.status === 'checking' || appUpdate.status === 'downloading' || appUpdate.status === 'restarting') return;
+  // Android : pas de mise à jour intégrée (l'APK est installé par le PC).
+  if (isDemo || isAndroid || appUpdate.status === 'checking' || appUpdate.status === 'downloading' || appUpdate.status === 'restarting') return;
   appUpdate.status = 'checking';
   appUpdate.error = '';
   try {
@@ -79,7 +80,7 @@ const FOCUS_MIN_GAP_MS = 10 * 60 * 1000;
 let listening = false;
 export function startAppUpdateChecks(): void {
   void checkAppUpdate();
-  if (listening || isDemo) return;
+  if (listening || isDemo || isAndroid) return;
   listening = true;
   void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
     getCurrentWindow().onFocusChanged(({ payload: focused }) => {

@@ -289,6 +289,10 @@ pub struct DeviceGame {
     /// Sauvegarde présente sur l'appareil.
     #[serde(default)]
     pub save: bool,
+    /// Nom de l'appli Sunshine qui lance ce jeu en flux (Moonlight `AppName`) : plus stable que son
+    /// identifiant, qui change avec le nom ou la jaquette. Absent des anciens inventaires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_app: Option<String>,
 }
 
 /// Inventaire d'un appareil : ce qu'il a, à la date de son dernier envoi.

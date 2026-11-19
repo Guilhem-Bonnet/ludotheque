@@ -1,7 +1,7 @@
 // Accès aux données. Dans l'app Tauri, chaque appel passe par une commande Rust (`ludo-client`).
 // Dans un navigateur (développement, démonstration), une source de démonstration répond à la place.
 
-import type { Conflict, ConflictSide, DeviceInfo, Emulator, Game, RemoteDevice, Preparation, Profile, SaveRevision, UpdateItem } from './types';
+import type { Conflict, ConflictSide, DeviceInfo, Emulator, Game, LaunchMode, RemoteDevice, Preparation, Profile, SaveRevision, UpdateItem } from './types';
 
 /** Étapes d'un lancement réel, dans l'ordre (événement `ludo://passage`). */
 export type LaunchStep = 'profil' | 'telechargement' | 'sauvegarde' | 'lancement' | 'en_jeu' | 'envoi' | 'termine';
@@ -15,7 +15,9 @@ export interface LaunchEvent {
 /** Fin d'un lancement : partie jouée et sauvegarde envoyée, ou conflit à trancher (rien n'a été lancé sauf si `played`). */
 export type LaunchResult =
   | { result: 'termine'; playtime: string; detail?: string; emulatorError?: boolean }
-  | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean; rev: number };
+  | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean; rev: number }
+  /** Android : jeu ouvert dans l'émulateur ou dans Moonlight (`detail` : nom de l'émulateur ou de l'appli Sunshine). */
+  | { result: 'lance'; via: 'emulateur' | 'flux'; detail: string };
 
 /** Suite d'un choix de conflit : appliqué, ou conflit à retrancher (le serveur a changé depuis l'affichage). */
 export type ResolveResult = { result: 'fait' } | { result: 'conflit'; local: ConflictSide; server: ConflictSide; played: boolean; rev: number };
@@ -52,7 +54,7 @@ export interface LudoApi {
    * Lance le jeu pour de vrai : verrou de partie, installation si besoin, sauvegarde, émulateur, envoi à la fermeture.
    * `onstep` suit les étapes, `onprogress` (0 à 1) le téléchargement. Erreur : message en français.
    */
-  launchGame(profile: string, game: string, onstep?: (e: LaunchEvent) => void, onprogress?: OnProgress): Promise<LaunchResult>;
+  launchGame(profile: string, game: string, onstep?: (e: LaunchEvent) => void, onprogress?: OnProgress, mode?: LaunchMode): Promise<LaunchResult>;
   /** Tranche un conflit : « local » garde la sauvegarde de cet appareil, « serveur » prend celle du serveur ; l'autre reste dans l'historique. */
   resolveConflict(profile: string, game: string, choice: 'local' | 'serveur', rev: number): Promise<ResolveResult>;
   /** Renvoie la sauvegarde d'une partie déjà jouée dont l'envoi a échoué, sans relancer le jeu. */
@@ -81,6 +83,9 @@ export function prepLabel(p: Preparing): string {
 export type OnProgress = (p: number, preparing?: Preparing) => void;
 
 const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+/** App Android (Ayn Thor) : lancement par intent, sauvegardes synchronisées par le PC. */
+export const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
@@ -352,8 +357,8 @@ const tauriApi: LudoApi = {
     await call('restore', { profile, game, rev });
     onstep?.(2, 1);
   },
-  launchGame: (profile, game, onstep, onprogress) =>
-    withSteps(game, onstep, () => withProgress(game, onprogress, () => call<LaunchResult>('launchGame', { profile, game }))),
+  launchGame: (profile, game, onstep, onprogress, mode) =>
+    withSteps(game, onstep, () => withProgress(game, onprogress, () => call<LaunchResult>('launchGame', { profile, game, mode: mode ?? null }))),
   resolveConflict: (profile, game, choice, rev) => call('resolveConflict', { profile, game, choice, rev }),
   retrySend: (profile, game) => call<LaunchResult>('retrySend', { profile, game }),
   onCloseRefused: async (cb) => {

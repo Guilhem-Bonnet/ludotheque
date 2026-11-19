@@ -258,8 +258,8 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         .iter()
         .map(|g| {
             let installed = g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms));
-            let stream = g.files.iter().any(|f| streamable.contains(&ludo_client::local::match_key(&f.path)));
-            (g.id.clone(), ludo_proto::DeviceGame { game: g.id.clone(), installed, stream, save: false })
+            let stream_app = streamable.app_for(g).cloned();
+            (g.id.clone(), ludo_proto::DeviceGame { game: g.id.clone(), installed, stream: stream_app.is_some(), save: false, stream_app })
         })
         .collect();
     let journal_path = config::journal_path().with_file_name(format!("journal-{}.json", ctx.cfg.appareil));
@@ -359,27 +359,71 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
     Ok(code)
 }
 
-/// ROM jouables en flux depuis ce PC : chemins cités dans les commandes des applis Sunshine
-/// (`~/.config/sunshine/apps.json`), réduits à leur clé de rapprochement (nom, format équivalent).
-fn sunshine_roms() -> std::collections::BTreeSet<(String, String)> {
+/// Applis Sunshine de ce PC (`~/.config/sunshine/apps.json`), voir [`sunshine_apps`].
+fn sunshine_roms() -> SunshineApps {
     let path = config::home().join(".config/sunshine/apps.json");
-    let Ok(text) = std::fs::read_to_string(path) else { return Default::default() };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return Default::default() };
-    let mut out = std::collections::BTreeSet::new();
+    std::fs::read_to_string(path).map(|t| sunshine_apps(&t)).unwrap_or_default()
+}
+
+/// Jeux jouables en flux depuis ce PC et nom de l'appli Sunshine qui les lance (Moonlight `AppName`).
+#[derive(Debug, Default, PartialEq)]
+struct SunshineApps {
+    /// Clé de rapprochement (nom, format équivalent) d'un chemin cité dans une commande → appli.
+    by_rom: std::collections::BTreeMap<(String, String), String>,
+    /// Identifiant Ludothèque (`ludo run … --jeu <id>`) → appli.
+    by_game: std::collections::BTreeMap<String, String>,
+}
+
+impl SunshineApps {
+    /// Appli qui lance ce jeu : par identifiant d'abord, sinon par un fichier du catalogue.
+    fn app_for(&self, game: &ludo_proto::CatalogGame) -> Option<&String> {
+        self.by_game.get(&game.id).or_else(|| game.files.iter().find_map(|f| self.by_rom.get(&ludo_client::local::match_key(&f.path))))
+    }
+}
+
+/// Lit `apps.json` : chemins cités entre guillemets dans chaque commande (et leurs dossiers parents :
+/// un jeu en dossier, Switch 2 extrait, est souvent cité par un fichier intérieur). Plusieurs applis
+/// pour le même jeu : celle qui passe par `ludo run` l'emporte (sauvegarde synchronisée).
+fn sunshine_apps(text: &str) -> SunshineApps {
+    let mut out = SunshineApps::default();
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return out };
     for app in v.get("apps").and_then(|a| a.as_array()).into_iter().flatten() {
         let cmd = app.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
-        // Chemins entre guillemets doubles ou simples dans la commande.
+        let Some(name) = app.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()) else { continue };
+        let ludo = cmd.contains("ludo run");
+        // Première appli trouvée pour un jeu, sauf si une appli `ludo run` arrive ensuite.
+        fn keep<K: Ord>(map: &mut std::collections::BTreeMap<K, String>, key: K, name: &str, ludo: bool) {
+            match map.entry(key) {
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    e.insert(name.to_string());
+                }
+                std::collections::btree_map::Entry::Occupied(mut e) if ludo => {
+                    e.insert(name.to_string());
+                }
+                std::collections::btree_map::Entry::Occupied(_) => {}
+            }
+        }
+        if ludo {
+            let mut words = cmd.split_whitespace();
+            while let Some(w) = words.next() {
+                if w == "--jeu" {
+                    if let Some(id) = words.next() {
+                        let id = id.trim_matches(|c| c == '"' || c == '\'');
+                        keep(&mut out.by_game, id.to_string(), name, ludo);
+                    }
+                }
+            }
+        }
         for quote in ['"', '\'']
         {
             let mut parts = cmd.split(quote);
             parts.next();
             while let Some(inside) = parts.next() {
                 if inside.starts_with('/') {
-                    // Le chemin et ses dossiers parents : un jeu en dossier (Switch 2 extrait) est
-                    // souvent cité par un fichier intérieur (`…/Pokemon Pokopia [id]/updates/…`).
                     for anc in std::path::Path::new(inside).ancestors().take(6) {
                         if let Some(n) = anc.file_name() {
-                            out.insert(ludo_client::local::match_key(&n.to_string_lossy()));
+                            let key = ludo_client::local::match_key(&n.to_string_lossy());
+                            keep(&mut out.by_rom, key, name, ludo);
                         }
                     }
                 }
@@ -796,6 +840,28 @@ fn main() -> ExitCode {
         eprintln!("{e}");
         ExitCode::FAILURE
     })
+}
+
+#[cfg(test)]
+mod tests_sunshine {
+    use super::*;
+
+    #[test]
+    fn appli_sunshine_par_jeu_ludo_run_prioritaire() {
+        let json = r#"{"apps":[
+            {"name":"Bureau","cmd":""},
+            {"name":"Mario Kart 8 Deluxe","cmd":"env X=1 /bin/ryu-stream \"/mnt/Rom/Mario Kart 8 Deluxe [0100152000022000][v0].nsp\""},
+            {"name":"Mario Kart 8 Deluxe · Ludothèque","cmd":"/bin/ludo run --profil g --jeu switch-0100152000022000 --rom '/mnt/Rom/Mario Kart 8 Deluxe [0100152000022000][v0].nsp'"},
+            {"name":"Pokopia","cmd":"/bin/lichii-stream \"/mnt/Rom2/Pokemon Pokopia [0400A3A01EE4C000]/updates/327680/exefs/main\""}
+        ]}"#;
+        let apps = sunshine_apps(json);
+        assert_eq!(apps.by_game.get("switch-0100152000022000").map(String::as_str), Some("Mario Kart 8 Deluxe · Ludothèque"));
+        let mk8 = ludo_client::local::match_key("Mario Kart 8 Deluxe [0100152000022000][v0].nsp");
+        assert_eq!(apps.by_rom.get(&mk8).map(String::as_str), Some("Mario Kart 8 Deluxe · Ludothèque"));
+        let pokopia = ludo_client::local::match_key("Pokemon Pokopia [0400A3A01EE4C000]");
+        assert_eq!(apps.by_rom.get(&pokopia).map(String::as_str), Some("Pokopia"));
+        assert_eq!(sunshine_apps("pas du json"), SunshineApps::default());
+    }
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { api, CANCELLED, isDemo, prepLabel } from '../lib/api';
+  import { api, CANCELLED, isAndroid, isDemo, prepLabel } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { reducedMotion } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
@@ -98,6 +98,8 @@
     if (!s) return;
     const done = e.state === 'fait';
     s.state = done ? 'fait' : 'en_cours';
+    // Android : libellés d'origine (flux ou jeu présent ; sauvegarde gérée par le PC).
+    if (isAndroid && (e.step === 'telechargement' || e.step === 'sauvegarde')) return;
     switch (e.step) {
       case 'profil':
         break;
@@ -155,6 +157,17 @@
 
   /** Fin d'un lancement ou d'un renvoi : conflit à trancher, ou sauvegarde envoyée (retour à l'accueil). */
   async function finish(r: LaunchResult) {
+    if (r.result === 'lance') {
+      // Android : le jeu tourne dans une autre app ; la sauvegarde partira du PC à sa fermeture.
+      for (const st of steps) st.state = 'fait';
+      steps[1].label = r.via === 'flux' ? 'Flux depuis le PC' : 'Jeu sur l\u2019appareil';
+      steps[3].label = r.via === 'flux' ? 'Moonlight lancé' : `${r.detail} lancé`;
+      steps[3].detail = r.via === 'flux' ? r.detail : undefined;
+      feedback('saved');
+      await wait(1200);
+      router.reset({ name: 'accueil' });
+      return;
+    }
     if (r.result === 'conflit') {
       router.replace({ name: 'conflit', conflict: { game: preparation.game, profile: preparation.profile, local: r.local, server: r.server, played: r.played, rev: r.rev } });
       return;
@@ -201,7 +214,7 @@
             // Le serveur convertit d'abord le fichier (NSZ → NSP) : l'étape le dit, la barre suit le convertisseur.
             s.label = prep ? prepLabel(prep) : dlLabel;
             s.progress = prep ? (prep.percent ?? 0) : Math.round(p * 100);
-          }),
+          }, preparation.mode),
         );
       }
     } catch (e) {

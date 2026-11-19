@@ -209,6 +209,9 @@ CREATE TABLE IF NOT EXISTS device_games (
 );
 ";
 
+/// Colonnes ajoutées après la création des tables (base existante : ALTER TABLE au démarrage).
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("device_games", "stream_app", "TEXT")];
+
 const COLS: &str = "rev, parent, hash, size, device, emulator, playtime_s, created_at, discarded";
 
 fn row_to_rev(r: &rusqlite::Row<'_>) -> rusqlite::Result<SaveRevision> {
@@ -353,6 +356,12 @@ impl Store {
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         db.execute_batch(SCHEMA)?;
+        for (table, column, ty) in ADDED_COLUMNS {
+            let present = db.prepare(&format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1"))?.exists(params![column])?;
+            if !present {
+                db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"))?;
+            }
+        }
         Ok(Self { db: Mutex::new(db), blobs: data_dir.join("blobs"), data_dir: data_dir.to_path_buf(), clock, roms: None })
     }
 
@@ -537,8 +546,8 @@ impl Store {
             let known = tx.query_row("SELECT 1 FROM games WHERE id=?1", params![g.game], |_| Ok(())).optional()?;
             if known.is_some() && (g.installed || g.stream || g.save) {
                 tx.execute(
-                    "INSERT OR REPLACE INTO device_games (device, game, installed, stream, save) VALUES (?1,?2,?3,?4,?5)",
-                    params![device, g.game, g.installed, g.stream, g.save],
+                    "INSERT OR REPLACE INTO device_games (device, game, installed, stream, save, stream_app) VALUES (?1,?2,?3,?4,?5,?6)",
+                    params![device, g.game, g.installed, g.stream, g.save, g.stream_app],
                 )?;
                 kept.push(g.clone());
             }
@@ -556,9 +565,9 @@ impl Store {
         let devices: Vec<(String, u64)> = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?.collect::<Result<_, _>>()?;
         let mut out = Vec::new();
         for (device, updated_at) in devices {
-            let mut st = db.prepare("SELECT game, installed, stream, save FROM device_games WHERE device=?1 ORDER BY game")?;
+            let mut st = db.prepare("SELECT game, installed, stream, save, stream_app FROM device_games WHERE device=?1 ORDER BY game")?;
             let games = st
-                .query_map(params![device], |r| Ok(DeviceGame { game: r.get(0)?, installed: r.get(1)?, stream: r.get(2)?, save: r.get(3)? }))?
+                .query_map(params![device], |r| Ok(DeviceGame { game: r.get(0)?, installed: r.get(1)?, stream: r.get(2)?, save: r.get(3)?, stream_app: r.get(4)? }))?
                 .collect::<Result<_, _>>()?;
             out.push(DeviceInventory { device, updated_at, games });
         }
