@@ -118,6 +118,7 @@
     if (g.sync === 'a_recuperer') return ['Nouvelle sauvegarde', 'var(--sync)'];
     if (g.install === 'mise_a_jour') return ['Mise à jour disponible', 'var(--update)'];
     if (g.install === 'telechargement') return [`Téléchargement… ${g.progress ?? 0} %`, 'var(--accent-ink)'];
+    if (g.install === 'non_installe' && g.stream) return ['Via Moonlight', 'var(--accent-ink)'];
     if (g.install === 'non_installe') return ['Non installé', 'var(--ink-4)'];
     return ['Installé · À jour', 'var(--ink-3)'];
   }

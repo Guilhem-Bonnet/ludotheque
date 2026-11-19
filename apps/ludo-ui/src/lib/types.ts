@@ -76,6 +76,8 @@ export interface Game {
   content?: GameContent[];
   version?: string;
   size?: string;
+  /** Android : jouable en flux depuis le PC (Moonlight), d'après l'inventaire publié par le PC. */
+  stream?: boolean;
 }
 
 export interface SaveRevision {
@@ -136,7 +138,11 @@ export interface Preparation {
   game: Game;
   profile: string;
   steps: { label: string; state: 'fait' | 'en_cours' | 'a_venir'; detail?: string; progress?: number }[];
+  /** Android : « local » (émulateur), « flux » (Moonlight) ; absent = la ROM locale d'abord. */
+  mode?: LaunchMode;
 }
+
+export type LaunchMode = 'local' | 'flux';
 
 /** Émulateur connu (fiche) et ce que la détection a trouvé sur l'appareil (`UiEmulator` côté Rust). */
 export interface Emulator {

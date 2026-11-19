@@ -4,16 +4,31 @@
 // suivant la fasse « voler » jusqu'à sa nouvelle place (FLIP), et on laisse 180 ms à la mise en
 // scène de l'accueil (les autres tuiles s'estompent, celle-ci se soulève) avant de changer d'écran.
 
-import { api, isDemo } from './api';
+import { api, isAndroid, isDemo } from './api';
 import { reducedMotion } from './motion';
 import { router } from './router.svelte';
-import type { Game, Preparation } from './types';
+import type { Game, LaunchMode, Preparation } from './types';
 
 /**
  * Étapes affichées pour un lancement réel (hors démonstration). Toutes à venir : l'écran de passage
  * les fait avancer d'après les événements de l'app, dans l'ordre de `LaunchStep`.
  */
-export function realPreparation(game: Game, profile: string, profileName?: string): Preparation {
+export function realPreparation(game: Game, profile: string, profileName?: string, mode?: LaunchMode): Preparation {
+  if (isAndroid) {
+    // Android : rien à télécharger ni à envoyer ici (le PC synchronise la sauvegarde par adb).
+    const stream = mode === 'flux' || (mode === undefined && game.install === 'non_installe' && !!game.stream);
+    return {
+      game,
+      profile,
+      mode,
+      steps: [
+        { label: `Profil : ${profileName ?? profile}`, state: 'a_venir' },
+        { label: stream ? 'Flux depuis le PC' : 'Jeu sur l\u2019appareil', state: 'a_venir' },
+        { label: 'Sauvegarde : synchronisée par le PC', state: 'a_venir' },
+        { label: 'Lancement', state: 'a_venir' },
+      ],
+    };
+  }
   const download = game.install === 'non_installe';
   return {
     game,
@@ -29,7 +44,7 @@ export function realPreparation(game: Game, profile: string, profileName?: strin
   };
 }
 
-export async function play(game: Game, from?: HTMLElement) {
+export async function play(game: Game, from?: HTMLElement, mode?: LaunchMode) {
   const profile = router.profile;
   if (!profile) return;
   router.heroGame = game.id;
@@ -38,7 +53,7 @@ export async function play(game: Game, from?: HTMLElement) {
   if (!isDemo) {
     // Lancement réel : le conflit éventuel est détecté par `launchGame` (écran de passage).
     await new Promise((r) => setTimeout(r, from && !reducedMotion() ? 180 : 0));
-    router.go({ name: 'passage', preparation: realPreparation(game, profile.id, profile.name) });
+    router.go({ name: 'passage', preparation: realPreparation(game, profile.id, profile.name, mode) });
     return;
   }
   const [result] = await Promise.all([

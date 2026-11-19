@@ -34,4 +34,22 @@ LUDO_DATA=./data cargo run -p ludo-server   # écoute sur 0.0.0.0:8080
 - [ ] P1b : démon `ludod` + `ludo run` (Linux), adaptateurs Ryujinx/Eden, écran de passage
 - [ ] P1c : catalogue des ROM, livraison au bon format, paquets système, déploiement K3s
 - [ ] P2 : app Bibliothèque (Linux) + catalogue web
-- [ ] P3 : app Android (Thor)
+- [ ] P3 : app Android (Thor) — MVP : bibliothèque, lancement Eden / Azahar / melonDS, flux Moonlight
+
+## App Android (Ayn Thor)
+
+`scripts/apk.sh` construit l'APK arm64 (`--release` pour une version optimisée) ; `--installer [SERIE]`
+l'installe par adb et dépose `config.toml` dans `/sdcard/Android/data/<paquet>/files/` (serveur, appareil
+et profil de `~/.config/ludo/thor.toml`, hôte Moonlight = UUID Sunshine du PC). Outils, sans droits
+administrateur : JDK 21 dans `~/.cache/jdk`, SDK Android (commandlinetools → `sdkmanager
+"platforms;android-37.0" "build-tools;35.0.0" "ndk;27.3.13750724"`) dans `~/.cache/android-sdk`,
+`rustup target add aarch64-linux-android`.
+
+- Lancement : ROM trouvée dans l'arbre `Documents/Roms` accordé une fois (sélecteur Android, mémorisé)
+  → émulateur Android par intent explicite ; sinon flux Moonlight (`ShortcutTrampoline`, extras `UUID`,
+  `AppName`, `HDR`), l'appli Sunshine venant de l'inventaire publié par le PC (`stream_app`) ou de
+  `[moonlight.applis]` dans la configuration.
+- Sauvegardes : jamais touchées par l'app (Android/data illisible) ; le PC les synchronise
+  (`ludo adb-watch`, service `ludo-thor-watch`).
+- Code : `apps/ludo-ui/src-tauri/src/android.rs` (logique testée sur le PC) et le plugin Kotlin
+  `gen/android/app/src/main/java/fr/srvdreamer/ludotheque/LudoPlugin.kt`.

@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "Android : permissions de base (pas de mise à jour intégrée, l'APK est installé par le PC)",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "android"
+  ],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-set-webview-zoom"
+  ]
+}

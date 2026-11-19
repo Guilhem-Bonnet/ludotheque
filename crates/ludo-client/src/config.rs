@@ -174,8 +174,13 @@ pub fn expand_in(home: &Path, p: &str) -> PathBuf {
 }
 
 impl Config {
+    /// `LUDO_CONFIG` s'il est défini (app Android : fichier déposé par le PC), sinon
+    /// `~/.config/ludo/config.toml`.
     pub fn default_path() -> PathBuf {
-        home().join(".config/ludo/config.toml")
+        match std::env::var_os("LUDO_CONFIG") {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => home().join(".config/ludo/config.toml"),
+        }
     }
 
     pub fn load(path: &Path) -> Result<Self, ConfigError> {

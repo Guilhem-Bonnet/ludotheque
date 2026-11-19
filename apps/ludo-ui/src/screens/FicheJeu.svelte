@@ -6,7 +6,7 @@
   import Icon from '../lib/components/Icon.svelte';
   import RestoreDialog from '../lib/components/RestoreDialog.svelte';
   import Tile from '../lib/components/Tile.svelte';
-  import { api, CANCELLED, prepLabel, type Preparing } from '../lib/api';
+  import { api, CANCELLED, isAndroid, prepLabel, type Preparing } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { play } from '../lib/play';
@@ -144,8 +144,12 @@
     }
   }
 
+  /** Android : jeu absent de l'appareil mais jouable en flux depuis le PC (Moonlight). */
+  const streamOnly = $derived(isAndroid && !installed && !!game.stream);
+
   function primary() {
-    if (installed) void play(game);
+    if (installed) void play(game, undefined, isAndroid ? 'local' : undefined);
+    else if (streamOnly) void play(game, undefined, 'flux');
     else void installGame();
   }
 </script>
@@ -159,10 +163,12 @@
       <div class="actions">
         <button class="primary focusable" class:busy={installing !== null} data-autofocus aria-busy={installing !== null} onclick={primary}>
           {#if installing !== null}<span class="fill" class:waiting={preparing !== null} style:width="{preparing ? 100 : installing * 100}%"></span>{/if}
-          <span class="label">{installing !== null ? (preparing ? prepLabel(preparing) : `Téléchargement… ${Math.round(installing * 100)} %`) : installed ? 'Jouer' : installError ? 'Réessayer' : 'Installer'}</span>
+          <span class="label">{installing !== null ? (preparing ? prepLabel(preparing) : `Téléchargement… ${Math.round(installing * 100)} %`) : installed ? 'Jouer' : streamOnly ? 'Jouer en flux' : installError ? 'Réessayer' : 'Installer'}</span>
         </button>
         {#if installing !== null}
           <button class="secondary focusable" data-sound="none" disabled={cancelling} onclick={cancelInstall}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
+        {:else if isAndroid}
+          {#if installed && game.stream}<button class="secondary focusable" onclick={() => play(game, undefined, 'flux')}>En flux</button>{/if}
         {:else if installed}
           <button class="secondary focusable" class:armed={confirmRemove} data-sound="none" disabled={removing} onclick={uninstall} onblur={() => (confirmRemove = false)}>{removing ? 'Suppression…' : confirmRemove ? 'Confirmer : désinstaller' : 'Désinstaller'}</button>
         {/if}

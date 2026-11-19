@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, isDemo } from './lib/api';
+  import { api, isAndroid, isDemo } from './lib/api';
   import { focusFirst, installNav } from './lib/nav';
   import { reducedMotion } from './lib/motion';
   import { router } from './lib/router.svelte';
@@ -52,6 +52,14 @@
   let zoom = 1;
   async function rescale() {
     if (isDemo) return;
+    if (isAndroid) {
+      // Android : la WebView n'a pas de zoom natif réglable ; la largeur logique de la page est imposée
+      // par la balise viewport (vue large activée dans MainActivity) pour voir au moins 1280×800.
+      const ratio = screen.width / screen.height;
+      const width = Math.ceil(Math.max(1280, 800 * ratio));
+      document.querySelector('meta[name="viewport"]')?.setAttribute('content', `width=${width}, user-scalable=no`);
+      return;
+    }
     // Taille de la fenêtre en pixels « 100 % » : la vue zoomée rapporte des pixels logiques.
     const w = window.innerWidth * zoom;
     const h = window.innerHeight * zoom;

@@ -2366,6 +2366,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "toml 1.2.1+spec-1.1.0",
 ]
 
 [[package]]

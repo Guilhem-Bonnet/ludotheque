@@ -7,6 +7,7 @@
 //! envoi ; étapes par l'événement `ludo://passage`) et `resolveConflict`. Les autres (`updates`, `prepare`) arriveront avec la suite du
 //! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
+pub mod android;
 pub mod rumble;
 
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
@@ -486,6 +487,9 @@ pub struct UiGame {
     /// Mises à jour et DLC du jeu (vue « Contenu additionnel » de la fiche).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     content: Vec<UiContent>,
+    /// Jouable en flux depuis le PC sur cet appareil (Android : inventaire publié par le PC).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stream: bool,
 }
 
 /// Une mise à jour ou un DLC tel que la fiche l'affiche (`GameContent` de `types.ts`).
@@ -654,6 +658,7 @@ pub fn build_library(games: &[CatalogGame], env: &LibraryEnv) -> Vec<UiGame> {
                 install: install_state(&g.files, env.exists),
                 sync: sync_state((env.journal)(&g.id).as_ref(), save.is_some()),
                 sync_error: None,
+                stream: false,
                 content: build_content(g, env.exists),
                 playtime: save.map(|s| playtime_label(s.playtime_s)),
                 last: save.map(|s| UiLast {
@@ -712,7 +717,37 @@ fn fetch_library(cfg: &Config, profile: &str) -> Result<(Vec<UiGame>, Vec<SaveSu
             server: &cfg.serveur,
         },
     );
+    // Android : les ROM (dossier partagé) et le flux sont connus par l'inventaire que le PC publie.
+    #[cfg(target_os = "android")]
+    let library = android_library(library, &client, cfg);
     Ok((library, saves))
+}
+
+/// Inventaire de cet appareil publié par le PC (`ludo adb-sync`) : installé, jouable en flux.
+pub fn apply_inventory(library: &mut [UiGame], inventory: &[ludo_proto::DeviceGame]) {
+    for g in library.iter_mut() {
+        let inv = inventory.iter().find(|i| i.game == g.id);
+        if inv.is_some_and(|i| i.installed) {
+            g.install = "installe";
+        }
+        g.stream = inv.is_some_and(|i| i.stream);
+        // Sauvegardes de l'appareil tenues par le PC (adb) : aucune « à récupérer » par l'app.
+        if g.sync == "a_recuperer" {
+            g.sync = "a_jour";
+        }
+        g.emulator = match android::emulator_for(&g.console) {
+            Some(e) if g.install != "non_installe" || !g.stream => e.name.to_string(),
+            _ if g.stream => "Moonlight (flux depuis le PC)".to_string(),
+            _ => g.emulator.clone(),
+        };
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_library(mut library: Vec<UiGame>, client: &Client, cfg: &Config) -> Vec<UiGame> {
+    let inventory = client.inventories().ok().and_then(|all| all.into_iter().find(|i| i.device == cfg.appareil)).map(|i| i.games).unwrap_or_default();
+    apply_inventory(&mut library, &inventory);
+    library
 }
 
 /// Bibliothèque complète du profil (catalogue du serveur, état local).
@@ -915,6 +950,10 @@ pub fn install_plan(game: &CatalogGame, only: Option<u64>) -> Result<Vec<GameFil
 }
 
 fn roms_dir(cfg: &Config) -> Result<std::path::PathBuf, String> {
+    if cfg!(target_os = "android") {
+        // Le dossier des ROM d'Android n'est lisible que par l'arbre accordé : le PC y copie les jeux.
+        return Err("Installation depuis le PC : copier le jeu dans Documents/Roms".into());
+    }
     cfg.roms.clone().ok_or_else(|| "Dossier des jeux non configuré sur cet appareil (option roms)".to_string())
 }
 
@@ -1112,6 +1151,9 @@ pub enum UiLaunch {
     /// Rien n'est lancé tant que le joueur n'a pas tranché (`played` : le conflit vient de l'envoi
     /// après la partie, le jeu ne doit pas être relancé).
     Conflit { local: UiSide, server: UiSide, played: bool, rev: u64 },
+    /// Android : jeu ouvert dans une autre app (émulateur ou Moonlight) ; la sauvegarde est
+    /// synchronisée par le PC à la fermeture de l'émulateur. `via` : « emulateur » ou « flux ».
+    Lance { via: &'static str, detail: String },
 }
 
 pub fn launch_error(e: LaunchError) -> String {
@@ -1133,7 +1175,10 @@ fn ui_conflit(info: &ConflictInfo, cfg: &Config) -> UiLaunch {
 /// Lance un jeu pour de vrai (comme `ludo run`) : installation si besoin, sauvegarde, émulateur,
 /// envoi à la fermeture. Les étapes partent sur `ludo://passage`. Conflit : rien n'est lancé.
 #[tauri::command(rename = "launchGame")]
-async fn launch_game(app: tauri::AppHandle, profile: String, game: String) -> Result<UiLaunch, String> {
+async fn launch_game(app: tauri::AppHandle, profile: String, game: String, mode: Option<String>) -> Result<UiLaunch, String> {
+    if cfg!(target_os = "android") {
+        return blocking(move || android_launch(&app, &game, mode.as_deref())).await;
+    }
     blocking(move || {
         let busy = JeuOccupe::prendre(&EN_COURS, &game)?;
         let cfg = load_config()?;
@@ -1156,6 +1201,42 @@ async fn launch_game(app: tauri::AppHandle, profile: String, game: String) -> Re
         }
     })
     .await
+}
+
+#[cfg(not(target_os = "android"))]
+fn android_launch(_app: &tauri::AppHandle, _game: &str, _mode: Option<&str>) -> Result<UiLaunch, String> {
+    unreachable!("lancement Android hors d'Android")
+}
+
+/// Lancement sur Android : ROM de l'arbre accordé dans l'émulateur Android, sinon flux Moonlight.
+/// Aucune sauvegarde n'est touchée ici (le PC la synchronise par adb à la fermeture de l'émulateur).
+#[cfg(target_os = "android")]
+fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Result<UiLaunch, String> {
+    let _busy = JeuOccupe::prendre(&EN_COURS, game)?;
+    let step = |step: Step, state: StepState, detail: Option<String>| {
+        let _ = app.emit(EVENT_PASSAGE, PassageEvent { game: game.to_string(), step: step.id(), state: state.id(), detail });
+    };
+    step(Step::Profil, StepState::Fait, None);
+    let cfg = load_config()?;
+    let client = Client::new(&cfg.serveur);
+    let catalog = find_game(&client, game)?;
+    let conf = android::conf();
+    let inventory = client.inventories().ok().and_then(|all| all.into_iter().find(|i| i.device == cfg.appareil));
+    let inv = inventory.as_ref().and_then(|i| i.games.iter().find(|g| g.game == game));
+    // L'arbre des ROM n'est demandé que si un lancement local est possible pour cette console.
+    let wants_local = mode != Some("flux") && android::emulator_for(&catalog.console).is_some();
+    let roms = if wants_local { android::list_roms_or_ask(app).map(|l| l.files).unwrap_or_default() } else { Vec::new() };
+    let plan = android::plan(&catalog, &roms, &conf, inv, mode)?;
+    step(Step::Telechargement, StepState::Fait, None);
+    step(Step::Sauvegarde, StepState::Fait, Some("Synchronisée par le PC".into()));
+    step(Step::Lancement, StepState::EnCours, None);
+    let (intent, via, detail) = match &plan {
+        android::Plan::Local { emu, uri } => (android::emulator_intent(emu, uri), "emulateur", emu.name.to_string()),
+        android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
+    };
+    android::start(app, &intent)?;
+    step(Step::Lancement, StepState::Fait, None);
+    Ok(UiLaunch::Lance { via, detail })
 }
 
 fn termine(after: &SyncOutcome, playtime_s: u64, exit_ok: bool) -> UiLaunch {
@@ -1222,7 +1303,7 @@ async fn resolve_conflict(profile: String, game: String, choice: String, rev: u6
         match launch::resolve(&env, &SaveKey { profile, game }, resolution, rev).map_err(launch_error)? {
             Settled::Conflict(info) => match ui_conflit(&info, &cfg) {
                 UiLaunch::Conflit { local, server, played, rev } => Ok(UiResolve::Conflit { local, server, played, rev }),
-                UiLaunch::Termine { .. } => unreachable!("ui_conflit renvoie toujours un conflit"),
+                UiLaunch::Termine { .. } | UiLaunch::Lance { .. } => unreachable!("ui_conflit renvoie toujours un conflit"),
             },
             Settled::Done(SyncOutcome::Offline { .. }) => Err("Serveur injoignable : le choix n'a pas été appliqué".into()),
             Settled::Done(SyncOutcome::LocalMissing) => Err("Dossier de sauvegarde introuvable : rien n'a été modifié".into()),
@@ -1238,11 +1319,18 @@ pub const EVENT_FERMETURE: &str = "ludo://fermeture-refusee";
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     rumble::init();
-    tauri::Builder::default()
-        // Mise à jour de l'app : releases signées publiées par la CI (clé publique dans tauri.conf.json),
-        // puis relance après installation.
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+    let builder = tauri::Builder::default();
+    // Mise à jour de l'app : releases signées publiées par la CI (clé publique dans tauri.conf.json),
+    // puis relance après installation. Bureau seulement (sur Android, l'APK est installé par le PC).
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_process::init());
+    // Android : pont Kotlin (intents, dossier des ROM) et configuration déposée par le PC.
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::plugin()).setup(|app| {
+        android::prepare_env(app.handle());
+        Ok(())
+    });
+    builder
         // Partie en cours : la fenêtre ne se ferme pas (l'émulateur serait orphelin et la
         // sauvegarde jamais envoyée) ; l'interface affiche « Partie en cours : fermer le jeu d'abord ».
         .on_window_event(|window, event| {
@@ -1288,6 +1376,26 @@ mod tests {
         let (local, srv) = ui_conflict(&ConflictInfo { server, base: None, played: true }, "pc", |_| at(2026, 11, 15, 14, 2), today);
         assert_eq!(local.playtime, "–");
         assert_eq!(srv.delta, "Sans version commune avec cet appareil");
+    }
+
+    #[test]
+    fn inventaire_android_installe_flux_et_emulateur() {
+        let mk = |id: &str, console: &str| UiGame {
+            id: id.into(), title: id.into(), short: id.into(), console: console.into(), tile: "#000000".into(), tile_ink: "#ffffff".into(),
+            art: GameArt { motif: "lune".into(), from: "#000000".into(), to: "#000000".into(), ink: None },
+            cover: None, background: None, emulator: "Ryujinx".into(), install: "non_installe", sync: "a_recuperer", playtime: None, last: None,
+            size: None, sync_error: None, content: Vec::new(), stream: false,
+        };
+        let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "gc")];
+        let inv = vec![
+            ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None },
+            ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()) },
+        ];
+        apply_inventory(&mut lib, &inv);
+        assert_eq!((lib[0].install, lib[0].stream, lib[0].emulator.as_str(), lib[0].sync), ("installe", false, "Eden", "a_jour"));
+        assert_eq!((lib[1].install, lib[1].stream, lib[1].emulator.as_str()), ("non_installe", true, "Moonlight (flux depuis le PC)"));
+        // Console sans émulateur Android : libellé d'origine.
+        assert_eq!((lib[2].install, lib[2].emulator.as_str()), ("non_installe", "Ryujinx"));
     }
 
     #[test]
@@ -1592,7 +1700,7 @@ mod tests {
             ludo_proto::DeviceInventory {
                 device: "thor".into(),
                 updated_at: 0,
-                games: vec![ludo_proto::DeviceGame { game: "switch2-x".into(), installed: false, stream: true, save: false }],
+                games: vec![ludo_proto::DeviceGame { game: "switch2-x".into(), installed: false, stream: true, save: false, stream_app: None }],
             },
         ];
         let r = remote_devices(inv, "pc");

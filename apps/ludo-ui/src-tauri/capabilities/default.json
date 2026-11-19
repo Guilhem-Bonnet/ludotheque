@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "enables the default permissions",
+  "description": "enables the default permissions (bureau : mise à jour de l'app comprise)",
   "windows": [
     "main"
   ],
@@ -10,5 +10,10 @@
     "updater:default",
     "process:allow-restart",
     "core:webview:allow-set-webview-zoom"
+  ],
+  "platforms": [
+    "linux",
+    "macOS",
+    "windows"
   ]
 }

@@ -14,6 +14,7 @@
 // Souris : le survol donne le focus, mais seulement sur un vrai déplacement du pointeur — un
 // contenu qui défile sous un pointeur immobile ne vole jamais le focus.
 
+import { isAndroid } from './api';
 import { feedback } from './feedback';
 import { glideIntoView } from './glide';
 import { reducedMotion } from './motion';
@@ -252,6 +253,8 @@ export function installNav() {
     for (const pad of navigator.getGamepads?.() ?? []) {
       if (!pad) continue;
       pad.buttons.forEach((b, i) => {
+        // Android : les boutons arrivent en touches (MainActivity), seul le stick est lu ici.
+        if (isAndroid) return;
         const id = `${pad.index}:${i}`;
         if (b.pressed && DPAD[i]) dir ??= DPAD[i];
         if (b.pressed && !pressed.has(id)) {
