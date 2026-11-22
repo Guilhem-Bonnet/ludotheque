@@ -1386,7 +1386,7 @@ mod tests {
             cover: None, background: None, emulator: "Ryujinx".into(), install: "non_installe", sync: "a_recuperer", playtime: None, last: None,
             size: None, sync_error: None, content: Vec::new(), stream: false,
         };
-        let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "gc")];
+        let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "n64")];
         let inv = vec![
             ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None },
             ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()) },
