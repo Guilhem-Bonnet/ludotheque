@@ -10,7 +10,7 @@
   import { cubicOut } from 'svelte/easing';
   import { feedback } from '../lib/feedback';
   import { syncRhythm, play as playSound } from '../lib/sound';
-  import { reducedMotion } from '../lib/motion';
+  import { reducedMotion, rushing, DUR } from '../lib/motion';
   import Ambiance from '../lib/components/Ambiance.svelte';
   import Avatar from '../lib/components/Avatar.svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
@@ -189,6 +189,9 @@
         jump = false;
         // La rangée vient d'être dessinée : on attend sa mise en page pour connaître sa largeur.
         requestAnimationFrame(() => g.to(anchor(i), true));
+      } else if (input.kind === 'mouse' && document.documentElement.dataset.input === 'mouse') {
+        /* survol : la rangée ne bouge pas sous le pointeur (molette, glisser, flèches de bord). Le CSS
+           souris dépend de html[data-input], posé par nav.ts (PR entrees) : sans lui, ancien comportement. */
       } else if (input.kind === 'mouse' || input.kind === 'touch') reveal(i);
       else g.to(anchor(i));
     });
@@ -231,6 +234,35 @@
     };
   });
 
+  /* Flèches de bord (souris) : visibles seulement s'il reste des tuiles de ce côté. Mises à jour sur
+     les événements `scroll` et ResizeObserver de la rangée, jamais à intervalle. Un clic avance d'une
+     « page » de tuiles par le ressort (glide.ts), alignée sur les emplacements. */
+  let canLeft = $state(false);
+  let canRight = $state(false);
+  $effect(() => {
+    const el = row;
+    void games.length; // tuiles arrivées ou retirées : largeur à défiler changée sans redimensionnement
+    if (!el) return;
+    const edges = () => {
+      const g = glide(el, 'x');
+      const x = g.goal;
+      canLeft = x > 4;
+      canRight = x < el.scrollWidth - el.clientWidth - 4;
+    };
+    edges();
+    const first = requestAnimationFrame(edges); // après la mise en page des tuiles
+    const ro = new ResizeObserver(edges);
+    ro.observe(el);
+    el.addEventListener('scroll', edges, { passive: true });
+    return () => { cancelAnimationFrame(first); ro.disconnect(); el.removeEventListener('scroll', edges); };
+  });
+  function page(dir: -1 | 1) {
+    if (!row) return;
+    const g = glide(row, 'x');
+    const step = Math.max(1, Math.floor((row.clientWidth - 2 * PITCH) / PITCH)) * PITCH;
+    g.to(Math.round((g.goal + dir * step) / PITCH) * PITCH);
+  }
+
   /* Toucher : un premier toucher choisit la tuile (elle grandit), un second l'ouvre — comme la souris,
      qui choisit au survol et ouvre au clic. Un toucher qui arrête la rangée lancée ne choisit rien. */
   let handScrollAt = -1e9;
@@ -264,7 +296,6 @@
     return () => clearTimeout(t);
   });
 
-  const rushing = () => document.documentElement.hasAttribute('data-rush');
 
   /** Mise en scène du lancement : la tuile se soulève, les autres s'estompent, puis l'écran change. */
   function launch(game: Game, el: HTMLElement) {
@@ -282,7 +313,8 @@
 
 <div class="screen">
   <Ambiance art={world?.art} cover={world?.cover} background={world?.background} x={lightX} key={world?.id} />
-  <header class="rise" style:--i={0}>
+  <!-- En-tête : une ligne de navigation (gauche / droite restent dedans) ; bas = retour à la tuile choisie. -->
+  <header class="rise" style:--i={0} data-nav-group="entete" data-nav-down=".slot.focused .focusable">
     <button class="who pill focusable" aria-label="Profil de {router.profile!.name}" onclick={() => router.go({ name: 'profil' })} onfocus={() => (profileFocused = true)} onblur={() => (profileFocused = false)}>
       <Avatar profile={router.profile!} size={46} />
       <div class="who-text">
@@ -348,13 +380,16 @@
         </div>
       {/if}
     </div>
+    <!-- Souris seulement (html[data-input=mouse]) : la manette et le clavier font défiler en changeant de tuile. -->
+    {#if canLeft}<button class="edge left" tabindex="-1" aria-label="Jeux précédents" data-sound="none" onpointerdown={(e) => e.preventDefault()} transition:fade={{ duration: reducedMotion() ? 0 : DUR.quick }} onclick={() => page(-1)}><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>{/if}
+    {#if canRight}<button class="edge right" tabindex="-1" aria-label="Jeux suivants" data-sound="none" onpointerdown={(e) => e.preventDefault()} transition:fade={{ duration: reducedMotion() ? 0 : DUR.quick }} onclick={() => page(1)}><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>{/if}
 
     {#if current}
       <!-- Le titre change avec la tuile : l'ancien s'efface (100 ms), PUIS le nouveau monte de 8 px — jamais deux
            titres superposés. En défilement rapide : remplacement direct, simple fondu court. -->
       <div class="caption-slot">
         {#key current.id}
-          <div class="caption" in:fly={{ y: rushing() ? 0 : 8, duration: reducedMotion() ? 0 : rushing() ? 80 : 240, delay: reducedMotion() || rushing() ? 0 : 100, easing: cubicOut }} out:fade={{ duration: reducedMotion() || rushing() ? 0 : 100 }}>
+          <div class="caption" in:fly={{ y: rushing() ? 0 : 8, duration: reducedMotion() ? 0 : rushing() ? 80 : DUR.std, delay: reducedMotion() || rushing() ? 0 : 100, easing: cubicOut }} out:fade={{ duration: reducedMotion() || rushing() ? 0 : 100 }}>
             <h1>{current.title}</h1>
             {#if current.playtime}<span>{current.playtime} de jeu</span>{/if}
           </div>
@@ -363,7 +398,8 @@
     {/if}
   </section>
 
-  <nav aria-label="Raccourcis" class="rise" style:--i={6}>
+  <!-- Haut depuis un raccourci : retour à la tuile choisie (pas à la tuile la plus proche en géométrie). -->
+  <nav aria-label="Raccourcis" class="rise" style:--i={6} data-nav-up=".slot.focused .focusable">
     <button class="shortcut focusable" onclick={() => router.go({ name: 'bibliotheque' })}>
       <span class="round"><Icon name="grid" size={26} /></span>Bibliothèque
     </button>
@@ -406,26 +442,46 @@
   .who { display: flex; align-items: center; gap: 14px; }
   .who-text { display: flex; flex-direction: column; gap: 2px; }
   .name { font-size: 17px; font-weight: 600; }
-  .device { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+  /* 13 px minimum (lisible sur le Deck, 1280×800). */
+  .device { font-size: 13px; color: rgba(255, 255, 255, 0.72); }
   .status { display: flex; align-items: center; gap: 14px; font-size: 15px; color: var(--ink); }
 
-  .row-wrap { padding: 48px 0 0 48px; }
-  .row { position: relative; display: flex; align-items: flex-start; gap: 20px; overflow-x: auto; overscroll-behavior-x: contain; overflow-y: visible; padding: 22px 64px 16px 12px; margin: -22px 0 0 -12px; scrollbar-width: none; touch-action: pan-x; }
+  .row-wrap { padding: 48px 0 0 48px; position: relative; }
+  .row { position: relative; display: flex; align-items: flex-start; gap: 20px; overflow-x: auto; overscroll-behavior-x: contain; overflow-y: visible; padding: 22px 64px 16px 24px; margin: -22px 0 0 -24px; scrollbar-width: none; touch-action: pan-x; }
+  /* Marge gauche de 24 px : la tuile agrandie depuis son centre (souris) déborde de 20 px sans être rognée. */
   .row::-webkit-scrollbar { display: none; }
 
   /* ——— Mouvement de la rangée (bloc propre à cette PR) ———
      Emplacement fixe de 232 px ; la tuile choisie est agrandie à 272 px, ancrée à gauche et centrée en
      hauteur (elle déborde de 20 px en haut et en bas, comme avant). Durée 260 ms, courbe signature : une tuile qui se pose. En défilement rapide (`data-rush`),
      150 ms : chaque pas finit avant le suivant (≈ 110 ms) au lieu d'empiler des états intermédiaires. */
-  .row { --move-t: 260ms; --move-ease: var(--ease-land); }
-  :global(html[data-rush]) .row { --move-t: 150ms; }
+  .row { --move-t: var(--t-move); --move-ease: var(--ease-land); }
+  :global(html[data-rush]) .row { --move-t: var(--t-rush); }
   .slot { display: flex; flex-direction: column; flex-shrink: 0; width: 232px; transition: transform var(--move-t) var(--move-ease); }
   .slot.after { transform: translateX(40px); }
   .lift { width: 232px; height: 232px; margin: 20px 0; transform-origin: 0 50%; transition: transform var(--move-t) var(--move-ease); }
   .slot.focused .lift { transform: scale(1.17241); }
+  /* Souris : la tuile survolée grandit sur place (depuis son centre), au-dessus de ses voisines, sans les
+     pousser : rien ne bouge sous le pointeur (DEMANDE entrees 22:03, mesure : 0 px de déplacement). */
+  .slot.focused { position: relative; z-index: 1; }
+  :global(html[data-input='mouse']) .slot.after { transform: none; }
+  :global(html[data-input='mouse']) .lift { transform-origin: 50% 50%; }
   @media (prefers-reduced-motion: reduce) {
     .slot, .lift { transition: none; }
   }
+  /* Flèches de bord : pastille translucide par-dessus la rangée, à la souris seulement. */
+  .edge {
+    all: unset; cursor: pointer; position: absolute; top: calc(48px + 136px - 28px); z-index: 2; display: none;
+    width: 56px; height: 56px; border-radius: 50%; align-items: center; justify-content: center;
+    background: rgba(12, 14, 20, 0.68); color: var(--ink); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+    transition: transform var(--t-quick) var(--ease-pop), background-color var(--t-quick) ease-out;
+  }
+  :global(html[data-input='mouse']) .edge { display: flex; }
+  .edge.left { left: 12px; }
+  .edge.right { right: 20px; }
+  .edge:hover { background: rgba(12, 14, 20, 0.75); transform: scale(1.08); }
+  .edge:active { transform: scale(0.94); }
+  @media (prefers-reduced-motion: reduce) { .edge, .edge:hover, .edge:active { transition: none; transform: none; } }
   /* Fin de rangée : la dernière tuile, décalée par transformation, ne compte pas dans la largeur à
      défiler ; une cale garde la même marge qu'à gauche quand « Tous les jeux » est choisie. */
   .row::after { content: ''; flex: 0 0 28px; }

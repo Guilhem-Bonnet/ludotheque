@@ -1,0 +1,29 @@
+# Dolphin — émulateur GameCube (et Wii). Relevé le 21/11/2026 sur la Thor (adb, lecture seule) : paquet
+# org.dolphinemu.dolphinemu, dossier utilisateur Android/data/org.dolphinemu.dolphinemu/files avec
+# GC/EUR, GC/USA, GC/JAP vides (aucune partie GameCube enregistrée) et Config sans Dolphin.ini (réglages
+# par défaut). Twilight Princess (GZ2P01, lu dans l'en-tête du .rvz) n'existe que sur la Thor.
+# Carte mémoire en dossier GCI : un fichier par sauvegarde, nommé <éditeur>-<code 4>-<nom>.gci.
+# À CONFIRMER à la première sauvegarde : que la carte par défaut soit bien un dossier GCI (« Card A »)
+# et pas un fichier MemoryCardA.<région>.raw, qui mélangerait tous les jeux dans un seul fichier.
+# Wii (Wii/title/00010000/<code>/data) : pas encore décrit, aucun jeu Wii dans la collection.
+# PC : Dolphin n'est pas installé sur le PC le 21/11 ; chemins Flatpak et natif NON VÉRIFIÉS.
+id        = "dolphin"
+consoles  = ["gc"]
+formats   = ["rvz", "iso", "gcm", "wia", "gcz", "ciso"]
+lancement = "{bin} -b -e {rom}"
+profils   = "aucun"
+sauvegardes = "{data}/GC/{region_gc}/Card A"
+fichiers    = ["??-{code_jeu_court}-*.gci"]
+exclusions  = ["*.tmp"]
+
+[appareil.thor]
+bin  = "org.dolphinemu.dolphinemu"
+data = "/sdcard/Android/data/org.dolphinemu.dolphinemu/files"
+
+[[detection]]
+flatpak = "org.DolphinEmu.dolphin-emu"
+data    = ["~/.var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu"]
+
+[[detection]]
+commande = "dolphin-emu"
+data     = ["~/.local/share/dolphin-emu", "~/.dolphin-emu"]

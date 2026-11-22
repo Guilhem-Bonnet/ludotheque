@@ -1,0 +1,29 @@
+# Cemu — émulateur Wii U. Relevé le 21/11/2026 sur la Thor (adb, lecture seule) : paquet info.cemu.cemu,
+# données Android/data/info.cemu.cemu/files (mlc_path vide = mlc01 par défaut). Wind Waker HD
+# (0005000010143500, lu dans meta/meta.xml du jeu) a sa sauvegarde sous
+# mlc01/usr/save/00050000/10143500/user/80000001/ (cking*.sav) et user/common/ ; le jeu n'existe que sur
+# la Thor. 80000001 = premier compte Cemu ; tout le dossier user/ est synchronisé (comptes et commun).
+# PC : Cemu n'est pas installé sur le PC le 21/11 ; chemins Flatpak et natif NON VÉRIFIÉS.
+id        = "cemu"
+consoles  = ["wiiu"]
+formats   = ["wua", "wud", "wux", "rpx"]
+lancement = "{bin} -f -g {rom}"
+profils   = "aucun"
+sauvegardes = "{data}/mlc01/usr/save/{title_id_haut}/{title_id_bas}/user"
+exclusions  = ["*.tmp"]
+
+[appareil.thor]
+bin  = "info.cemu.cemu"
+data = "/sdcard/Android/data/info.cemu.cemu/files"
+
+[[detection]]
+flatpak = "info.cemu.Cemu"
+data    = ["~/.var/app/info.cemu.Cemu/data/Cemu"]
+
+[[detection]]
+appimage = "Cemu*.AppImage"
+data     = ["~/.local/share/Cemu"]
+
+[[detection]]
+commande = "cemu"
+data     = ["~/.local/share/Cemu"]

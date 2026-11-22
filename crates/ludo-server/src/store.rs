@@ -270,8 +270,8 @@ pub fn normalize_profile(id: &str, p: &Profile) -> Result<Profile, StoreError> {
         return Err(StoreError::InvalidProfile("caractère invisible dans le nom".into()));
     }
     if let Some(kind) = &p.avatar_kind {
-        if !AVATAR_KINDS.contains(&kind.as_str()) {
-            return Err(StoreError::InvalidProfile(format!("personnage inconnu : {kind}")));
+        if !avatar_kind_ok(kind) {
+            return Err(StoreError::InvalidProfile("personnage inconnu : un des personnages illustrés ou « perso:<slug> » (1 à 40 caractères a-z, 0-9, -) attendu".into()));
         }
     }
     for (field, value) in [("accent", &p.accent), ("accentSoft", &p.accent_soft), ("accentInk", &p.accent_ink)] {
@@ -280,6 +280,16 @@ pub fn normalize_profile(id: &str, p: &Profile) -> Result<Profile, StoreError> {
         }
     }
     Ok(Profile { name: name.to_string(), ..p.clone() })
+}
+
+/// Personnage d'avatar accepté : un des personnages illustrés ([`AVATAR_KINDS`]), ou un avatar
+/// personnalisé de l'appareil `perso:<slug>` (slug de 1 à 40 caractères `[a-z0-9-]`).
+fn avatar_kind_ok(kind: &str) -> bool {
+    if AVATAR_KINDS.contains(&kind) {
+        return true;
+    }
+    kind.strip_prefix("perso:")
+        .is_some_and(|slug| (1..=40).contains(&slug.len()) && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
 }
 
 fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
@@ -811,5 +821,26 @@ impl Store {
         }
         .ok_or(StoreError::NotFound)?;
         Ok((safe_join(root, &file.path)?, file))
+    }
+}
+
+#[cfg(test)]
+mod tests_avatar {
+    use super::avatar_kind_ok;
+
+    #[test]
+    fn personnages_illustres_et_perso_slug() {
+        assert!(avatar_kind_ok("renard"));
+        assert!(avatar_kind_ok("perso:link-tp"));
+        assert!(avatar_kind_ok("perso:a"));
+        assert!(avatar_kind_ok(&format!("perso:{}", "a".repeat(40))));
+    }
+
+    #[test]
+    fn refus_hors_format() {
+        for k in ["", "inconnu", "perso:", "perso:Link", "perso:é", "perso:a b", "perso:a_b", "perso:../x", "Perso:abc", "jeu:x"] {
+            assert!(!avatar_kind_ok(k), "{k:?} accepté");
+        }
+        assert!(!avatar_kind_ok(&format!("perso:{}", "a".repeat(41))));
     }
 }

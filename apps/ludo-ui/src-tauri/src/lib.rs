@@ -8,7 +8,11 @@
 //! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
 pub mod android;
+pub mod profils;
 pub mod rumble;
+// Manette native : démarrée au bureau seulement (sur Android, MainActivity traduit les entrées).
+#[cfg_attr(mobile, allow(dead_code))]
+pub mod pad;
 
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use ludo_client::api::Client;
@@ -70,7 +74,8 @@ async fn device() -> Result<DeviceInfo, String> {
         Ok(DeviceInfo {
             name: device_name(&cfg.appareil),
             kind: device_kind(&cfg.appareil),
-            default_profile: cfg.profil_defaut.clone(),
+            // Dernier profil choisi sur l'appareil, sinon celui de la configuration (Deck : claire, Thor : guilhem).
+            default_profile: profils::remembered(&profils::remembered_path(&Config::default_path())).or_else(|| cfg.profil_defaut.clone()),
             server,
             free_space: cfg
                 .roms
@@ -234,6 +239,68 @@ async fn save_profile(profile: Profile) -> Result<Profile, String> {
     .await
 }
 
+/// Retient le profil choisi sur cet appareil : ouvert directement au prochain démarrage.
+#[tauri::command(rename = "rememberProfile")]
+async fn remember_profile(profile: String) -> Result<(), String> {
+    blocking(move || profils::remember(&profils::remembered_path(&Config::default_path()), &profile)).await
+}
+
+/// Entrée de démarrage automatique de la session (Linux seulement).
+#[cfg(target_os = "linux")]
+fn autostart_entry() -> std::path::PathBuf {
+    profils::autostart_path(std::env::var("XDG_CONFIG_HOME").ok().as_deref(), &config::home())
+}
+
+/// Programme à inscrire : l'AppImage (`$APPIMAGE`) ou l'exécutable courant.
+#[cfg(target_os = "linux")]
+fn autostart_program() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(profils::autostart_exec(std::env::var("APPIMAGE").ok().as_deref(), &exe))
+}
+
+/// Lancement de l'app à l'ouverture de la session : état actuel (entrée périmée réécrite).
+#[tauri::command]
+async fn autostart() -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        blocking(|| {
+            let path = autostart_entry();
+            // Entrée active mais visant une AppImage déplacée ou renommée : réécrite vers le programme actuel.
+            if let Some(program) = autostart_program() {
+                if profils::autostart_stale(&path, &program) {
+                    profils::set_autostart(&path, &program, true)?;
+                }
+            }
+            Ok(profils::autostart_enabled(&path))
+        })
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err("Lancement au démarrage indisponible sur ce système".into())
+    }
+}
+
+/// Active ou coupe le lancement à l'ouverture de la session ; renvoie le nouvel état.
+#[tauri::command(rename = "setAutostart")]
+async fn set_autostart(on: bool) -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        blocking(move || {
+            let program = autostart_program().ok_or("Lancement au démarrage impossible : programme introuvable")?;
+            let path = autostart_entry();
+            profils::set_autostart(&path, &program, on)?;
+            Ok(profils::autostart_enabled(&path))
+        })
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = on;
+        Err("Lancement au démarrage indisponible sur ce système".into())
+    }
+}
+
 /// Une version de sauvegarde telle que l'interface l'affiche (`SaveRevision` de `types.ts`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -366,6 +433,9 @@ async fn restore(profile: String, game: String, rev: u64) -> Result<(), String> 
             Some(g) => Some(config::prepare(&cfg, &g.emulateur, &profile, &g.title_id).map_err(|e| e.to_string())?),
             None => None,
         };
+        let key = SaveKey { profile, game };
+        // Verrou de partie (réseau) pris AVANT le verrou du journal, tenu seulement pendant la restauration.
+        let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
         let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
         let mut engine = Engine {
@@ -375,8 +445,6 @@ async fn restore(profile: String, game: String, rev: u64) -> Result<(), String> 
             emulator: conf.map(|g| g.emulateur.clone()).unwrap_or_default(),
             playtime_s: 0,
         };
-        let key = SaveKey { profile, game };
-        let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
         engine.restore(&key, prepared.as_ref().map(|p| p.layout.as_ref()), rev).map_err(|e| e.to_string())?;
         Ok(())
     })
@@ -422,16 +490,25 @@ fn games_to_sync(cfg: &Config, client: &Client, journal: &Journal, profile: &str
 /// Synchronise chaque jeu configuré pour ce profil.
 fn sync_profile(cfg: &Config, profile: &str) -> Result<Vec<GameSync>, String> {
     let client = Client::new(&cfg.serveur);
-    let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
+    // Le verrou du journal n'est tenu que le temps de le lire, puis le temps de chaque jeu : jamais
+    // pendant le catalogue, les verrous de partie ou la tête du serveur (restauration et lancement
+    // restent possibles entre deux jeux).
+    let played = {
+        let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Journal::open(&config::journal_path()).map_err(|e| e.to_string())?
+    };
+    let games = games_to_sync(cfg, &client, &played, profile);
+    drop(played);
     let mut out = Vec::new();
-    for (id, g) in &games_to_sync(cfg, &client, &journal, profile) {
+    for (id, g) in &games {
         let key = SaveKey { profile: profile.into(), game: id.clone() };
         let result = (|| {
             let prepared = config::prepare(cfg, &g.emulateur, profile, &g.title_id).map_err(|e| e.to_string())?;
             let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
             // Aucune partie jouée ici : le temps de jeu cumulé reste celui du serveur.
             let playtime_s = client.head(&key).ok().flatten().map_or(0, |h| h.playtime_s);
+            let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
             let mut engine = Engine {
                 client: &client,
                 journal: &mut journal,
@@ -819,9 +896,20 @@ async fn updates(profile: Option<String>) -> Result<Vec<UiUpdate>, String> {
         let cfg = load_config()?;
         // Profil en cours (écran « Qui joue ? » passé), sinon celui de l'appareil, sinon aucun.
         let profile = profile.filter(|p| !p.is_empty()).or_else(|| cfg.profil_defaut.clone()).unwrap_or_default();
-        Ok(build_updates(&fetch_library(&cfg, &profile)?.0))
+        Ok(installable_updates(build_updates(&fetch_library(&cfg, &profile)?.0), cfg!(target_os = "android")))
     })
     .await
+}
+
+/// Mises à jour proposées selon la plateforme. Android : aucune, l'app ne peut rien y installer (pas
+/// de dossier de ROM dans sa configuration, et le contenu externe des émulateurs est dans leur
+/// `Android/data`, inaccessible aux applis) : les jeux et leur contenu arrivent par le PC.
+pub fn installable_updates(list: Vec<UiUpdate>, android: bool) -> Vec<UiUpdate> {
+    if android {
+        Vec::new()
+    } else {
+        list
+    }
 }
 
 /// Synchronisation manuelle de tous les jeux configurés pour ce profil, puis bibliothèque à jour.
@@ -1231,7 +1319,7 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     step(Step::Sauvegarde, StepState::Fait, Some("Synchronisée par le PC".into()));
     step(Step::Lancement, StepState::EnCours, None);
     let (intent, via, detail) = match &plan {
-        android::Plan::Local { emu, uri } => (android::emulator_intent(emu, uri), "emulateur", emu.name.to_string()),
+        android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
         android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
     };
     android::start(app, &intent)?;
@@ -1330,10 +1418,25 @@ pub fn run() {
         android::prepare_env(app.handle());
         Ok(())
     });
+    // Bureau : manette lue nativement (pad.rs), transmise à l'interface seulement fenêtre au premier plan.
+    #[cfg(desktop)]
+    let builder = builder.setup(|app| {
+        let handle = app.handle().clone();
+        pad::init(move |e| {
+            let _ = handle.emit(pad::EVENT_PAD, e);
+        });
+        Ok(())
+    });
     builder
         // Partie en cours : la fenêtre ne se ferme pas (l'émulateur serait orphelin et la
         // sauvegarde jamais envoyée) ; l'interface affiche « Partie en cours : fermer le jeu d'abord ».
         .on_window_event(|window, event| {
+            // Focus de la fenêtre : la manette native n'agit qu'au premier plan, et l'interface met ses
+            // animations en pause (WebKitGTK n'envoie pas toujours `blur` à la page).
+            if let tauri::WindowEvent::Focused(focused) = event {
+                pad::set_focus(*focused);
+                let _ = window.app_handle().emit(pad::EVENT_FOCUS, *focused);
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if launch::game_running() {
                     api.prevent_close();
@@ -1341,7 +1444,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
@@ -1386,7 +1489,7 @@ mod tests {
             cover: None, background: None, emulator: "Ryujinx".into(), install: "non_installe", sync: "a_recuperer", playtime: None, last: None,
             size: None, sync_error: None, content: Vec::new(), stream: false,
         };
-        let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "gc")];
+        let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "n64")];
         let inv = vec![
             ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None },
             ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()) },
@@ -1476,6 +1579,13 @@ mod tests {
             ])
         );
         assert!(ui_history(&[], to_local, today).is_empty());
+    }
+
+    #[test]
+    fn aucune_mise_a_jour_proposee_sur_android() {
+        let u = UiUpdate { id: "j|1".into(), group: "jeux", title: "J".into(), detail: "d".into(), console: "switch".into(), tile: "t".into(), action: "Installer" };
+        assert_eq!(installable_updates(vec![u.clone()], false).len(), 1);
+        assert!(installable_updates(vec![u], true).is_empty());
     }
 
     fn file(id: u64, role: FileRole, path: &str, size: u64) -> GameFile {
@@ -1719,7 +1829,9 @@ mod tests {
         assert_eq!(accepted_formats(&cfg, &catalog_game("switch-mk8", "switch", vec![])), ["nsp", "xci"]);
         // Sans section [jeux] : émulateur par défaut de la console (Ryujinx pour la Switch).
         assert_eq!(accepted_formats(&cfg, &catalog_game("switch-autre", "switch", vec![])), ["nsp", "xci"]);
-        assert!(accepted_formats(&cfg, &catalog_game("3ds-x", "3ds", vec![])).is_empty());
+        // 3DS : Azahar par défaut depuis le 21/11 (fichiers .cxi du serveur acceptés tels quels).
+        assert_eq!(accepted_formats(&cfg, &catalog_game("3ds-x", "3ds", vec![])), ["cxi", "3ds", "cci", "zcci", "zcxi"]);
+        assert!(accepted_formats(&cfg, &catalog_game("ps1-x", "ps1", vec![])).is_empty(), "console sans émulateur");
     }
 
     #[test]

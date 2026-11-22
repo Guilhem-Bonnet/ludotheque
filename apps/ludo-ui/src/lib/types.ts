@@ -13,7 +13,11 @@ export type Motif = 'manoir' | 'course' | 'lune' | 'prairie' | 'cristal' | 'vagu
 /** Jaquette illustrée : dégradé vif `from` → `to`, motif, couleur des silhouettes. */
 export interface Art { motif: Motif; from: string; to: string; ink?: string }
 
-export type AvatarKind = 'renard' | 'champi' | 'chat' | 'etoile' | 'planete' | 'poisson';
+/** Personnages dessinés pour la Ludothèque (AvatarArt.svelte). */
+export type AvatarArtKind = 'renard' | 'champi' | 'chat' | 'etoile' | 'planete' | 'poisson';
+
+/** Image de profil : personnage dessiné, ou portrait tiré de l'image d'un jeu (« perso:pikachu », cf. avatars.ts). */
+export type AvatarKind = AvatarArtKind | `perso:${string}`;
 
 export type DeviceKind = 'pc' | 'deck' | 'thor' | 'tv';
 
@@ -124,7 +128,10 @@ export interface UpdateItem {
 export interface DeviceInfo {
   name: string;
   kind: DeviceKind;
-  /** Profil mémorisé (appareil personnel) ; absent = appareil partagé → « Qui joue ? ». */
+  /**
+   * Profil ouvert au démarrage : le dernier choisi sur cet appareil (retenu côté Rust), sinon le profil
+   * par défaut de la configuration (Deck : claire, Thor : guilhem) ; absent = « Qui joue ? ».
+   */
   defaultProfile?: string;
   server: 'connecte' | 'hors_ligne';
   freeSpace: string;

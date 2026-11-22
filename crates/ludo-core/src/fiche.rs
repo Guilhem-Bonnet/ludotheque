@@ -51,10 +51,17 @@ pub struct Fiche {
     /// Gabarit de lancement : `{bin}`, `{rom}`, `{profil_index}`, `{profil_uuid}`, `{data}`.
     pub lancement: String,
     pub profils: ProfileMode,
-    /// Gabarit du dossier de sauvegarde d'un jeu : `{data}`, `{profil_uuid}`, `{title_id}`…
+    /// Gabarit du dossier de sauvegarde d'un jeu : `{data}`, `{profil_uuid}`, `{title_id}`,
+    /// `{title_id_maj}`, `{title_id_haut}` / `{title_id_bas}` (8 chiffres hexadécimaux de chaque
+    /// moitié, 3DS et Wii U), `{code_jeu}` / `{code_jeu_court}` / `{region_gc}` (identifiant ASCII
+    /// GameCube ou DS, voir `rom`), `{rom_nom}` (nom du fichier de la ROM sans extension).
     pub sauvegardes: String,
     #[serde(default)]
     pub exclusions: Vec<String>,
+    /// Fichiers du jeu quand le dossier de sauvegarde est partagé par plusieurs jeux (gabarits,
+    /// jokers `*` et `?`) : seuls ces fichiers sont synchronisés, les autres restent en place.
+    #[serde(default)]
+    pub fichiers: Vec<String>,
     #[serde(default)]
     pub systeme: Vec<String>,
     /// Réglages relevés à la main par appareil : dernier recours si la détection ne trouve rien

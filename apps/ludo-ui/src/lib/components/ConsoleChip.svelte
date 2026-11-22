@@ -16,7 +16,8 @@
   .chip { font-weight: 700; letter-spacing: 0.06em; border-radius: 6px; white-space: nowrap; align-self: flex-start; color: #fff; }
   .art { background: rgba(0, 0, 0, 0.28); }
   .ui { background: rgba(255, 255, 255, 0.1); color: var(--ink-2); }
-  .s { font-size: 10px; padding: 3px 7px; border-radius: 5px; }
-  .m { font-size: 11px; padding: 4px 8px; }
-  .l { font-size: 13px; padding: 5px 10px; }
+  /* 13 px au moins : plus petit, le texte passe sous le seuil lisible sur le Deck (zoom 1, 7 pouces). */
+  .s { font-size: 13px; padding: 2px 7px; border-radius: 5px; letter-spacing: 0.04em; }
+  .m { font-size: 13px; padding: 4px 8px; }
+  .l { font-size: 14px; padding: 5px 10px; }
 </style>

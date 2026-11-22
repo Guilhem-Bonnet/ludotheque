@@ -33,6 +33,18 @@ pub fn match_key(name: &str) -> (String, String) {
     (stem.to_lowercase(), ext)
 }
 
+/// Clé de correspondance souple entre deux copies d'une même ROM nommées différemment : préfixe de
+/// numérotation « 3DS1626 - » retiré, ponctuation et espaces ramenés à un seul espace, casse ignorée,
+/// extension retirée. Relevé le 21/11 : le serveur range « 3DS1626 - Animal Crossing - New Leaf -
+/// Welcome Amiibo (Europe)(En,Fr,De,Es,It).cxi », la Thor « Animal Crossing - New Leaf - Welcome
+/// Amiibo (Europe) (En,Fr,De,Es,It).cxi ».
+pub fn loose_key(name: &str) -> String {
+    let (stem, _) = match_key(name);
+    let words: Vec<&str> = stem.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let skip = usize::from(words.first().is_some_and(|w| w.len() > 3 && w.starts_with("3ds") && w[3..].chars().all(|c| c.is_ascii_digit())));
+    words[skip..].join(" ")
+}
+
 /// Identité Switch d'un nom de fichier : `[<titre 16 hex>]` et `[v<version>]` (absente = v0).
 /// Deux copies du même jeu portent souvent des noms différents (« (nsw2u.xyz) », « [v0] » omis) ;
 /// l'identifiant de titre et la version, eux, ne changent pas. Une mise à jour d'une autre
@@ -266,5 +278,15 @@ mod tests {
         std::fs::create_dir_all(&conf).unwrap();
         std::fs::write(conf.join("qt-config.ini"), "[UI]\nPaths\\gamedirs\\1\\path=/mnt/games/Rom/cartoucheSwitch\nPaths\\gamedirs\\2\\path=SDMC\nPaths\\gamedirs\\size=2\n").unwrap();
         assert_eq!(eden_game_dirs(&data), [PathBuf::from("/mnt/games/Rom/cartoucheSwitch")]);
+    }
+
+    #[test]
+    fn cle_souple_entre_serveur_et_thor() {
+        let serveur = "3ds/3DS1626 - Animal Crossing - New Leaf - Welcome Amiibo (Europe)(En,Fr,De,Es,It).cxi";
+        let thor = "Animal Crossing - New Leaf - Welcome Amiibo (Europe) (En,Fr,De,Es,It).cxi";
+        assert_eq!(loose_key(serveur), loose_key(thor));
+        assert_eq!(loose_key("3ds/3DS1720- Ever Oasis (Europe)(M6).cxi"), loose_key("Ever Oasis (Europe) (M6).cxi"));
+        assert_ne!(loose_key("Pokemon X (Europe).cxi"), loose_key("Pokemon Y (Europe).cxi"));
+        assert_eq!(loose_key("3DS"), "3ds", "un titre réduit au mot 3DS n'est pas un préfixe");
     }
 }

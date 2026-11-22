@@ -6,20 +6,70 @@ use ureq::Agent;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
-    /// Serveur injoignable (réseau, délai) : la ludothèque passe en « Hors ligne ».
+    /// Serveur injoignable (réseau, délai) : la ludothèque passe en « Hors ligne ». Le texte est la
+    /// raison, en français, montrée telle quelle à l'écran (jamais le message brut de `ureq`).
     #[error("serveur injoignable : {0}")]
     Offline(String),
-    #[error("réponse inattendue du serveur ({status}) : {body}")]
+    /// Statut HTTP inattendu. Le corps n'est montré que pour un refus (4xx, message du serveur) ;
+    /// une erreur serveur (5xx) ne montre que son code.
+    #[error("{}", http_message(*status, body))]
     Http { status: u16, body: String },
-    #[error("réponse illisible : {0}")]
+    /// Réponse illisible ; le détail (en anglais, de `serde`) reste pour le débogage.
+    #[error("réponse illisible du serveur")]
     Decode(String),
+}
+
+/// Texte d'une réponse HTTP inattendue, montrable à l'écran.
+fn http_message(status: u16, body: &str) -> String {
+    let body = body.trim();
+    if status < 400 {
+        // Statut hors norme pour cet appel (le corps est alors un texte du client, en français).
+        return if body.is_empty() { format!("réponse inattendue du serveur ({status})") } else { format!("réponse inattendue du serveur ({status}) : {body}") };
+    }
+    if (400..500).contains(&status) && !body.is_empty() && body.chars().count() <= 200 {
+        format!("demande refusée par le serveur : {body}")
+    } else if (400..500).contains(&status) {
+        format!("demande refusée par le serveur ({status})")
+    } else if !body.is_empty() && body.chars().count() <= 200 {
+        // Le serveur ne renvoie plus que des textes publics en français pour un 5xx (détail interne
+        // au journal du pod) : un texte court est montré tel quel.
+        format!("erreur du serveur : {body}")
+    } else {
+        format!("erreur du serveur ({status})")
+    }
+}
+
+/// Raison lisible d'une erreur réseau de `ureq`.
+fn offline_reason(e: &ureq::Error) -> &'static str {
+    match e {
+        ureq::Error::Timeout(_) => "délai dépassé",
+        ureq::Error::HostNotFound => "nom du serveur introuvable",
+        ureq::Error::ConnectionFailed => "connexion impossible",
+        ureq::Error::Io(_) => "connexion interrompue",
+        ureq::Error::Tls(_) | ureq::Error::Rustls(_) => "connexion sécurisée refusée",
+        ureq::Error::BodyExceedsLimit(_) => "réponse trop volumineuse",
+        _ => "erreur réseau",
+    }
 }
 
 impl From<ureq::Error> for ApiError {
     fn from(e: ureq::Error) -> Self {
-        ApiError::Offline(e.to_string())
+        ApiError::Offline(offline_reason(&e).to_string())
     }
 }
+
+/// Requêtes légères (santé, têtes, verrous, catalogue, profils, inventaires) : délai global court.
+/// Un serveur qui accepte la connexion sans répondre ne fige plus l'écran 10 min, il passe
+/// « Hors ligne » en 30 s au plus.
+const LIGHT_GLOBAL: Duration = Duration::from_secs(30);
+/// Inactivité tolérée sur une lecture ou une écriture réseau.
+const LIGHT_IDLE: Duration = Duration::from_secs(10);
+/// Transferts de sauvegarde (jusqu'à 1 Go) et rebalayage : pas de délai global (la durée dépend du
+/// débit), mais un délai d'inactivité : un transfert qui n'avance plus échoue en 30 s.
+const TRANSFER_IDLE: Duration = Duration::from_secs(30);
+/// Attente de la réponse une fois la requête envoyée (le serveur hache une archive jusqu'à 1 Go,
+/// ou balaie un gros partage de ROM).
+const TRANSFER_RESPONSE: Duration = Duration::from_secs(300);
 
 /// Taille maximale d'une sauvegarde téléchargée.
 const MAX_DOWNLOAD: u64 = 1024 * 1024 * 1024;
@@ -27,6 +77,8 @@ const MAX_DOWNLOAD: u64 = 1024 * 1024 * 1024;
 #[derive(Clone)]
 pub struct Client {
     agent: Agent,
+    /// Agent des sauvegardes (envoi, téléchargement) et du rebalayage : délai d'inactivité seulement.
+    transfer_agent: Agent,
     /// Agent des téléchargements de jeux : pas de délai global (une ROM pèse jusqu'à 15 Go) ; le
     /// délai d'inactivité sur le corps est géré par l'installateur (`install::Installer`).
     download_agent: Agent,
@@ -39,7 +91,18 @@ impl Client {
         let agent: Agent = Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(3)))
-            .timeout_global(Some(Duration::from_secs(600)))
+            .timeout_per_read(Some(LIGHT_IDLE))
+            .timeout_per_write(Some(LIGHT_IDLE))
+            .timeout_global(Some(LIGHT_GLOBAL))
+            .build()
+            .into();
+        let transfer_agent: Agent = Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_secs(3)))
+            .timeout_per_read(Some(TRANSFER_IDLE))
+            .timeout_per_write(Some(TRANSFER_IDLE))
+            .timeout_recv_response(Some(TRANSFER_RESPONSE))
+            .timeout_global(None)
             .build()
             .into();
         let download_agent: Agent = Agent::config_builder()
@@ -49,7 +112,7 @@ impl Client {
             .timeout_global(None)
             .build()
             .into();
-        Self { agent, download_agent, base: base.trim_end_matches('/').to_string() }
+        Self { agent, transfer_agent, download_agent, base: base.trim_end_matches('/').to_string() }
     }
 
     fn url(&self, path: &str) -> String {
@@ -87,21 +150,21 @@ impl Client {
     }
 
     pub fn blob(&self, key: &SaveKey, rev: u64) -> Result<Vec<u8>, ApiError> {
-        let mut r = self.agent.get(self.url(&format!("saves/{}/{}/{rev}", key.profile, key.game))).call()?;
+        let mut r = self.transfer_agent.get(self.url(&format!("saves/{}/{}/{rev}", key.profile, key.game))).call()?;
         match r.status().as_u16() {
             200 => r
                 .body_mut()
                 .with_config()
                 .limit(MAX_DOWNLOAD)
                 .read_to_vec()
-                .map_err(|e| ApiError::Offline(e.to_string())),
+                .map_err(ApiError::from),
             s => Err(Self::fail(s, &mut r)),
         }
     }
 
     pub fn push(&self, key: &SaveKey, p: &PushParams, archive: &[u8]) -> Result<PushOutcome, ApiError> {
         let mut r = self
-            .agent
+            .transfer_agent
             .put(self.url(&format!("saves/{}/{}", key.profile, key.game)))
             .query("base_rev", p.base_rev.to_string())
             .query("device", &p.device)
@@ -196,7 +259,7 @@ impl Client {
 
     /// Demande au serveur de balayer à nouveau son dossier de ROM.
     pub fn rescan(&self) -> Result<RescanReport, ApiError> {
-        let mut r = self.agent.post(self.url("catalog/rescan")).send_empty()?;
+        let mut r = self.transfer_agent.post(self.url("catalog/rescan")).send_empty()?;
         match r.status().as_u16() {
             200 => r.body_mut().read_json().map_err(|e| ApiError::Decode(e.to_string())),
             s => Err(Self::fail(s, &mut r)),
@@ -232,5 +295,36 @@ impl Client {
             200 | 202 | 206 | 416 => Ok(r),
             s => Err(Self::fail(s, &mut r)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_messages {
+    use super::*;
+
+    #[test]
+    fn erreurs_lisibles_en_francais() {
+        assert_eq!(ApiError::Offline(offline_reason(&ureq::Error::ConnectionFailed).into()).to_string(), "serveur injoignable : connexion impossible");
+        assert_eq!(ApiError::Http { status: 500, body: "erreur interne du serveur".into() }.to_string(), "erreur du serveur : erreur interne du serveur");
+        assert_eq!(ApiError::Http { status: 502, body: String::new() }.to_string(), "erreur du serveur (502)");
+        assert_eq!(ApiError::Http { status: 400, body: "profil invalide : nom vide".into() }.to_string(), "demande refusée par le serveur : profil invalide : nom vide");
+        assert_eq!(ApiError::Http { status: 404, body: String::new() }.to_string(), "demande refusée par le serveur (404)");
+        assert_eq!(ApiError::Http { status: 206, body: "réponse de téléchargement inattendue".into() }.to_string(), "réponse inattendue du serveur (206) : réponse de téléchargement inattendue");
+        assert_eq!(ApiError::Decode("expected value at line 1".into()).to_string(), "réponse illisible du serveur");
+    }
+
+    /// Serveur qui accepte la connexion sans jamais répondre : la requête légère échoue en
+    /// « Hors ligne » bien avant l'ancien délai de 600 s.
+    #[test]
+    fn serveur_muet_hors_ligne_rapidement() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hold = std::thread::spawn(move || listener.accept().map(|(s, _)| s));
+        let client = Client::new(&format!("http://{addr}"));
+        let t = std::time::Instant::now();
+        let r = client.health();
+        assert!(matches!(r, Err(ApiError::Offline(_))), "{r:?}");
+        assert!(t.elapsed() < LIGHT_GLOBAL + Duration::from_secs(5), "{:?}", t.elapsed());
+        drop(hold);
     }
 }

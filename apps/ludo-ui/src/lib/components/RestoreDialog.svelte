@@ -30,7 +30,17 @@
       })
       .catch((e) => {
         // Échec (conflit : la sauvegarde a changé ailleurs entre-temps, ou serveur injoignable) : rien n'est remplacé.
-        failed = /conflit|conflict/i.test(String(e)) ? 'La sauvegarde a changé sur un autre appareil' : 'Serveur injoignable';
+        // Le texte brut de l'erreur (souvent technique, en anglais) n'est pas affiché : seule sa nature.
+        const msg = String(e);
+        failed = /conflit|conflict/i.test(msg)
+          ? 'La sauvegarde a changé sur un autre appareil'
+          : /injoignable|connexion|connection|timed out|délai|réseau|network|dns|refused|unreachable|hors ligne|offline/i.test(msg)
+            ? 'Serveur injoignable'
+            : /\b5\d\d\b|serveur|server/i.test(msg)
+              ? 'Erreur du serveur'
+              : /disque|entrée-sortie|permission|os error|espace/i.test(msg)
+                ? "Erreur sur l'appareil"
+                : 'Erreur inattendue';
         feedback('err');
         requestAnimationFrame(() => document.querySelector<HTMLElement>('.card .close')?.focus());
       });
@@ -41,6 +51,8 @@
   });
 
   const d = (ms: number) => (reducedMotion() ? 0 : ms);
+  /** App réelle : aucun avancement remonté pendant le téléchargement → barre en attente, pas figée à 0. */
+  const waiting = $derived(progress === 0 && step === 0 && !failed);
 </script>
 
 <div class="backdrop" transition:fade={{ duration: d(200) }} aria-hidden="true"></div>
@@ -61,8 +73,8 @@
       </li>
     {/each}
   </ol>
-  <div class="bar" class:failbar={failed} role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress * 100)}>
-    <span style:width="{progress * 100}%"></span>
+  <div class="bar" class:failbar={failed} role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={waiting ? undefined : Math.round(progress * 100)}>
+    <span class:indet={waiting} style:width="{waiting ? 30 : progress * 100}%"></span>
   </div>
   {#if failed}
     <p class="fail">Restauration impossible · {failed}. Aucune sauvegarde remplacée.</p>
@@ -75,7 +87,9 @@
 <style>
   .backdrop { position: absolute; inset: 0; z-index: 10; background: rgba(5, 8, 12, 0.6); backdrop-filter: blur(4px); }
   .card {
-    position: absolute; left: 50%; top: 50%; width: 520px; margin: -170px 0 0 -260px; z-index: 11; box-sizing: border-box;
+    /* Centrage par `translate` (propriété distincte de `transform`, que la transition `scale` occupe) :
+       la carte reste centrée quelle que soit sa hauteur (message d'échec, texte long, petit écran). */
+    position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(520px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto; z-index: 11; box-sizing: border-box;
     background: #161a22; border-radius: 20px; padding: 30px 32px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
     display: flex; flex-direction: column; gap: 14px;
   }
@@ -93,11 +107,13 @@
   .bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 160ms linear; }
   .xmark { width: 22px; height: 22px; border-radius: 50%; background: #ff6b6b; color: #0b0f14; font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
   .failbar span { background: #ff6b6b; }
+  .bar span.indet { animation: indet 1.2s ease-in-out infinite; }
+  @keyframes indet { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
   .fail { margin: 0; font-size: 14px; color: #ff9b9b; }
   .close { all: unset; cursor: pointer; align-self: flex-end; padding: 10px 18px; border-radius: 10px; background: var(--raised); font-size: 15px; }
   .close.focusable:focus { box-shadow: inset 0 0 0 2px var(--accent); }
   .note { margin: 0; font-size: 13px; color: var(--ink-4); }
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes pop { from { transform: scale(0.5); } to { transform: none; } }
-  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } .check { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } .check { animation: none; } .bar span.indet { animation-duration: 3s; } }
 </style>

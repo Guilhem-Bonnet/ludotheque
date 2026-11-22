@@ -14,8 +14,29 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Signature de la version release (mise à jour depuis l'app : Android n'accepte une nouvelle version
+// que signée par la MÊME clé). CI : variables LUDO_ANDROID_* (secrets du dépôt) ; poste :
+// ~/.config/ludotheque/android/signature.properties (scripts/android-cle.sh). Sans clé : APK non signé.
+val signatureLocale = Properties().apply {
+    val f = File(System.getProperty("user.home"), ".config/ludotheque/android/signature.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun signature(env: String, key: String): String? =
+    System.getenv(env)?.takeIf { it.isNotEmpty() } ?: signatureLocale.getProperty(key)?.takeIf { it.isNotEmpty() }
+val cleRelease = signature("LUDO_ANDROID_KEYSTORE", "storeFile")
+
 android {
     compileSdk = 37
+    signingConfigs {
+        if (cleRelease != null) {
+            create("release") {
+                storeFile = file(cleRelease)
+                storePassword = signature("LUDO_ANDROID_KEYSTORE_PASSWORD", "storePassword")
+                keyAlias = signature("LUDO_ANDROID_KEY_ALIAS", "keyAlias") ?: "ludotheque"
+                keyPassword = signature("LUDO_ANDROID_KEY_PASSWORD", "keyPassword") ?: storePassword
+            }
+        }
+    }
     namespace = "fr.srvdreamer.ludotheque"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
@@ -40,6 +61,7 @@ android {
             }
         }
         getByName("release") {
+            if (cleRelease != null) signingConfig = signingConfigs.getByName("release")
             optimization {
                enable = true
             }

@@ -1,0 +1,194 @@
+name: App Android (Ayn Thor)
+
+# APK release signé de l'app Ludothèque pour Android (arm64, Ayn Thor).
+#   - pull request qui touche l'app : construction + signature + vérification (apksigner), APK en
+#     artefact, rien de publié. TOUJOURS signé par une clé JETABLE générée dans le job : le code d'une
+#     PR n'est jamais construit avec les secrets du dépôt (cet APK ne sert qu'à l'essai).
+#   - release de l'app terminée (tag app-vX.Y.Z, workflow « Release de l'app Ludothèque ») : APK signé
+#     par la clé du dépôt + android.json ajoutés à la MÊME release. L'app Android lit
+#     releases/latest/download/android.json, compare versionCode et propose la mise à jour
+#     (MiseAJourApk.kt). Déclenché à la fin de la release (workflow_run) : la release existe déjà,
+#     aucune attente ni scrutation.
+#
+# Secrets (scripts/android-cle.sh --secrets) : LUDO_ANDROID_KEYSTORE_B64, LUDO_ANDROID_KEYSTORE_PASSWORD,
+# LUDO_ANDROID_KEY_ALIAS. Absents sur une release : échec explicite (jamais d'APK publié non signé).
+# Variable (publique) LUDO_ANDROID_CERT_SHA256 : empreinte attendue du certificat, comparée avant de publier.
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/android-release.yml"
+      - "apps/ludo-ui/**"
+      - "crates/**"
+      - "Cargo.*"
+  workflow_run:
+    workflows: ["Release de l'app Ludothèque"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.event_name }}-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    # Release : seulement après une release réussie d'un tag app-v*.
+    # Release : seulement un PUSH de tag du dépôt lui-même (une PR dont la branche s'appellerait
+    # app-v… déclenche aussi la release du bureau en construction seule : exclue ici).
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_branch, 'app-v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      RELEASE: ${{ github.event_name == 'workflow_run' }}
+      TAG: ${{ github.event.workflow_run.head_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Version
+        id: version
+        run: |
+          if [ "$RELEASE" = true ]; then
+            v="${TAG#app-v}"
+            # Le tag doit pointer sur le commit construit (jamais une branche homonyme).
+            git fetch --quiet --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            [ "$(git rev-parse "refs/tags/$TAG^{commit}")" = "$(git rev-parse HEAD)" ] \
+              || { echo "::error::Le tag $TAG ne pointe pas sur le commit construit"; exit 1; }
+          else
+            v="0.0.$GITHUB_RUN_NUMBER"
+          fi
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version invalide : $v"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          # tauri.conf.json donne versionName et versionCode (majeur×1 000 000 + mineur×1 000 + correctif).
+          jq --arg v "$v" '.version = $v' apps/ludo-ui/src-tauri/tauri.conf.json > /tmp/conf.json
+          mv /tmp/conf.json apps/ludo-ui/src-tauri/tauri.conf.json
+          sed -i "0,/^version = \".*\"/s//version = \"$v\"/" apps/ludo-ui/src-tauri/Cargo.toml
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: SDK Android (plateforme 37, NDK 27)
+        run: |
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdk" --licenses >/dev/null || true
+          "$sdk" --install "platforms;android-37.0" "build-tools;36.0.0" "ndk;27.3.13750724" >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.3.13750724" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/ludo-ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      # .cargo/config.toml fixe target-dir sur le poste de dev : la CI compile dans son propre dossier.
+      - name: Dossier de compilation de la CI
+        run: echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: android
+
+      - name: Dépendances de l'interface
+        working-directory: apps/ludo-ui
+        run: npm ci
+
+      - name: Clé de signature
+        env:
+          KEYSTORE_B64: ${{ secrets.LUDO_ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.LUDO_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.LUDO_ANDROID_KEY_ALIAS }}
+        run: |
+          ks="$RUNNER_TEMP/ludotheque-release.p12"
+          if [ "$RELEASE" = true ] && [ -n "$KEYSTORE_B64" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$ks"
+            echo "::add-mask::$KEYSTORE_PASSWORD"
+            {
+              echo "LUDO_ANDROID_KEYSTORE=$ks"
+              echo "LUDO_ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "LUDO_ANDROID_KEY_ALIAS=${KEY_ALIAS:-ludotheque}"
+              echo "CLE=depot"
+            } >> "$GITHUB_ENV"
+          elif [ "$RELEASE" = true ]; then
+            echo "::error::Secrets de signature Android absents (scripts/android-cle.sh --secrets) : aucun APK publié."
+            exit 1
+          else
+            pass="$(head -c 24 /dev/urandom | base64 | tr -d '/+=')"
+            echo "::add-mask::$pass"
+            keytool -genkeypair -keystore "$ks" -storetype PKCS12 -alias jetable -keyalg RSA -keysize 2048 \
+              -validity 2 -dname "CN=Cle jetable CI" -storepass "$pass" -keypass "$pass" >/dev/null 2>&1
+            {
+              echo "LUDO_ANDROID_KEYSTORE=$ks"
+              echo "LUDO_ANDROID_KEYSTORE_PASSWORD=$pass"
+              echo "LUDO_ANDROID_KEY_ALIAS=jetable"
+              echo "CLE=jetable"
+            } >> "$GITHUB_ENV"
+            echo "::warning::Secrets de signature absents : APK signé par une clé jetable (essai seulement)."
+          fi
+
+      - name: Construction de l'APK (arm64, release)
+        working-directory: apps/ludo-ui
+        run: npx tauri android build --apk --target aarch64
+
+      - name: Vérification de la signature et android.json
+        id: apk
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CERT_ATTENDU: ${{ vars.LUDO_ANDROID_CERT_SHA256 }}
+        run: |
+          v="$VERSION"
+          gen=apps/ludo-ui/src-tauri/gen/android/app
+          apk="$(find "$gen/build/outputs/apk" -name '*release*.apk' | grep -v unsigned | head -1)"
+          [ -n "$apk" ] || { echo "::error::APK release signé introuvable"; find "$gen/build/outputs/apk" -name '*.apk'; exit 1; }
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | tee /tmp/certs.txt
+          grep -q 'Signer #1 certificate SHA-256' /tmp/certs.txt
+          if [ "$RELEASE" = true ] && [ -n "$CERT_ATTENDU" ]; then
+            cert="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' /tmp/certs.txt | tr -d ':' | tr 'A-F' 'a-f')"
+            [ "$cert" = "$(printf '%s' "$CERT_ATTENDU" | tr -d ': ' | tr 'A-F' 'a-f')" ] \
+              || { echo "::error::APK signé par une autre clé que LUDO_ANDROID_CERT_SHA256"; exit 1; }
+          fi
+          out="ludotheque-$v.apk"
+          cp "$apk" "$out"
+          code="$(sed -n 's/^tauri.android.versionCode=//p' "$gen/tauri.properties")"
+          IFS=. read -r ma mi pa <<< "$v"
+          [ "$code" = "$((ma * 1000000 + mi * 1000 + pa))" ] || { echo "::error::versionCode inattendu ($code pour $v)"; exit 1; }
+          sum="$(sha256sum "$out" | cut -d' ' -f1)"
+          jq -n --arg v "$v" --argjson code "$code" --arg sum "$sum" --arg tag "$TAG" --arg out "$out" \
+            --arg repo "$GITHUB_REPOSITORY" --arg cle "$CLE" \
+            '{version: $v, versionCode: $code, sha256: $sum, cle: $cle,
+              apk: ("https://github.com/" + $repo + "/releases/download/" + $tag + "/" + $out),
+              notes: "Mise à jour de l'"'"'app Ludothèque (Ayn Thor)."}' > android.json
+          cat android.json
+          echo "file=$out" >> "$GITHUB_OUTPUT"
+
+      - name: APK d'essai (pull request)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ludotheque-android-essai
+          path: |
+            ${{ steps.apk.outputs.file }}
+            android.json
+          retention-days: 7
+
+      - name: Publication avec la release
+        if: env.RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FICHIER: ${{ steps.apk.outputs.file }}
+        run: gh release upload "$TAG" "$FICHIER" android.json --clobber -R "$GITHUB_REPOSITORY"

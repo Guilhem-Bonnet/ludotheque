@@ -1,0 +1,22 @@
+# melonDS — émulateur DS. Relevé le 21/11/2026 sur la Thor (adb, lecture seule) : paquet
+# me.magnum.melondualds, dossier de sauvegardes Android/data/me.magnum.melondualds/files/saves, une
+# sauvegarde par jeu nommée comme la ROM (« Pokemon - Version Diamant (France) (Rev 5).sav »).
+# À CONFIRMER : un second .sav de même nom existe à côté de la ROM (Documents/Roms/nds) ; les deux font
+# 0 octet (aucune partie enregistrée), le réglage « dossier de sauvegarde » de l'appli n'est pas lisible
+# sans root. Le dossier des ROM n'est JAMAIS pris comme dossier de sauvegarde (la restauration
+# renommerait tout le dossier).
+# PC : pas de détection tant qu'un dossier de sauvegarde dédié n'est pas réglé dans melonDS (par défaut
+# il écrit à côté des ROM, dans la collection).
+id        = "melonds"
+consoles  = ["ds"]
+formats   = ["nds"]
+lancement = "{bin} {rom}"
+profils   = "aucun"
+# Dossier partagé par tous les jeux : seul le fichier de ce jeu est synchronisé.
+sauvegardes = "{data}/saves"
+fichiers    = ["{rom_nom}.sav"]
+exclusions  = ["*.tmp"]
+
+[appareil.thor]
+bin  = "me.magnum.melondualds"
+data = "/sdcard/Android/data/me.magnum.melondualds/files"
