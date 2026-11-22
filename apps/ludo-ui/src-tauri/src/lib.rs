@@ -819,9 +819,20 @@ async fn updates(profile: Option<String>) -> Result<Vec<UiUpdate>, String> {
         let cfg = load_config()?;
         // Profil en cours (écran « Qui joue ? » passé), sinon celui de l'appareil, sinon aucun.
         let profile = profile.filter(|p| !p.is_empty()).or_else(|| cfg.profil_defaut.clone()).unwrap_or_default();
-        Ok(build_updates(&fetch_library(&cfg, &profile)?.0))
+        Ok(installable_updates(build_updates(&fetch_library(&cfg, &profile)?.0), cfg!(target_os = "android")))
     })
     .await
+}
+
+/// Mises à jour proposées selon la plateforme. Android : aucune, l'app ne peut rien y installer (pas
+/// de dossier de ROM dans sa configuration, et le contenu externe des émulateurs est dans leur
+/// `Android/data`, inaccessible aux applis) : les jeux et leur contenu arrivent par le PC.
+pub fn installable_updates(list: Vec<UiUpdate>, android: bool) -> Vec<UiUpdate> {
+    if android {
+        Vec::new()
+    } else {
+        list
+    }
 }
 
 /// Synchronisation manuelle de tous les jeux configurés pour ce profil, puis bibliothèque à jour.
@@ -1476,6 +1487,13 @@ mod tests {
             ])
         );
         assert!(ui_history(&[], to_local, today).is_empty());
+    }
+
+    #[test]
+    fn aucune_mise_a_jour_proposee_sur_android() {
+        let u = UiUpdate { id: "j|1".into(), group: "jeux", title: "J".into(), detail: "d".into(), console: "switch".into(), tile: "t".into(), action: "Installer" };
+        assert_eq!(installable_updates(vec![u.clone()], false).len(), 1);
+        assert!(installable_updates(vec![u], true).is_empty());
     }
 
     fn file(id: u64, role: FileRole, path: &str, size: u64) -> GameFile {
