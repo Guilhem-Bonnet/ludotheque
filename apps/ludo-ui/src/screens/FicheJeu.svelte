@@ -304,7 +304,7 @@
   section { flex-grow: 1; display: flex; flex-direction: column; gap: 18px; min-width: 0; overflow-y: auto; }
   .head { display: flex; align-items: baseline; justify-content: space-between; }
   h1 { margin: 0; font-size: 28px; font-weight: 600; }
-  .state { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); }
+  .state { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); white-space: nowrap; flex-shrink: 0; }
   ul { list-style: none; margin: 0; padding: 4px; display: flex; flex-direction: column; gap: 8px; }
   .row { all: unset; cursor: pointer; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 16px; padding: 16px 20px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); font-size: 16px; }
   .row:disabled { cursor: default; }

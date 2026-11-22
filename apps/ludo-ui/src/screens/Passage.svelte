@@ -6,7 +6,7 @@
   import Tile from '../lib/components/Tile.svelte';
   import { api, CANCELLED, isAndroid, isDemo, prepLabel } from '../lib/api';
   import { feedback } from '../lib/feedback';
-  import { reducedMotion } from '../lib/motion';
+  import { reducedMotion, replay } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
   import type { LaunchEvent, LaunchResult, LaunchStep } from '../lib/api';
@@ -123,7 +123,11 @@
       case 'en_jeu':
         s.label = done ? 'Partie terminée' : 'En jeu';
         s.detail = done ? undefined : 'Partie en cours. La sauvegarde partira à la fermeture de l\u2019émulateur.';
-        if (!done) phase = 'playing';
+        // Pendant la partie, l'écran se fige dans un état calme : la tuile se repose (fin du soulèvement
+        // du lancement), plus rien ne tourne ni ne boucle (le jeu a besoin du processeur, et l'écran
+        // peut rester affiché des heures). Le retour du jeu est le prochain événement animé.
+        if (!done) { phase = 'playing'; launching = false; }
+        else replay(art, 'back-from-game', 520);
         break;
       case 'envoi':
         s.label = done ? 'Sauvegarde envoyée' : 'Envoi de la sauvegarde…';
@@ -188,6 +192,8 @@
     }
     steps[5].label = 'Sauvegarde envoyée';
     steps[5].detail = r.detail;
+    // Même image que l'accord doux : la tuile gonfle à peine (sauvegarde partie).
+    replay(art, 'saved', 360);
     feedback('saved');
     await wait(1200);
     router.reset({ name: 'accueil' });
@@ -288,6 +294,9 @@
             <span class="line">
               {#if step.state === 'fait'}
                 <span class="check draw" style:--len="16"><Icon name="check-circle" size={26} color="var(--ok)" /></span>
+              {:else if step.state === 'en_cours' && phase === 'playing' && i === index.en_jeu}
+                <!-- En jeu : pastille fixe, sans rotation (état qui peut durer des heures). -->
+                <span class="playing"><Icon name="play" size={18} color="var(--ground)" /></span>
               {:else if step.state === 'en_cours'}
                 <span class="spin"><Icon name="spinner" size={26} color="var(--accent)" /></span>
               {:else}
@@ -297,7 +306,7 @@
               {#if step.progress !== undefined}<span class="pct">{step.progress} %</span>{/if}
             </span>
             {#if step.progress !== undefined}
-              <span class="bar" role="progressbar" aria-valuenow={step.progress} aria-valuemin="0" aria-valuemax="100" aria-label={step.label}>
+              <span class="bar" class:live={downloading || (isDemo && step.state === 'en_cours')} role="progressbar" aria-valuenow={step.progress} aria-valuemin="0" aria-valuemax="100" aria-label={step.label}>
                 <span style:width="{step.progress}%"></span>
               </span>
             {/if}
@@ -318,7 +327,9 @@
       {#if closeNote && busy}<p class="note" role="status">Partie en cours : fermer le jeu d\u2019abord</p>{/if}
     </div>
   </main>
-  <ButtonHints note="Sauvegardes conservées sur le serveur" hints={[{ key: 'B', label: 'Annuler' }]} />
+  <!-- B n'agit que pendant un téléchargement (annuler) ou hors lancement (retour) : pendant la partie et
+       l'envoi, aucune consigne plutôt qu'une consigne fausse. -->
+  <ButtonHints note="Sauvegardes conservées sur le serveur" hints={downloading ? [{ key: 'B', label: 'Annuler' }] : busy ? [] : [{ key: 'B', label: 'Retour' }]} />
 </div>
 
 <style>
@@ -335,7 +346,7 @@
   @keyframes check-pop { from { transform: scale(0.7); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
   /* Reflet régulier sur la partie remplie de la barre : la progression paraît vivante. */
   .bar span { position: relative; overflow: hidden; }
-  .bar span::after { content: ''; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent); animation: bar-gleam 1.8s ease-in-out infinite; }
+  .bar.live span::after { content: ''; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent); animation: bar-gleam 1.8s ease-in-out infinite; }
   @keyframes bar-gleam { from { transform: translateX(-120%); } to { transform: translateX(260%); } }
   .side { flex-grow: 1; display: flex; flex-direction: column; gap: 36px; }
   @media (prefers-reduced-motion: reduce) { .side, .check { animation: none; } .bar span::after { display: none; } }
@@ -359,5 +370,18 @@
   .acts { display: flex; gap: 12px; margin-left: 42px; }
   .acts .act { margin-left: 0; }
   .spin { animation: spin 900ms linear infinite; }
+  /* En jeu : pastille pleine de l'accent, posée une fois avec un léger rebond, puis immobile. */
+  .playing { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); align-items: center; justify-content: center; padding-left: 2px; box-sizing: border-box; }
+  /* Retour du jeu : la tuile se « réveille » (petit appel vers le haut, puis se pose). */
+  .art:global(.back-from-game), .art:global(.saved) { transform-origin: center; }
+  /* Sauvegarde envoyée : léger gonflement (3 %), plus discret que le « pop » des petits éléments (charte). */
+  .art:global(.saved) { animation: saved 360ms var(--ease-pop); }
+  @keyframes saved { 40% { transform: scale(1.03); } }
+  .art:global(.back-from-game) { animation: back-from-game 520ms var(--ease-land); }
+  @keyframes back-from-game { 0% { transform: none; } 35% { transform: translateY(-10px) scale(1.02); } 100% { transform: none; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .playing { animation: check-pop 320ms var(--ease-pop) both; }
+  }
+  @media (prefers-reduced-motion: reduce) { .art:global(.back-from-game), .art:global(.saved), .spin { animation: none; } }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>
