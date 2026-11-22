@@ -25,6 +25,8 @@
   import type { DeviceInfo, Game } from '../lib/types';
   import { play } from '../lib/play';
   import { appUpdate } from '../lib/appUpdate.svelte';
+  import EnCours from '../lib/components/EnCours.svelte';
+  import { enCours } from '../lib/enCours.svelte';
 
   let { device }: { device: DeviceInfo } = $props();
 
@@ -327,6 +329,8 @@
       <span class="clock">{clock}</span>
     </div>
   </header>
+  <!-- Menu en jeu (lot menu-jeu) : jeu ouvert en tête de l'accueil, Reprendre / Fermer le jeu. -->
+  <EnCours games={all} />
 
   {#if loadError}
     <div class="notice-wrap"><StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={() => void load(router.profile!.id)} /></div>
@@ -422,6 +426,8 @@
   {/if}
   {#if options}
     <ButtonHints hints={[{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Fermer' }]} />
+  {:else if enCours.carteFocalisee}
+    <ButtonHints hints={[{ key: 'A', label: 'Reprendre' }, { key: 'X', label: 'Fermer le jeu' }]} />
   {:else if syncFocused}
     <ButtonHints hints={[{ key: 'A', label: 'Synchroniser' }]} />
   {:else if profileFocused}

@@ -5,6 +5,7 @@
 // scène de l'accueil (les autres tuiles s'estompent, celle-ci se soulève) avant de changer d'écran.
 
 import { api, isAndroid, isDemo } from './api';
+import { enCours } from './enCours.svelte';
 import { reducedMotion } from './motion';
 import { router } from './router.svelte';
 import type { Game, LaunchMode, Preparation } from './types';
@@ -47,6 +48,17 @@ export function realPreparation(game: Game, profile: string, profileName?: strin
 export async function play(game: Game, from?: HTMLElement, mode?: LaunchMode) {
   const profile = router.profile;
   if (!profile) return;
+  // Menu en jeu (lot menu-jeu) : un jeu est déjà ouvert sur l'appareil. Le même jeu → il reprend ;
+  // un autre → proposer d'abord de fermer celui en cours (une seule partie à la fois, comme une console).
+  const ouvert = enCours.jeu;
+  if (ouvert && (isAndroid || isDemo)) {
+    if (ouvert.game === game.id) {
+      await enCours.reprendre().catch(() => undefined);
+      return;
+    }
+    enCours.confirmation = { titreEnsuite: game.title, ensuite: () => void play(game, from, mode) };
+    return;
+  }
   router.heroGame = game.id;
   router.heroRect = from ? from.getBoundingClientRect() : null;
   router.enter = from && !reducedMotion() ? 'hero' : 'normal';

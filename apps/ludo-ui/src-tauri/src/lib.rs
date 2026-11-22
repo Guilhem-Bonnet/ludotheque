@@ -8,6 +8,7 @@
 //! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
 pub mod android;
+pub mod menu_jeu;
 pub mod profils;
 pub mod rumble;
 // Manette native : démarrée au bureau seulement (sur Android, MainActivity traduit les entrées).
@@ -1323,6 +1324,7 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
         android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
     };
     android::start(app, &intent)?;
+    menu_jeu::lance(app, game, &intent);
     step(Step::Lancement, StepState::Fait, None);
     Ok(UiLaunch::Lance { via, detail })
 }
@@ -1414,7 +1416,7 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_process::init());
     // Android : pont Kotlin (intents, dossier des ROM) et configuration déposée par le PC.
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(android::plugin()).setup(|app| {
+    let builder = builder.plugin(android::plugin()).plugin(menu_jeu::plugin()).setup(|app| {
         android::prepare_env(app.handle());
         Ok(())
     });
@@ -1424,6 +1426,18 @@ pub fn run() {
         let handle = app.handle().clone();
         pad::init(move |e| {
             let _ = handle.emit(pad::EVENT_PAD, e);
+        });
+        // Menu en jeu : bouton Guide pendant une partie → la fenêtre revient devant (écran « En jeu » :
+        // Reprendre, Fermer le jeu). Sous Wayland, le gestionnaire de fenêtres peut refuser le focus
+        // (l'app est alors signalée dans la barre des tâches).
+        let menu = app.handle().clone();
+        pad::on_menu(move || {
+            let _ = menu.emit(menu_jeu::EVENT_MENU, ());
+            if let Some(w) = menu.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
         });
         Ok(())
     });
@@ -1444,7 +1458,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer, menu_jeu::jeu_en_cours, menu_jeu::reprendre_jeu, menu_jeu::fermer_jeu, menu_jeu::menu_jeu_reglages])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {

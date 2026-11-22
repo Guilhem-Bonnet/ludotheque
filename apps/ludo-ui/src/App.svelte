@@ -10,6 +10,7 @@
   import { applyLayout, computeLayout, computeZoom, layout, screenHasSide, screenIsWide } from './lib/layout';
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
+import FermerJeu from './lib/components/FermerJeu.svelte';
   import Bibliotheque from './screens/Bibliotheque.svelte';
   import Conflit from './screens/Conflit.svelte';
   import FicheJeu from './screens/FicheJeu.svelte';
@@ -248,6 +249,8 @@
     {#if $layout.side !== 'none' && router.profile && screenHasSide(router.screen.name)}
       <Colonnes {device} />
     {/if}
+    <!-- Menu en jeu (lot menu-jeu) : confirmation « Fermer le jeu ? », depuis n'importe quel écran. -->
+    <FermerJeu />
   {/if}
 </div>
 
