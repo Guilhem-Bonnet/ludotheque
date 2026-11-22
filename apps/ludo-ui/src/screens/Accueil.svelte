@@ -25,6 +25,7 @@
   import type { DeviceInfo, Game } from '../lib/types';
   import { play } from '../lib/play';
   import { appUpdate } from '../lib/appUpdate.svelte';
+  import { layout } from '../lib/layout';
 
   let { device }: { device: DeviceInfo } = $props();
 
@@ -200,6 +201,17 @@
            souris dépend de html[data-input], posé par nav.ts (PR entrees) : sans lui, ancien comportement. */
       } else if (input.kind === 'mouse' || input.kind === 'touch') reveal(i);
       else g.to(anchor(i));
+    });
+  });
+
+  /* Passage en double écran ou retour à un seul écran (annoncé après le montage, au réveil ou au retour d'un
+     émulateur) : le rembourrage de la rangée change, la tuile choisie est replacée sans glisser (revue). */
+  $effect(() => {
+    void $layout.ecran;
+    untrack(() => {
+      const el = row;
+      if (!el || !games.length) return;
+      requestAnimationFrame(() => glide(el, 'x').to(anchor(focused), true));
     });
   });
 
@@ -537,7 +549,8 @@
   :global(html[data-ecran='bas']) header { padding: 16px 24px 0; }
   :global(html[data-ecran='bas']) .row-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: center; padding: 0; }
   :global(html[data-ecran='bas']) .row { margin: 0; padding: 22px calc(50% - 136px) 22px; }
-  :global(html[data-ecran='bas']) .row::after { content: none; }
+  /* Cale de fin = décalage des tuiles après la choisie (40 px) : « Tous les jeux » se centre aussi (revue). */
+  :global(html[data-ecran='bas']) .row::after { flex-basis: 40px; }
   :global(html[data-ecran='bas']) .caption-slot,
   :global(html[data-ecran='bas']) .device-tab { display: none; }
   :global(html[data-ecran='bas']) .edge { top: calc(50% - 28px); }

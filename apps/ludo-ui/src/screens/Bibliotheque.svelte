@@ -285,6 +285,15 @@
   // Écran du bas de la Thor en double écran : la vitrine du jeu choisi est sur l'écran du haut (EcranHaut.svelte),
   // la bannière « À la une » n'est pas répétée en bas ; la place va à la grille (lot thor-ui, 22/11).
   const vitrine = $derived($layout.ecran === 'bas' ? [] : featured);
+  // Bannière retirée alors qu'elle avait le focus (écran du bas annoncé après le montage) : le focus revient à la
+  // première tuile au lieu de tomber sur la page (revue).
+  $effect(() => {
+    void vitrine.length;
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (!a || a === document.body || !a.isConnected) focusFirst();
+    });
+  });
   const rows = $derived(
     TABS.slice(1)
       .map((t, i) => ({ tab: i + 1, label: t.label, all: sorted.filter((g) => g.console === t.id) }))

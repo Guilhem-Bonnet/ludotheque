@@ -150,9 +150,9 @@
     padding: 15vh 7vw 6vh; box-sizing: border-box;
   }
   .cartouche {
-    /* Rapport réel de la jaquette (--r) dans une boîte de 38vw × 72vh au plus : largeur bornée par l'une ou
+    /* Rapport réel de la jaquette (--r) dans une boîte de 34vw × 72vh au plus (34 : place pour « 12 h 40 » à côté d'une jaquette 3DS presque carrée) : largeur bornée par l'une ou
        l'autre, hauteur déduite. Image en `contain` : rien n'est coupé, même avant la mesure. */
-    flex: none; aspect-ratio: var(--r, 0.714); width: min(38vw, calc(72vh * var(--r, 0.714))); height: auto;
+    flex: none; aspect-ratio: var(--r, 0.714); width: min(34vw, calc(72vh * var(--r, 0.714))); height: auto;
     border-radius: 1.6em 1.6em 1em 1em; overflow: hidden;
     box-shadow: 0 2.4em 5em rgba(0,0,0,.6), inset 0 0 0 .14em rgba(255,255,255,.18); position: relative; isolation: isolate;
   }
@@ -170,8 +170,11 @@
   .cartes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8em; margin-top: .6em; }
   .carte { padding: 1em 1.1em; border-radius: 1em; background: rgba(255,255,255,.1); display: flex; flex-direction: column; gap: .3em; min-width: 0; }
   .titre { font-size: .82em; font-weight: 650; color: rgba(255,255,255,.75); }
-  .valeur { font-size: 1.7em; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .valeur.moyen { font-size: 1.3em; white-space: normal; line-height: 1.15; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+  /* Jamais de « … » : un temps de jeu à 3 chiffres passe à la ligne plutôt que d'être coupé (contrôle des 80 jeux). */
+  .valeur { font-size: 1.3em; font-weight: 800; line-height: 1.15; overflow-wrap: break-word; }
+  .valeur.moyen { font-size: 1.3em; }
+  /* Texte seul sur deux lignes au plus ; la valeur « Sauvegarde » (pastille + libellé) reste en flex (revue). */
+  .valeur.moyen:not(.etat) { white-space: normal; line-height: 1.15; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
   .valeur.etat { white-space: normal; line-height: 1.15; }
   .detail { font-size: .85em; color: rgba(255,255,255,.8); }
   .etat { display: flex; gap: .45em; align-items: center; }

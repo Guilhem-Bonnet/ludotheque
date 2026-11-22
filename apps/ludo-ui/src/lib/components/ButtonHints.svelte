@@ -67,5 +67,6 @@
   :global(html[data-ecran='bas']) .hints { gap: 12px; }
   :global(html[data-ecran='bas']) .hint { min-height: 44px; padding: 0 10px; margin: 0 -2px; }
   :global(html[data-ecran='bas']) .key { width: 28px; height: 28px; font-size: 14px; }
+  :global(html[data-ecran='bas']) .kbd { width: auto; min-width: 28px; }
   :global(html[data-ecran='bas']) .note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 </style>
