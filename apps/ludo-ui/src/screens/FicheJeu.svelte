@@ -14,7 +14,9 @@
   import type { Game, GameContent, SaveRevision } from '../lib/types';
 
   let { game }: { game: Game } = $props();
-  let history = $state<SaveRevision[]>([]);
+  /** `null` tant que le serveur n'a pas répondu : une liste vide n'est affichée qu'une fois la réponse reçue
+   * (sinon « Aucune sauvegarde » s'affichait pendant le chargement, constat du 18/11 sur la Thor). */
+  let history = $state<SaveRevision[] | null>(null);
   let restored = $state<number | null>(null);
   let historyError = $state<string | null>(null);
 
@@ -28,7 +30,7 @@
     const r = restoring!;
     restoring = null;
     restored = r.rev;
-    history = history.map((h) => ({ ...h, current: h.rev === r.rev }));
+    history = (history ?? []).map((h) => ({ ...h, current: h.rev === r.rev }));
     requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus({ preventScroll: true }));
   }
 
@@ -63,8 +65,24 @@
     }
   }
 
+  /** Historique du profil courant. Sans profil (appareil partagé, avant « Qui joue ? »), aucune requête :
+   * l'ancienne lecture `router.profile!.id` levait une exception hors de la promesse et laissait la liste vide. */
+  function loadHistory() {
+    const profile = router.profile?.id;
+    if (!profile) {
+      historyError = 'Choisir un profil pour voir les sauvegardes';
+      history = [];
+      return;
+    }
+    historyError = null;
+    api
+      .history(profile, game.id)
+      .then((h) => (history = h))
+      .catch((e) => (historyError = message(e)));
+  }
+
   onMount(() => {
-    api.history(router.profile!.id, game.id).then((h) => (history = h)).catch((e) => (historyError = e instanceof Error ? e.message : String(e)));
+    loadHistory();
     focusFirst();
     const onTab = (ev: Event) => showTab((ev as CustomEvent<number>).detail > 0 ? 'content' : 'saves');
     window.addEventListener('ludo:tab', onTab);
@@ -147,10 +165,13 @@
   /** Android : jeu absent de l'appareil mais jouable en flux depuis le PC (Moonlight). */
   const streamOnly = $derived(isAndroid && !installed && !!game.stream);
 
+  /** Android : l'app n'installe rien (ROM et contenu arrivent par le PC) ; aucune action d'installation. */
+  const pcOnly = $derived(isAndroid && !installed && !game.stream);
+
   function primary() {
     if (installed) void play(game, undefined, isAndroid ? 'local' : undefined);
     else if (streamOnly) void play(game, undefined, 'flux');
-    else void installGame();
+    else if (!pcOnly) void installGame();
   }
 </script>
 
@@ -161,9 +182,9 @@
       <div class="art"><Tile {game} size={320} big still hero={router.heroGame === game.id} /></div>
       <h2 class="gname">{game.title}</h2>
       <div class="actions">
-        <button class="primary focusable" class:busy={installing !== null} data-autofocus aria-busy={installing !== null} onclick={primary}>
+        <button class="primary focusable" class:busy={installing !== null} data-autofocus aria-busy={installing !== null} aria-disabled={pcOnly} onclick={primary}>
           {#if installing !== null}<span class="fill" class:waiting={preparing !== null} style:width="{preparing ? 100 : installing * 100}%"></span>{/if}
-          <span class="label">{installing !== null ? (preparing ? prepLabel(preparing) : `Téléchargement… ${Math.round(installing * 100)} %`) : installed ? 'Jouer' : streamOnly ? 'Jouer en flux' : installError ? 'Réessayer' : 'Installer'}</span>
+          <span class="label">{installing !== null ? (preparing ? prepLabel(preparing) : `Téléchargement… ${Math.round(installing * 100)} %`) : installed ? 'Jouer' : streamOnly ? 'Jouer en flux' : pcOnly ? 'Installation depuis le PC' : installError ? 'Réessayer' : 'Installer'}</span>
         </button>
         {#if installing !== null}
           <button class="secondary focusable" data-sound="none" disabled={cancelling} onclick={cancelInstall}>{cancelling ? 'Annulation…' : 'Annuler'}</button>
@@ -195,13 +216,16 @@
         <ul class="content" aria-label="Contenu additionnel">
           {#each content as c, i (c.id)}
             <li class="rise" style:--i={i}>
-              <button class="row focusable" class:pop={justInstalled === c.id} class:done={c.installed} data-sound="none" aria-disabled={c.installed} onclick={() => install(c)}>
+              <button class="row focusable" class:pop={justInstalled === c.id} class:done={c.installed} data-sound="none" aria-disabled={c.installed || isAndroid} onclick={() => !isAndroid && install(c)}>
                 <Icon name={c.role === 'maj' ? 'update' : 'download'} size={22} color="var(--ink-2)" />
                 <span class="cname">{c.name}</span>
-                <span class="role">{c.role === 'maj' ? 'Mise à jour' : 'DLC'}</span>
+                <!-- Pastille de type masquée quand le nom la répète (« Mise à jour ») ; sa place reste réservée pour aligner les tailles. -->
+                <span class="role" class:blank={c.name === (c.role === 'maj' ? 'Mise à jour' : 'DLC')}>{c.role === 'maj' ? 'Mise à jour' : 'DLC'}</span>
                 <span class="csize">{c.size}</span>
                 {#if c.installed}
                   <span class="tag ok"><Icon name="check" size={14} color="#8be6b5" />Installé</span>
+                {:else if isAndroid}
+                  <span class="tag pc">Depuis le PC</span>
                 {:else if progress[c.id] !== undefined}
                   <span class="mini" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress[c.id] * 100)} aria-label="Installation de {c.name}"><span style:width="{progress[c.id] * 100}%"></span></span>
                 {:else}
@@ -211,7 +235,7 @@
             </li>
           {/each}
         </ul>
-        <span class="policy">Mises à jour et DLC installés dans le dossier de contenu externe de l'émulateur, de la même façon sur tous les appareils.</span>
+        <span class="policy">{isAndroid ? "Mises à jour et DLC installés depuis le PC : l'émulateur de cet appareil les reçoit avec le jeu." : "Mises à jour et DLC installés dans le dossier de contenu externe de l'émulateur, de la même façon sur tous les appareils."}</span>
       {:else}
       <div class="head">
         <h1 id="hist">Historique des sauvegardes</h1>
@@ -219,6 +243,8 @@
       </div>
       {#if historyError}
         <StateNotice title="Historique indisponible" detail={historyError} autofocus={false} />
+      {:else if history === null}
+        <p class="empty" aria-busy="true">Chargement de l'historique…</p>
       {:else if history.length === 0}
         <p class="empty">Aucune sauvegarde</p>
       {:else}
@@ -245,7 +271,7 @@
   {#if restoring}
     <RestoreDialog {game} rev={restoring} profile={router.profile!.id} ondone={restoreDone} onfail={() => { restoring = null; requestAnimationFrame(() => document.querySelector<HTMLElement>('button.primary.focusable')?.focus()); }} />
   {/if}
-  <ButtonHints hints={restoring ? [] : [{ key: 'A', label: tab === 'content' ? 'Installer' : 'Sélectionner' }, { key: 'B', label: 'Retour' }]} note={content.length > 0 && !restoring ? 'L1 / R1 : Sauvegardes, Contenu additionnel' : undefined} />
+  <ButtonHints hints={restoring ? [] : tab === 'content' && isAndroid ? [{ key: 'B', label: 'Retour' }] : [{ key: 'A', label: tab === 'content' ? 'Installer' : 'Sélectionner' }, { key: 'B', label: 'Retour' }]} note={content.length > 0 && !restoring ? 'L1 / R1 : Sauvegardes, Contenu additionnel' : undefined} />
 </div>
 
 <style>
@@ -293,16 +319,20 @@
   .row:focus .restore { background: var(--accent); color: var(--ground); }
   .policy, .empty { font-size: 14px; color: var(--ink-2); }
   .tabs { display: flex; align-items: center; gap: 6px; }
-  .bumper { all: unset; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink); border: 1.5px solid rgba(255, 255, 255, 0.45); border-radius: 6px; padding: 2px 7px; margin: 0 4px; }
+  .bumper { all: unset; cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink); border: 1.5px solid rgba(255, 255, 255, 0.45); border-radius: 6px; padding: 2px 7px; margin: 0 4px; }
   .bumper:hover { background: rgba(255, 255, 255, 0.12); }
   .tabs { padding: 4px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); align-self: flex-start; }
   .tab { all: unset; cursor: pointer; font-size: 20px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-control); color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out, background-color var(--t-std) var(--ease-land); }
   .tab.on { color: var(--ground); background: var(--accent); }
-  .count { font-size: 12px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.16); }
+  .count { font-size: 13px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.16); }
   .tab.on .count { background: rgba(0, 0, 0, 0.18); }
   .cname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .role { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-2); background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px; }
-  .csize { width: 80px; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .role { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-2); background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px; }
+  .csize { width: 80px; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  /* Pastille de type de largeur fixe : la colonne des tailles reste alignée d'une ligne à l'autre. */
+  .content .role { width: 96px; box-sizing: border-box; text-align: center; flex-shrink: 0; }
+  .content .role.blank { visibility: hidden; }
+  .tag.pc { background: rgba(255, 255, 255, 0.08); color: var(--ink-2); }
   /* Colonne de droite de largeur fixe : rien ne bouge quand « Installer » devient une barre puis « Installé ». */
   .content .tag, .content .restore, .content .mini { margin-left: 8px; width: 120px; box-sizing: border-box; justify-content: center; text-align: center; flex-shrink: 0; }
   .content .row.done { cursor: default; }
