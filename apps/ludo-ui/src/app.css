@@ -81,6 +81,7 @@ button { font: inherit; color: inherit; }
 @property --accent { syntax: '<color>'; inherits: true; initial-value: #4cc3ff; }
 @property --accent-soft { syntax: '<color>'; inherits: true; initial-value: #1c3546; }
 @property --accent-ink { syntax: '<color>'; inherits: true; initial-value: #8ad8ff; }
+@property --accent-glow { syntax: '<color>'; inherits: true; initial-value: rgba(76, 195, 255, 0.09); }
 
 .focusable { transition: transform var(--t-quick) var(--ease-pop), box-shadow var(--t-quick) var(--ease-land), background-color var(--t-quick) ease-out, color var(--t-quick) ease-out; }
 

@@ -93,7 +93,9 @@
       // Android : la WebView n'a pas de zoom natif réglable ; la largeur logique de la page est imposée
       // par la balise viewport (vue large activée dans MainActivity) pour voir au moins 1280×800.
       // Le gabarit est recalculé au `resize` qui suit l'application de la balise.
-      const ratio = screen.width / screen.height;
+      // Proportions de la VUE (fenêtre de l'app), pas de `screen` qui décrit l'écran 0 : sur l'écran du bas de la
+      // Thor (1080×1240), screen.* donnait les proportions de l'écran du haut (constat et essai du lot thor2, 22/11).
+      const ratio = window.outerWidth > 0 && window.outerHeight > 0 ? window.outerWidth / window.outerHeight : screen.width / screen.height;
       const width = Math.ceil(Math.max(1280, 800 * ratio));
       document.querySelector('meta[name="viewport"]')?.setAttribute('content', `width=${width}, user-scalable=no`);
       return relayout();
@@ -187,6 +189,15 @@
   }
 
   const p = $derived(router.profile);
+
+  /** Lueur d'ambiance : l'accent à 9 % d'opacité (équivalent de color-mix(in srgb, accent 9%, transparent)). */
+  function accentGlow(hex: string | undefined): string {
+    const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(hex?.trim() ?? '');
+    if (!m) return 'rgba(76, 195, 255, 0.09)';
+    const h = m[1].length === 3 ? [...m[1]].map((x) => x + x).join('') : m[1];
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+    return `rgba(${r}, ${g}, ${b}, 0.09)`;
+  }
 </script>
 
 <div
@@ -195,6 +206,7 @@
   style:--accent={p?.accent ?? '#4cc3ff'}
   style:--accent-soft={p?.accentSoft ?? '#1c3546'}
   style:--accent-ink={p?.accentInk ?? '#8ad8ff'}
+  style:--accent-glow={accentGlow(p?.accent)}
   data-demo={isDemo ? '' : undefined}
 >
   {#if isDemo}
@@ -246,13 +258,15 @@
     isolation: isolate;
   }
   /* L'accent se fond vers la couleur du nouveau joueur (propriétés enregistrées dans app.css). */
-  .app.accent-anim { transition: --accent var(--t-slow) var(--ease-calm), --accent-soft var(--t-slow) var(--ease-calm), --accent-ink var(--t-slow) var(--ease-calm); }
+  .app.accent-anim { transition: --accent var(--t-slow) var(--ease-calm), --accent-soft var(--t-slow) var(--ease-calm), --accent-ink var(--t-slow) var(--ease-calm), --accent-glow var(--t-slow) var(--ease-calm); }
   /* Couche d'ambiance : une lueur très douce et FIXE de la couleur du joueur, en haut à gauche. L'ancienne
      dérive (animation infinie de 16 s) était invisible sous le fond d'ambiance mais recalculée sans arrêt
      (mesure du lot animations : 99 % → 3,5 % de CPU sans elle) ; retirée le 22/11. */
   .app::before {
     content: ''; position: absolute; inset: -20% 40% 40% -20%; z-index: -1; pointer-events: none;
-    background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 9%, transparent), transparent);
+    /* Couleur précalculée (accentGlow) : color-mix() n'existe qu'à partir de Chromium 111, la WebView de la Thor est
+       en 109 et ignorait toute la déclaration. */
+    background: radial-gradient(closest-side, var(--accent-glow), transparent);
   }
   .screen-layer { position: absolute; inset: 0; }
   .boot-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
