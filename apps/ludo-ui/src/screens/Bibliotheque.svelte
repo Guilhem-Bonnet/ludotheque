@@ -517,10 +517,10 @@
   .search {
     flex: 1 1 auto; max-width: 560px; height: 48px; box-sizing: border-box; padding: 0 8px 0 16px;
     display: flex; align-items: center; gap: 10px; border-radius: 999px;
-    background: color-mix(in srgb, var(--ink) 8%, transparent); border: 1.5px solid var(--hint); color: var(--ink-2);
+    background: rgba(238, 240, 244, 0.08); border: 1.5px solid var(--hint); color: var(--ink-2);
     transition: border-color var(--t-quick) ease-out, background-color var(--t-quick) ease-out;
   }
-  .search:focus-within { border-color: var(--accent); background: color-mix(in srgb, var(--ink) 12%, transparent); }
+  .search:focus-within { border-color: var(--accent); background: rgba(238, 240, 244, 0.12); }
   .search input { all: unset; flex-grow: 1; min-width: 0; height: 100%; font-size: 17px; color: var(--ink); }
   .search input::placeholder { color: var(--ink-4); }
   /* Le champ porte lui-même l'anneau de focus : ici, la bordure du conteneur en tient lieu. */
@@ -528,7 +528,7 @@
   .search input::-webkit-search-cancel-button { display: none; }
   .clear { all: unset; cursor: pointer; width: 44px; height: 44px; margin-right: -6px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--ink-2); }
   .clear:hover { background: var(--hint); }
-  .kbd > span { min-width: 24px; height: 24px; padding: 0 6px; box-sizing: border-box; border-radius: 12px; background: var(--hint); color: var(--ink); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+  .kbd > span { min-width: 24px; height: 24px; padding: 0 6px; box-sizing: border-box; border-radius: 12px; background: var(--hint); color: var(--ink); font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
   /* Touche montrée selon la dernière entrée (racine `data-input`, posée par la navigation) : Y à la manette, / ou Q/E au clavier. */
   .k-key { display: none; }
   :global(html[data-input='key']) .k-key { display: inline-flex; }
@@ -545,7 +545,7 @@
   .tab.on { color: var(--ground); font-weight: 600; }
 
   .filters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
-  /* Cibles de 44 px au moins (toucher). */
+  /* Cibles de 44 px au moins (toucher). Pas de color-mix() dans ce fichier : WebView de la Thor = Chromium 109. */
   .pill {
     all: unset; cursor: pointer; box-sizing: border-box; min-height: 44px; padding: 0 16px;
     display: inline-flex; align-items: center; gap: 8px;
@@ -554,7 +554,7 @@
   }
   .sep { width: 1px; align-self: stretch; margin: 6px 4px; background: var(--hint); }
   .pill[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
-  .pill.sort { background: color-mix(in srgb, var(--ink) 8%, transparent); border-color: transparent; color: var(--ink); }
+  .pill.sort { background: rgba(238, 240, 244, 0.08); border-color: transparent; color: var(--ink); }
   .pill .n { font-size: 13px; font-weight: 600; min-width: 20px; height: 20px; padding: 0 6px; box-sizing: border-box; border-radius: 10px; background: var(--pending); color: var(--ground); display: inline-flex; align-items: center; justify-content: center; }
 
   main { flex-grow: 1; overflow-y: auto; overflow-x: hidden; padding: 22px 48px 28px; }
@@ -587,7 +587,7 @@
   .cell { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   /* Titre sur deux lignes : la partie distinctive (« Majora's Mask 3D ») reste lisible. */
   .t { font-size: 15px; font-weight: 500; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-  .t mark { background: color-mix(in srgb, var(--accent) 34%, transparent); color: var(--ink); border-radius: 3px; padding: 0 1px; }
+  .t mark { background: var(--accent-soft); color: var(--ink); border-radius: 3px; padding: 0 1px; }
   .s { font-size: 13px; margin-top: -4px; }
   .sentinel { height: 1px; }
   .empty { display: flex; align-items: center; gap: 18px; color: var(--ink-3); font-size: 17px; }

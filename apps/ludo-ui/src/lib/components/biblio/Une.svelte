@@ -14,12 +14,22 @@
     onopen: (g: Game) => void;
   } = $props();
 
+  /** Mélange de la teinte du jeu avec le fond sombre, calculé ici : color-mix() manque à la WebView de la Thor (Chromium 109). */
+  function mix(hex: string, part: number): string {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+    if (!m) return '#10141a';
+    const n = parseInt(m[1], 16);
+    const c = (sh: number, base: number) => Math.round(((n >> sh) & 255) * part + base * (1 - part));
+    return `rgb(${c(16, 0x10)}, ${c(8, 0x14)}, ${c(0, 0x1a)})`;
+  }
+  const tint = $derived(game.art?.from ?? game.tile);
+
   let failed = $state('');
   const cover = $derived(game.cover && failed !== game.cover ? game.cover : undefined);
   const where = $derived(game.last ? `${game.last.device}, ${game.last.when.charAt(0).toLowerCase()}${game.last.when.slice(1)}` : '');
 </script>
 
-<section class="une" aria-label="À la une" style:--tint={game.art?.from ?? game.tile} data-game={game.id}>
+<section class="une" aria-label="À la une" style:--bg={mix(tint, 0.4)} style:--art-bg={mix(tint, 0.7)} data-game={game.id}>
   <div class="art" aria-hidden="true">
     {#if cover}
       <img src={cover} alt="" onerror={() => (failed = cover ?? '')} />
@@ -53,10 +63,10 @@
 <style>
   .une {
     position: relative; flex-shrink: 0; height: 260px; display: flex; overflow: hidden; border-radius: 22px;
-    background: color-mix(in srgb, var(--tint) 40%, #10141a);
+    background: var(--bg);
     color: #fff;
   }
-  .art { position: relative; overflow: hidden; isolation: isolate; width: 260px; height: 260px; flex-shrink: 0; background: color-mix(in srgb, var(--tint) 70%, #10141a); }
+  .art { position: relative; overflow: hidden; isolation: isolate; width: 260px; height: 260px; flex-shrink: 0; background: var(--art-bg); }
   .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .art :global(svg) { width: 100%; height: 100%; display: block; }
   .main { flex-grow: 1; min-width: 0; padding: 28px 36px; display: flex; flex-direction: column; gap: 10px; }
@@ -71,7 +81,7 @@
     background: rgba(255, 255, 255, 0.16); font-size: 17px; font-weight: 500;
   }
   .btn.primary { background: #fff; color: #15171c; font-weight: 600; }
-  .btn.focusable:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--tint) 40%, #10141a), 0 0 0 6px var(--accent); }
+  .btn.focusable:focus { box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px var(--accent); }
   .side { width: 340px; flex-shrink: 0; padding: 28px 28px 28px 0; display: flex; flex-direction: column; gap: 10px; }
   .recent {
     all: unset; cursor: pointer; box-sizing: border-box; height: 52px; padding: 0 12px; border-radius: 12px;

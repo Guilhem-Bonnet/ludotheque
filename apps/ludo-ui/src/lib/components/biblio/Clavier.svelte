@@ -75,7 +75,7 @@
 <style>
   .clavier {
     position: absolute; left: 0; right: 0; bottom: 0; z-index: 20;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    background: rgba(31, 34, 42, 0.96); /* --surface ; pas de color-mix() : Chromium 109 (Thor) */
     border-top: 1px solid var(--line);
     box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.35);
     display: flex; flex-direction: column;
