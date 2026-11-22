@@ -14,9 +14,22 @@
   // à défaut, la jaquette, plus floutée (un carré agrandi en plein écran ne tient pas net).
   let { art, cover, background, x = 18, key, dim = false }: { art?: Art; cover?: string; background?: string; x?: number; key?: string; dim?: boolean } = $props();
 
+  // Mélange précalculé (`p` de `a`, le reste de `b`) : la WebView de la Thor (Chromium 109) ignore
+  // `color-mix()` (Chrome 111+), ce qui supprimait toute la déclaration du fond (DEMANDE thor2 22/11 08:51).
+  function mix(a: string, b: string, p: number) {
+    const rgb = (h: string) => {
+      const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(h.trim());
+      if (!m) return null;
+      const v = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1];
+      return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16));
+    };
+    const x = rgb(a), y = rgb(b);
+    if (!x || !y) return a;
+    return `rgb(${x.map((c, i) => Math.round(c * p + y[i] * (1 - p))).join(', ')})`;
+  }
   const wash = $derived(
     art
-      ? `radial-gradient(120% 90% at ${x}% 16%, ${art.from} 0%, color-mix(in srgb, ${art.to} 55%, #0b0f14) 46%, #0b0f14 100%)`
+      ? `radial-gradient(120% 90% at ${x}% 16%, ${art.from} 0%, ${mix(art.to, '#0b0f14', 0.55)} 46%, #0b0f14 100%)`
       : null,
   );
   // Une image qui ne charge pas retombe sur la couleur de la jaquette.
