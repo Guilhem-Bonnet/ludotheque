@@ -319,15 +319,15 @@
   .row:focus .restore { background: var(--accent); color: var(--ground); }
   .policy, .empty { font-size: 14px; color: var(--ink-2); }
   .tabs { display: flex; align-items: center; gap: 6px; }
-  .bumper { all: unset; cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink); border: 1.5px solid rgba(255, 255, 255, 0.45); border-radius: 6px; padding: 2px 7px; margin: 0 4px; }
+  .bumper { all: unset; cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink); border: 1.5px solid rgba(255, 255, 255, 0.45); border-radius: 6px; padding: 2px 7px; margin: 0 4px; }
   .bumper:hover { background: rgba(255, 255, 255, 0.12); }
   .tabs { padding: 4px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); align-self: flex-start; }
   .tab { all: unset; cursor: pointer; font-size: 20px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-control); color: var(--ink-2); display: inline-flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out, background-color var(--t-std) var(--ease-land); }
   .tab.on { color: var(--ground); background: var(--accent); }
-  .count { font-size: 12px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.16); }
+  .count { font-size: 13px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.16); }
   .tab.on .count { background: rgba(0, 0, 0, 0.18); }
   .cname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .role { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-2); background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px; }
+  .role { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-2); background: rgba(255, 255, 255, 0.08); padding: 3px 8px; border-radius: 6px; }
   .csize { width: 80px; text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; flex-shrink: 0; }
   /* Pastille de type de largeur fixe : la colonne des tailles reste alignée d'une ligne à l'autre. */
   .content .role { width: 96px; box-sizing: border-box; text-align: center; flex-shrink: 0; }
