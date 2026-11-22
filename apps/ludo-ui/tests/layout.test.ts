@@ -1,7 +1,7 @@
 // Tests des gabarits d'écran (lib/layout.ts) : `node --test tests/layout.test.ts` (Node ≥ 22.18, types retirés nativement).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeLayout, computeZoom, formatFor, TEXT_MIN_PX, ZOOM_MAX } from '../src/lib/layout.ts';
+import { androidViewportWidth, computeLayout, computeZoom, DECK_PX_DP, formatFor, TEXT_MIN_PX, ZOOM_MAX } from '../src/lib/layout.ts';
 
 // Formats cibles du brief : [largeur, hauteur, zoom attendu, format, colonnes].
 const CASES: [number, number, number, string, string][] = [
@@ -51,4 +51,27 @@ test('bornes des formats', () => {
 test('petite fenêtre : zoom plancher, entrée invalide → 1', () => {
   assert.equal(computeZoom(800, 500), 0.75);
   assert.equal(computeZoom(0, 0), 1);
+});
+
+// Ayn Thor, mesures du 22/11 (DevTools distants) : écran du bas 1240×1080 px physiques = 538×469 dp (densité 2,306),
+// écran du haut 1920×1080 = 833×469 dp.
+test('écran du bas de la Thor : un px CSS a la taille physique d\'un px du Deck', () => {
+  const w = androidViewportWidth(538, 469, 'bas');
+  assert.equal(w, 723);
+  const physParCss = (1240 / w); // px physiques par px CSS
+  // 13 px CSS ≥ 22 px physiques (≈ 1,5 mm à 369 ppp), comme 13 px sur le Deck ; avant : 1280 px imposés → 12,6 px.
+  assert.ok(13 * physParCss >= 22, `13 px CSS = ${(13 * physParCss).toFixed(1)} px physiques`);
+  assert.ok(Math.abs(w * DECK_PX_DP - 538) < 1);
+  // Vue logique ≈ 723×630 : gabarit compact, gouttière de 24 px.
+  const l = computeLayout(723, 630, 'bas');
+  assert.equal(l.format, 'compact');
+  assert.equal(l.gutter, 24);
+  assert.equal(l.side, 'none');
+});
+
+test('un seul écran : règle d\'origine inchangée (au moins 1280×800 visibles)', () => {
+  assert.equal(androidViewportWidth(833, 469, 'seul'), 1421); // Thor, écran du haut seul : ceil(800 × 833/469)
+  assert.equal(androidViewportWidth(833, 469, undefined), 1421);
+  assert.equal(androidViewportWidth(538, 469, 'seul'), 1280);
+  assert.equal(computeLayout(1280, 800).gutter, 48);
 });

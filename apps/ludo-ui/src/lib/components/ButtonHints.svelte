@@ -62,4 +62,10 @@
   .hint:hover { color: var(--ink); background: rgba(255, 255, 255, 0.06); }
   .hint.lit { color: var(--ink); }
   .hint.lit .key { transform: scale(0.86); background: var(--accent); color: var(--ground); box-shadow: 0 0 0 4px var(--accent-soft); transition-duration: 60ms; }
+  /* Écran du bas de la Thor (vue ≈ 723 px à l'échelle du Deck, lot thor-ui) : légendes tactiles, cible ≥ 44 px. */
+  :global(html[data-ecran='bas']) footer { height: 52px; padding: 0 24px; font-size: 15px; gap: 16px; }
+  :global(html[data-ecran='bas']) .hints { gap: 12px; }
+  :global(html[data-ecran='bas']) .hint { min-height: 44px; padding: 0 10px; margin: 0 -2px; }
+  :global(html[data-ecran='bas']) .key { width: 28px; height: 28px; font-size: 14px; }
+  :global(html[data-ecran='bas']) .note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 </style>
