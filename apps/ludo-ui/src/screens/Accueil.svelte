@@ -189,8 +189,10 @@
         jump = false;
         // La rangée vient d'être dessinée : on attend sa mise en page pour connaître sa largeur.
         requestAnimationFrame(() => g.to(anchor(i), true));
-      } else if (input.kind === 'touch') reveal(i);
-      else if (input.kind === 'mouse') { /* survol : la rangée ne bouge pas sous le pointeur (molette, glisser, flèches de bord) */ }
+      } else if (input.kind === 'mouse' && document.documentElement.dataset.input === 'mouse') {
+        /* survol : la rangée ne bouge pas sous le pointeur (molette, glisser, flèches de bord). Le CSS
+           souris dépend de html[data-input], posé par nav.ts (PR entrees) : sans lui, ancien comportement. */
+      } else if (input.kind === 'mouse' || input.kind === 'touch') reveal(i);
       else g.to(anchor(i));
     });
   });
@@ -239,6 +241,7 @@
   let canRight = $state(false);
   $effect(() => {
     const el = row;
+    void games.length; // tuiles arrivées ou retirées : largeur à défiler changée sans redimensionnement
     if (!el) return;
     const edges = () => {
       const g = glide(el, 'x');
@@ -247,10 +250,11 @@
       canRight = x < el.scrollWidth - el.clientWidth - 4;
     };
     edges();
+    const first = requestAnimationFrame(edges); // après la mise en page des tuiles
     const ro = new ResizeObserver(edges);
     ro.observe(el);
     el.addEventListener('scroll', edges, { passive: true });
-    return () => { ro.disconnect(); el.removeEventListener('scroll', edges); };
+    return () => { cancelAnimationFrame(first); ro.disconnect(); el.removeEventListener('scroll', edges); };
   });
   function page(dir: -1 | 1) {
     if (!row) return;
@@ -376,8 +380,8 @@
       {/if}
     </div>
     <!-- Souris seulement (html[data-input=mouse]) : la manette et le clavier font défiler en changeant de tuile. -->
-    {#if canLeft}<button class="edge left" tabindex="-1" aria-label="Jeux précédents" data-sound="none" transition:fade={{ duration: reducedMotion() ? 0 : DUR.quick }} onclick={() => page(-1)}><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>{/if}
-    {#if canRight}<button class="edge right" tabindex="-1" aria-label="Jeux suivants" data-sound="none" transition:fade={{ duration: reducedMotion() ? 0 : DUR.quick }} onclick={() => page(1)}><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>{/if}
+    {#if canLeft}<button class="edge left" tabindex="-1" aria-label="Jeux précédents" data-sound="none" onpointerdown={(e) => e.preventDefault()} transition:fade={{ duration: reducedMotion() ? 0 : DUR.quick }} onclick={() => page(-1)}><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>{/if}
+    {#if canRight}<button class="edge right" tabindex="-1" aria-label="Jeux suivants" data-sound="none" onpointerdown={(e) => e.preventDefault()} transition:fade={{ duration: reducedMotion() ? 0 : DUR.quick }} onclick={() => page(1)}><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>{/if}
 
     {#if current}
       <!-- Le titre change avec la tuile : l'ancien s'efface (100 ms), PUIS le nouveau monte de 8 px — jamais deux
@@ -475,6 +479,7 @@
   .edge.right { right: 20px; }
   .edge:hover { background: rgba(12, 14, 20, 0.75); transform: scale(1.08); }
   .edge:active { transform: scale(0.94); }
+  @media (prefers-reduced-motion: reduce) { .edge, .edge:hover, .edge:active { transition: none; transform: none; } }
   /* Fin de rangée : la dernière tuile, décalée par transformation, ne compte pas dans la largeur à
      défiler ; une cale garde la même marge qu'à gauche quand « Tous les jeux » est choisie. */
   .row::after { content: ''; flex: 0 0 28px; }

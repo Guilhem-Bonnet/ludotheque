@@ -28,12 +28,11 @@
   // Flou à petite taille (soften.ts) : l'image est réduite une fois par image et par taille de fond, le flou
   // CSS ne porte que sur cette petite surface, un `transform` l'étire. Une repeinture coûte alors autant
   // qu'une image ordinaire. Redessiné au redimensionnement (ResizeObserver), jamais à intervalle.
-  function paint(el: HTMLCanvasElement, src: string) {
+  function paint(el: HTMLCanvasElement, first: string) {
     const scaler = el.parentElement!;
     const frame = scaler.parentElement!;
     const box = frame.closest('.ambiance')!;
-    const img = new Image();
-    img.decoding = 'async';
+    let img = new Image();
     const draw = () => {
       if (!img.naturalWidth) return;
       const r = box.getBoundingClientRect();
@@ -46,18 +45,29 @@
       scaler.style.transform = `translate(${g.offset}px, ${g.offset}px) scale(${g.scale})`;
       frame.dataset.ready = '';
     };
-    img.onload = draw;
-    img.onerror = () => (failed = src);
-    img.src = src;
+    const drop = () => { img.onload = img.onerror = null; };
+    // Nouvelle source sans recréer le canvas (repli fond → jaquette après une erreur, image changée
+    // sous la même clé) : on recharge, l'ancienne image est débranchée.
+    const load = (src: string) => {
+      drop();
+      img = new Image();
+      img.decoding = 'async';
+      img.onload = draw;
+      img.onerror = () => (failed = src);
+      img.src = src;
+    };
+    load(first);
     const ro = new ResizeObserver(draw);
     ro.observe(box);
-    return { destroy: () => ro.disconnect() };
+    return { update: load, destroy: () => { drop(); ro.disconnect(); } };
   }
 </script>
 
 <div class="ambiance" aria-hidden="true">
   {#key key ?? photo ?? art?.motif}
-    <div class="layer" in:fade={{ duration: d() }} out:fade={{ duration: d() }}>
+    <!-- Fondu enchaîné sans creux : l'ancienne couche reste opaque sous la nouvelle (insérée après elle)
+         pendant tout son fondu d'entrée, puis disparaît d'un coup. -->
+    <div class="layer" in:fade={{ duration: d() }} out:fade={{ delay: d(), duration: 0 }}>
       {#if wash}<div class="wash" style:background={wash}></div>{/if}
       {#if photo}
         <div class="photo"><div class="scaler"><canvas use:paint={photo}></canvas></div></div>

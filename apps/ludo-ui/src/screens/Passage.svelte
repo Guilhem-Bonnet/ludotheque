@@ -192,8 +192,8 @@
     }
     steps[5].label = 'Sauvegarde envoyée';
     steps[5].detail = r.detail;
-    // Même image que l'accord doux : la tuile fait un petit « pop » (sauvegarde partie).
-    replay(art, 'pop', 340);
+    // Même image que l'accord doux : la tuile gonfle à peine (sauvegarde partie).
+    replay(art, 'saved', 360);
     feedback('saved');
     await wait(1200);
     router.reset({ name: 'accueil' });
@@ -306,7 +306,7 @@
               {#if step.progress !== undefined}<span class="pct">{step.progress} %</span>{/if}
             </span>
             {#if step.progress !== undefined}
-              <span class="bar" role="progressbar" aria-valuenow={step.progress} aria-valuemin="0" aria-valuemax="100" aria-label={step.label}>
+              <span class="bar" class:live={downloading || (isDemo && step.state === 'en_cours')} role="progressbar" aria-valuenow={step.progress} aria-valuemin="0" aria-valuemax="100" aria-label={step.label}>
                 <span style:width="{step.progress}%"></span>
               </span>
             {/if}
@@ -346,7 +346,7 @@
   @keyframes check-pop { from { transform: scale(0.7); opacity: 0.4; } to { transform: scale(1); opacity: 1; } }
   /* Reflet régulier sur la partie remplie de la barre : la progression paraît vivante. */
   .bar span { position: relative; overflow: hidden; }
-  .bar span::after { content: ''; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent); animation: bar-gleam 1.8s ease-in-out infinite; }
+  .bar.live span::after { content: ''; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.28), transparent); animation: bar-gleam 1.8s ease-in-out infinite; }
   @keyframes bar-gleam { from { transform: translateX(-120%); } to { transform: translateX(260%); } }
   .side { flex-grow: 1; display: flex; flex-direction: column; gap: 36px; }
   @media (prefers-reduced-motion: reduce) { .side, .check { animation: none; } .bar span::after { display: none; } }
@@ -373,11 +373,15 @@
   /* En jeu : pastille pleine de l'accent, posée une fois avec un léger rebond, puis immobile. */
   .playing { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); align-items: center; justify-content: center; padding-left: 2px; box-sizing: border-box; }
   /* Retour du jeu : la tuile se « réveille » (petit appel vers le haut, puis se pose). */
+  .art:global(.back-from-game), .art:global(.saved) { transform-origin: center; }
+  /* Sauvegarde envoyée : léger gonflement (3 %), plus discret que le « pop » des petits éléments (charte). */
+  .art:global(.saved) { animation: saved 360ms var(--ease-pop); }
+  @keyframes saved { 40% { transform: scale(1.03); } }
   .art:global(.back-from-game) { animation: back-from-game 520ms var(--ease-land); }
   @keyframes back-from-game { 0% { transform: none; } 35% { transform: translateY(-10px) scale(1.02); } 100% { transform: none; } }
   @media (prefers-reduced-motion: no-preference) {
     .playing { animation: check-pop 320ms var(--ease-pop) both; }
   }
-  @media (prefers-reduced-motion: reduce) { .art:global(.back-from-game), .art:global(.pop) { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .art:global(.back-from-game), .art:global(.saved), .spin { animation: none; } }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>

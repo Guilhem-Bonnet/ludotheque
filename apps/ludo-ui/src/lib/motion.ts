@@ -14,7 +14,8 @@ function cssMs(name: string, fallback: number) {
   if (v === undefined) {
     const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     const n = parseFloat(raw);
-    v = Number.isFinite(n) ? (raw.endsWith('ms') || !raw.endsWith('s') ? n : n * 1000) : fallback;
+    if (!Number.isFinite(n)) return fallback; // feuille pas encore appliquée : pas de mise en cache
+    v = raw.endsWith('ms') || !raw.endsWith('s') ? n : n * 1000;
     cache.set(name, v);
   }
   return v;
