@@ -26,6 +26,7 @@
   import { play } from '../lib/play';
   import { appUpdate } from '../lib/appUpdate.svelte';
   import { layout } from '../lib/layout';
+  import Batterie from '../lib/components/Batterie.svelte';
 
   let { device }: { device: DeviceInfo } = $props();
 
@@ -343,6 +344,7 @@
     <div class="status">
       <SyncStatus games={all} {offline} busy={syncing} onclick={syncNow} onfocus={() => (syncFocused = true)} onblur={() => (syncFocused = false)} />
       <span class="clock">{clock}</span>
+      <Batterie />
     </div>
   </header>
 

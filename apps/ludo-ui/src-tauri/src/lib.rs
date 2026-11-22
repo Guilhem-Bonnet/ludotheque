@@ -8,6 +8,7 @@
 //! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
 pub mod android;
+pub mod energie;
 pub mod profils;
 pub mod rumble;
 // Manette native : démarrée au bureau seulement (sur Android, MainActivity traduit les entrées).
@@ -1413,6 +1414,9 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_process::init());
     // Android : pont Kotlin (intents, dossier des ROM) et configuration déposée par le PC.
+    // Énergie (lot energie, 22/11) : batterie de la Thor et repos de l'interface (energie.rs).
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(energie::plugin());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::plugin()).setup(|app| {
         android::prepare_env(app.handle());
@@ -1425,6 +1429,9 @@ pub fn run() {
         pad::init(move |e| {
             let _ = handle.emit(pad::EVENT_PAD, e);
         });
+        // Batterie du Deck ou d'un portable : suivie par UPower (rien sur un PC fixe).
+        #[cfg(target_os = "linux")]
+        energie::suivre(app.handle().clone());
         Ok(())
     });
     builder
@@ -1444,7 +1451,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer, energie::batterie_etat, energie::energie_repos])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
@@ -1454,7 +1461,10 @@ pub fn run() {
             }
             // Arrêt voulu malgré la partie : l'émulateur est terminé proprement, la sauvegarde reste
             // locale et sera synchronisée au prochain lancement.
-            tauri::RunEvent::Exit => launch::terminate_running(),
+            tauri::RunEvent::Exit => {
+                launch::terminate_running();
+                energie::arreter();
+            }
             _ => {}
         });
 }

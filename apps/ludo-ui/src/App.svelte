@@ -6,6 +6,7 @@
   import { router } from './lib/router.svelte';
   import { startAppUpdateChecks } from './lib/appUpdate.svelte';
   import StateNotice from './lib/components/StateNotice.svelte';
+  import Repos from './lib/components/Repos.svelte';
   import Colonnes from './lib/components/ecrans/Colonnes.svelte';
   import { androidViewportWidth, applyLayout, computeLayout, computeZoom, layout, screenHasSide, screenIsWide, type EcranMode } from './lib/layout';
   import type { DeviceInfo, Profile } from './lib/types';
@@ -254,6 +255,7 @@
       <Colonnes {device} />
     {/if}
   {/if}
+  <Repos />
 </div>
 
 <style>
