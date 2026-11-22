@@ -247,11 +247,12 @@
   }
   /* L'accent se fond vers la couleur du nouveau joueur (propriétés enregistrées dans app.css). */
   .app.accent-anim { transition: --accent var(--t-slow) var(--ease-calm), --accent-soft var(--t-slow) var(--ease-calm), --accent-ink var(--t-slow) var(--ease-calm); }
-  /* Couche d'ambiance : une lueur très douce de la couleur du joueur, qui dérive lentement en haut à gauche. */
+  /* Couche d'ambiance : une lueur très douce et FIXE de la couleur du joueur, en haut à gauche. L'ancienne
+     dérive (animation infinie de 16 s) était invisible sous le fond d'ambiance mais recalculée sans arrêt
+     (mesure du lot animations : 99 % → 3,5 % de CPU sans elle) ; retirée le 22/11. */
   .app::before {
     content: ''; position: absolute; inset: -20% 40% 40% -20%; z-index: -1; pointer-events: none;
     background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 9%, transparent), transparent);
-    animation: drift 16s var(--ease-calm) infinite alternate;
   }
   .screen-layer { position: absolute; inset: 0; }
   .boot-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
@@ -259,5 +260,4 @@
     position: absolute; top: 6px; left: 50%; transform: translateX(-50%); z-index: 5; margin: 0;
     font-size: 11px; color: var(--ink-4); background: rgba(21, 23, 28, 0.85); padding: 4px 10px; border-radius: 999px; white-space: nowrap;
   }
-  @keyframes drift { from { transform: translate(0, 0); } to { transform: translate(6%, 4%); } }
 </style>
