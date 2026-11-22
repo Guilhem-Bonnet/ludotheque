@@ -81,6 +81,7 @@ button { font: inherit; color: inherit; }
 @property --accent { syntax: '<color>'; inherits: true; initial-value: #4cc3ff; }
 @property --accent-soft { syntax: '<color>'; inherits: true; initial-value: #1c3546; }
 @property --accent-ink { syntax: '<color>'; inherits: true; initial-value: #8ad8ff; }
+@property --accent-glow { syntax: '<color>'; inherits: true; initial-value: rgba(76, 195, 255, 0.09); }
 
 .focusable { transition: transform var(--t-quick) var(--ease-pop), box-shadow var(--t-quick) var(--ease-land), background-color var(--t-quick) ease-out, color var(--t-quick) ease-out; }
 
@@ -120,3 +121,21 @@ button { font: inherit; color: inherit; }
 /* Fenêtre sans focus ou cachée (nav.ts pose `data-idle`) : toutes les animations en boucle s'arrêtent,
    pour ne rien coûter pendant une partie. Elles reprennent là où elles étaient au retour du focus. */
 [data-idle] *, [data-idle] *::before, [data-idle] *::after { animation-play-state: paused !important; }
+/* ———————————————————————————————————————————————————————————————
+   Gabarits d'écran (lot « ecrans », 21/11/2026) — voir lib/layout.ts.
+   <html data-format="portrait|compact|large|ultra|super" data-side="none|right|both|bottom">
+   Variables : --page-w, --page-h, --side-w, --bottom-h, --stage-max, --gutter (px logiques).
+   Chaque écran est un `.screen` plein cadre (fond d'ambiance compris) ; le gabarit réserve, par un
+   rembourrage, la place des colonnes latérales (accueil, fiche) ou centre les écrans de lecture.
+   Le fond d'ambiance (position absolue, inset 0) couvre toujours toute la fenêtre.
+   ——————————————————————————————————————————————————————————————— */
+:root { --page-w: 1280px; --page-h: 800px; --side-w: 0px; --bottom-h: 0px; --stage-max: 1760px; --gutter: 48px; }
+
+html[data-side='right'] .screen-layer[data-colonnes] > .screen { padding-right: calc(var(--side-w) + var(--gutter)); }
+html[data-side='both'] .screen-layer[data-colonnes] > .screen { padding-inline: calc(var(--side-w) + var(--gutter)); }
+html[data-side='bottom'] .screen-layer[data-colonnes] > .screen { padding-bottom: var(--bottom-h); }
+/* Écrans de lecture (mises à jour, réglages, profil, conflit, passage…) : centrés sur 21:9 et 32:9. */
+html[data-format='ultra'] .screen-layer[data-centre] > .screen,
+html[data-format='super'] .screen-layer[data-centre] > .screen { padding-inline: max(0px, calc((100% - var(--stage-max)) / 2)); }
+/* Menu ou dialogue ouvert : les colonnes s'effacent (le tiroir d'options s'ouvre du bord droit). */
+.app:has([data-modal]) .colonnes { opacity: 0; visibility: hidden; }
