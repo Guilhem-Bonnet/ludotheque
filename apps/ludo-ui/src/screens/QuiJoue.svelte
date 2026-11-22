@@ -15,9 +15,14 @@
   let focused = $state(0);
   let loadError = $state<string | null>(null);
 
+  // Le profil en cours (ou retenu sur l'appareil) a le focus d'entrée : A suffit pour le reprendre.
+  const current = router.profile?.id;
+  const canBack = router.canBack;
+
   onMount(() => {
     api.profiles().then((p) => {
       profiles = p;
+      focused = Math.max(0, p.findIndex((x) => x.id === current));
       focusFirst();
     }).catch((e) => {
       loadError = e instanceof Error ? e.message : String(e);
@@ -28,11 +33,15 @@
   let chosen = $state<string | null>(null);
 
   function choose(p: Profile) {
+    if (chosen) return; // double appui : un seul choix
     // L'avatar choisi grandit, les autres s'effacent, l'accent de l'interface se teinte de sa couleur,
     // puis l'accueil arrive. Son « arrivée du profil ».
     chosen = p.id;
     router.profile = p;
     feedback('arrive');
+    // Retenu sur l'appareil : le prochain démarrage ouvre directement ce profil. Échec sans gravité (rien à
+    // afficher : le choix vaut pour cette session).
+    void api.rememberProfile(p.id).catch(() => {});
     setTimeout(() => router.reset({ name: 'accueil' }), 520);
   }
 </script>
@@ -56,23 +65,23 @@
           class:chosen={chosen === p.id}
           class:faded={chosen !== null && chosen !== p.id}
           data-sound="none"
-          data-autofocus={i === 0 ? '' : undefined}
+          data-autofocus={i === focused ? '' : undefined}
           onfocus={() => (focused = i)}
           onclick={() => choose(p)}
           style:--accent={p.accent}
         >
           {#if chosen === p.id}<span class="burst" aria-hidden="true"></span>{/if}
-          <Avatar profile={p} size={i === focused ? 160 : 134} ring={i === focused} />
+          <Avatar profile={p} size={i === focused ? 160 : 134} ring={i === focused} celebrate={chosen === p.id} />
           <span class="label">
             <span class="name" class:dim={i !== focused}>{p.name}</span>
-            {#if p.status}<span class="status">{p.status}</span>{/if}
+            {#if p.status}<span class="status">{p.status}</span>{:else if p.id === current}<span class="status">Profil actuel</span>{/if}
           </span>
         </button>
       {/each}
     </div>
   </main>
 
-  <ButtonHints hints={[{ key: 'A', label: 'Choisir' }, { key: 'B', label: 'Retour' }]} />
+  <ButtonHints hints={canBack ? [{ key: 'A', label: 'Choisir' }, { key: 'B', label: 'Retour' }] : [{ key: 'A', label: 'Choisir' }]} />
 </div>
 
 <style>

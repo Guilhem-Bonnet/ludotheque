@@ -2,11 +2,11 @@
   import { onMount, tick } from 'svelte';
   import Ambiance from '../lib/components/Ambiance.svelte';
   import Avatar from '../lib/components/Avatar.svelte';
-  import AvatarArt from '../lib/components/AvatarArt.svelte';
+  import AvatarPicker from '../lib/components/AvatarPicker.svelte';
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import { api } from '../lib/api';
-  import { AVATARS, withAvatar } from '../lib/avatars';
+  import { AVATARS, portraitOf, withAvatar } from '../lib/avatars';
   import { feedback, setRumble } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
@@ -41,10 +41,27 @@
     }
   }
 
+  let picking = $state(false);
+  function openPicker() {
+    picking = true;
+  }
+  function closePicker() {
+    picking = false;
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('.change-image')?.focus());
+  }
   function pick(kind: AvatarKind) {
-    if (kind === p.avatarKind) return;
-    void save(withAvatar(p, kind), 'avatar');
-    feedback('arrive');
+    if (kind !== p.avatarKind) {
+      void save(withAvatar(p, kind), 'avatar');
+      feedback('arrive');
+    } else {
+      feedback('ok');
+    }
+    closePicker();
+  }
+  const imageLabel = $derived(portraitOf(p.avatarKind)?.label ?? AVATARS.find((a) => a.kind === p.avatarKind)?.label ?? 'Initiale');
+
+  function switchPlayer() {
+    router.go({ name: 'qui-joue' });
   }
 
   async function startEdit() {
@@ -73,7 +90,17 @@
     feedback('tab');
   }
 
-  onMount(() => focusFirst());
+  onMount(() => {
+    focusFirst();
+    // Y : changer de joueur, depuis n'importe où sur l'écran (hors choix d'image ou saisie du nom).
+    const onAction = (ev: Event) => {
+      if ((ev as CustomEvent).detail !== 'y' || picking || editing) return;
+      feedback('ok');
+      switchPlayer();
+    };
+    window.addEventListener('ludo:action', onAction);
+    return () => window.removeEventListener('ludo:action', onAction);
+  });
 
   // L'ambiance prend la couleur du profil ; elle change en fondu avec l'image.
   const art = $derived({ motif: 'manoir' as const, from: p.accent, to: p.accentSoft });
@@ -88,20 +115,15 @@
       {/key}
       <h1>{p.name}</h1>
       <span class="device">{device.name}</span>
+      <button class="switch-player focusable" onclick={switchPlayer}><span class="key" aria-hidden="true">Y</span>Changer de joueur</button>
     </aside>
 
     <section class="settings">
       <div class="group">
         <h2>Image de profil {#if saved === 'avatar'}<span class="ok"><Icon name="check" size={16} color="var(--ok)" />Enregistré</span>{:else if failed === 'avatar'}<span class="ko">Non enregistré</span>{/if}</h2>
-        <div class="avatars">
-          {#each AVATARS as a (a.kind)}
-            <button class="av focusable" class:chosen={a.kind === p.avatarKind} style:--c={a.accent} aria-label={a.label} aria-pressed={a.kind === p.avatarKind}
-              data-autofocus={a.kind === p.avatarKind ? '' : undefined} data-sound="none" onclick={() => pick(a.kind)}>
-              <span class="disc" style:background={a.accent}><AvatarArt kind={a.kind} /></span>
-              {#if a.kind === p.avatarKind}<span class="tick"><Icon name="check" size={14} color="#0b0f14" /></span>{/if}
-            </button>
-          {/each}
-        </div>
+        <button class="field change-image focusable" data-autofocus data-sound="none" aria-label="Changer d'image (actuelle : {imageLabel})" onclick={openPicker}>
+          <Avatar profile={p} size={40} /><span>{imageLabel}</span><span class="edit"><Icon name="pencil" size={18} />Changer d'image</span>
+        </button>
       </div>
 
       <div class="group">
@@ -125,13 +147,14 @@
           <Icon name="rumble" size={22} />Vibrations de la manette<span class="switch" class:on={prefs.vibrations}><span></span></span>
         </button>
       </div>
-
-      <div class="group">
-        <button class="row focusable" onclick={() => router.go({ name: 'qui-joue' })}><Icon name="people" size={22} />Changer de joueur<span class="chev">›</span></button>
-      </div>
     </section>
   </main>
-  <ButtonHints hints={[{ key: 'A', label: editing ? 'Valider' : 'Sélectionner' }, { key: 'B', label: 'Retour' }]} note="Enregistré automatiquement sur tous les appareils" />
+  {#if picking}
+    <AvatarPicker profile={p} onpick={pick} onclose={closePicker} />
+    <ButtonHints hints={[{ key: 'A', label: 'Choisir' }, { key: 'B', label: 'Fermer' }]} />
+  {:else}
+    <ButtonHints hints={[{ key: 'A', label: editing ? 'Valider' : 'Sélectionner' }, { key: 'Y', label: 'Changer de joueur' }, { key: 'B', label: 'Retour' }]} note="Enregistré automatiquement sur tous les appareils" />
+  {/if}
 </div>
 
 <style>
@@ -147,12 +170,13 @@
   @keyframes fadein { from { opacity: 0; } }
   .ko { text-transform: none; letter-spacing: 0; color: #ff9b9b; font-weight: 500; }
 
-  .avatars { display: flex; gap: 16px; padding: 6px 0; }
-  .av { all: unset; cursor: pointer; position: relative; border-radius: 50%; transition: transform var(--t-std) var(--ease-pop); }
-  .disc { display: block; width: 76px; height: 76px; border-radius: 50%; overflow: hidden; box-shadow: 0 6px 14px rgba(0, 0, 0, 0.3); }
-  .av.focusable:focus { transform: translateY(-4px) scale(1.08); }
-  .av.focusable:focus .disc, .av.chosen .disc { box-shadow: 0 0 0 3px #0b0f14, 0 0 0 6px var(--c), 0 10px 20px rgba(0, 0, 0, 0.35); }
-  .tick { position: absolute; right: -2px; bottom: -2px; width: 24px; height: 24px; border-radius: 50%; background: var(--c); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 3px #0b0f14; animation: pop 320ms var(--ease-pop); }
+  .switch-player {
+    all: unset; cursor: pointer; margin-top: 18px; display: inline-flex; align-items: center; gap: 10px; min-height: 44px;
+    padding: 0 18px; border-radius: 22px; background: rgba(255, 255, 255, 0.1); font-size: 16px; color: var(--ink);
+    transition: background-color var(--t-quick) ease-out, transform var(--t-quick) var(--ease-pop), box-shadow var(--t-quick) ease-out;
+  }
+  .switch-player.focusable:focus { background: rgba(255, 255, 255, 0.16); box-shadow: inset 0 0 0 2px var(--accent); transform: scale(1.04); }
+  .key { width: 24px; height: 24px; border-radius: 50%; background: var(--ink); color: #0b0f14; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 
   .field, .row {
     all: unset; cursor: pointer; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 14px;
@@ -164,7 +188,6 @@
   .field.editing { box-shadow: inset 0 0 0 2px var(--accent); background: rgba(255, 255, 255, 0.14); cursor: text; }
   input { all: unset; flex: 1; font: inherit; color: var(--ink); caret-color: var(--accent); }
   .hint { font-size: 13px; color: rgba(255, 255, 255, 0.6); }
-  .chev { margin-left: auto; color: rgba(255, 255, 255, 0.6); font-size: 20px; }
 
   .switch { margin-left: auto; width: 46px; height: 26px; border-radius: 13px; background: rgba(255, 255, 255, 0.18); position: relative; transition: background-color var(--t-std) ease-out; }
   .switch span { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform var(--t-std) var(--ease-pop); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); }
@@ -176,5 +199,5 @@
     .pop { animation: pop 420ms var(--ease-pop); }
     @keyframes pop { from { transform: scale(0.82); opacity: 0.4; } to { transform: none; opacity: 1; } }
   }
-  @media (prefers-reduced-motion: reduce) { .av.focusable:focus, .field.focusable:focus, .row.focusable:focus { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .switch-player.focusable:focus, .field.focusable:focus, .row.focusable:focus { transform: none; } }
 </style>

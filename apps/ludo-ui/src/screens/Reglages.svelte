@@ -3,7 +3,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import CloudIcon from '../lib/components/CloudIcon.svelte';
   import Icon from '../lib/components/Icon.svelte';
-  import { api, isDemo } from '../lib/api';
+  import { api, isAndroid, isDemo } from '../lib/api';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { syncRhythm, play as playSound, setVolume } from '../lib/sound';
@@ -78,6 +78,31 @@
   onMount(() => void scanEmulators());
   const CONSOLE_NAMES: Record<string, string> = { switch: 'Switch', switch2: 'Switch 2', '3ds': '3DS', ds: 'DS', wiiu: 'Wii U', gc: 'GameCube' };
 
+  /* Lancement à l'ouverture de la session (bureau seulement ; masqué sur Android). L'état se lit à
+     l'ouverture de l'écran (fichier d'autostart de la session), le changement s'applique tout de suite. */
+  let autostart = $state<boolean | null>(null);
+  let autostartError = $state('');
+  if (!isAndroid) onMount(() => { api.autostart().then((on) => (autostart = on)).catch((e) => (autostartError = e instanceof Error ? e.message : String(e))); });
+  let autostartBusy = false;
+  async function toggleAutostart() {
+    if (autostartBusy) return; // un seul changement à la fois
+    if (autostart === null) { feedback('err'); return; }
+    autostartBusy = true;
+    const want = !autostart;
+    autostart = want;
+    autostartError = '';
+    try {
+      autostart = await api.setAutostart(want);
+      feedback('tab');
+    } catch (e) {
+      autostart = !want;
+      autostartError = e instanceof Error ? e.message : String(e);
+      feedback('err');
+    } finally {
+      autostartBusy = false;
+    }
+  }
+
   function toggle(which: 'start' | 'end') {
     if (which === 'start') { syncAtStart = !syncAtStart; store('ludo.syncAtStart', syncAtStart ? '1' : '0'); }
     else { syncAtEnd = !syncAtEnd; store('ludo.syncAtEnd', syncAtEnd ? '1' : '0'); }
@@ -128,7 +153,7 @@
         <div class="emu" class:missing={!e.found}>
           <span class="dot" class:on={e.found} aria-hidden="true"></span>
           <span class="emu-name">{e.name}</span>
-          <span class="emu-consoles">{e.consoles.map((c) => CONSOLE_NAMES[c] ?? c).join(', ')}{#if e.defaultFor.length} · par défaut{/if}</span>
+          <span class="emu-consoles">{e.consoles.map((c) => CONSOLE_NAMES[c] ?? c).join(', ')}{e.defaultFor.length ? ' · par défaut' : ''}</span>
           <span class="emu-src" title={e.found ? `${e.bin}\n${e.data}` : undefined}>{e.found ? e.source : 'Introuvable'}</span>
         </div>
       {/each}
@@ -139,6 +164,16 @@
       </button>
       <p class="emu-note">Nouvel émulateur : déposer sa fiche dans le dossier de fiches de l'appareil, puis relancer la recherche.</p>
     </section>
+
+    {#if !isAndroid}
+      <section>
+        <h2>Démarrage</h2>
+        <button class="row focusable" role="switch" aria-checked={autostart === true} data-sound="none" disabled={autostart === null && !autostartError} onclick={toggleAutostart}>
+          <Icon name="play" size={22} />Lancer la Ludothèque à l'ouverture de la session<span class="switch" class:on={autostart === true}><span></span></span>
+        </button>
+        {#if autostartError}<p class="emu-note">{autostartError}</p>{:else if device.kind === 'deck'}<p class="emu-note">Steam Deck : en mode Bureau seulement ; le mode Jeu ne lance pas les applications de démarrage.</p>{/if}
+      </section>
+    {/if}
 
     <section>
       <h2>Appareil</h2>
@@ -192,7 +227,7 @@
   .emu { display: grid; grid-template-columns: 12px 120px 1fr auto; align-items: center; gap: 12px; padding: 8px 18px; font-size: 15px; color: var(--ink); }
   .emu.missing { color: var(--ink-3); }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, 0.2); }
-  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(95, 211, 154, 0.25); /* = --ok (#5fd39a) à 25 % ; couleur précalculée : la WebView de la Thor (Chromium 109) ignore le mélange CSS de couleurs */ }
   .emu-name { font-weight: 600; }
   .emu-consoles { color: var(--ink-3); font-size: 14px; }
   .emu-src { color: var(--ink-2); font-size: 13px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
