@@ -227,7 +227,7 @@
   .emu { display: grid; grid-template-columns: 12px 120px 1fr auto; align-items: center; gap: 12px; padding: 8px 18px; font-size: 15px; color: var(--ink); }
   .emu.missing { color: var(--ink-3); }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255, 255, 255, 0.2); }
-  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .dot.on { background: var(--ok); box-shadow: 0 0 0 3px rgba(95, 211, 154, 0.25); /* = --ok (#5fd39a) à 25 % ; couleur précalculée : la WebView de la Thor (Chromium 109) ignore le mélange CSS de couleurs */ }
   .emu-name { font-weight: 600; }
   .emu-consoles { color: var(--ink-3); font-size: 14px; }
   .emu-src { color: var(--ink-2); font-size: 13px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
