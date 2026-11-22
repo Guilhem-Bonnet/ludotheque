@@ -3,7 +3,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import ConsoleChip from '../lib/components/ConsoleChip.svelte';
   import Icon from '../lib/components/Icon.svelte';
-  import { api } from '../lib/api';
+  import { api, isAndroid } from '../lib/api';
   import { router } from '../lib/router.svelte';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
@@ -19,12 +19,27 @@
   let loadError = $state<string | null>(null);
   let loaded = $state(false);
 
-  /** Installe la mise à jour ou le DLC (`id` = « <jeu>|<fichier> » côté app réelle). */
-  async function run(it: UpdateItem) {
-    if (progress[it.id] !== undefined && progress[it.id] !== 'fait') return;
-    if (progress[it.id] === 'fait') return;
+  /**
+   * Installations en FILE UNIQUE (un élément après l'autre, bouton par bouton ou « Tout mettre à jour ») :
+   * en parallèle, la mise à jour et le DLC d'un même jeu mélangeaient leurs barres (la progression est
+   * suivie par jeu) et les sons de fin s'empilaient. Un élément en attente affiche sa barre à 0.
+   */
+  let queue: Promise<void> = Promise.resolve();
+  let mounted = true;
+
+  /** Met l'élément en file (`id` = « <jeu>|<fichier> » côté app réelle). */
+  function run(it: UpdateItem) {
+    if (progress[it.id] !== undefined) return;
     delete failed[it.id];
+    const row = (document.activeElement as HTMLElement | null)?.closest('.item');
     progress[it.id] = 0;
+    // Le bouton cède la place à la barre : le focus passe au bouton voisin au lieu de se perdre
+    // (sinon la croix repartirait du haut de l'écran).
+    requestAnimationFrame(() => keepFocusNear(row));
+    queue = queue.then(() => install(it));
+  }
+
+  async function install(it: UpdateItem) {
     const [game, file] = it.id.split('|');
     try {
       await api.installContent(game, Number(file), (p) => (progress[it.id] = Math.round(p * 100)));
@@ -35,6 +50,18 @@
       failed[it.id] = e instanceof Error ? e.message : String(e);
       feedback('err');
     }
+  }
+
+  /** Focus perdu (bouton retiré) : il revient sur le bouton suivant, sinon le dernier, sinon le premier élément. */
+  function keepFocusNear(row: Element | null | undefined) {
+    if (!mounted) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && a.isConnected) return;
+    const acts = [...document.querySelectorAll<HTMLElement>('.item .act')];
+    const after = row?.isConnected ? acts.find((el) => row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) : undefined;
+    const target = after ?? acts.at(-1);
+    if (target) target.focus();
+    else focusFirst();
   }
 
   function load() {
@@ -50,13 +77,19 @@
     });
   }
 
+  /** Tout mettre en file ; le bouton disparaît aussitôt, le focus est repris s'il était dessus. */
   function runAll() {
-    items.forEach((it, k) => setTimeout(() => run(it), k * 300));
+    for (const it of items) run(it);
+    requestAnimationFrame(() => keepFocusNear(null));
   }
+  /** Reste-t-il un élément à lancer ? (Sinon le bouton « Tout mettre à jour » n'a plus de sens.) */
+  const pending = $derived(items.some((it) => progress[it.id] === undefined));
   onMount(() => {
     load();
     // Ouvrir l'écran relance la recherche d'une nouvelle version de l'app (sauf si déjà trouvée).
     if (appUpdate.status !== 'available' && appUpdate.status !== 'downloading' && appUpdate.status !== 'restarting') void checkAppUpdate();
+    // Les installations en file continuent après la sortie de l'écran ; seul le focus n'est plus touché.
+    return () => { mounted = false; };
   });
 
   const GROUPS: { id: UpdateItem['group']; label: string }[] = [
@@ -69,14 +102,19 @@
 <div class="screen">
   <header>
     <h1>Mises à jour</h1>
-    {#if items.length}<button class="all focusable" data-autofocus onclick={runAll}>Tout mettre à jour</button>{/if}
+    {#if items.length && pending}<button class="all focusable" data-autofocus onclick={runAll}>Tout mettre à jour</button>{/if}
   </header>
 
   <main>
     {#if loadError}
       <StateNotice title="Mises à jour indisponibles" detail={loadError} action="Réessayer" onaction={load} />
     {:else if loaded && items.length === 0 && !appCard}
-      <StateNotice icon="check-circle" title="Tout est à jour" detail="Aucune mise à jour ni DLC à installer pour les jeux de cet appareil." autofocus={false} />
+      {#if isAndroid}
+        <!-- Android : l'app n'installe ni jeu ni DLC (contenu des émulateurs dans leur Android/data) ; tout passe par le PC. -->
+        <StateNotice icon="check-circle" title="Installation depuis le PC" detail="Les mises à jour et DLC des jeux de cet appareil s'installent depuis le PC." autofocus={false} />
+      {:else}
+        <StateNotice icon="check-circle" title="Tout est à jour" detail="Aucune mise à jour ni DLC à installer pour les jeux de cet appareil." autofocus={false} />
+      {/if}
     {/if}
     {#if appCard}
       <!-- Mise à jour de l'app elle-même : bouton, puis barre de progression, puis redémarrage. -->
@@ -98,7 +136,7 @@
           {:else if appUpdate.status === 'restarting'}
             <span class="pct">Redémarrage…</span>
           {:else}
-            <button class="act focusable" data-autofocus onclick={() => { feedback('ok'); void installAppUpdate(); }}>{appUpdate.status === 'error' ? 'Réessayer' : 'Mettre à jour'}</button>
+            <button class="act focusable" data-autofocus data-sound="none" onclick={() => { feedback('ok'); void installAppUpdate(); }}>{appUpdate.status === 'error' ? 'Réessayer' : 'Mettre à jour'}</button>
           {/if}
         </div>
       </section>
@@ -135,7 +173,7 @@
   .screen { height: 100%; display: flex; flex-direction: column; }
   header { padding: 36px 64px 0; display: flex; align-items: center; justify-content: space-between; }
   h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
-  .all { all: unset; cursor: pointer; font-size: 16px; font-weight: 600; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: var(--ground); }
+  .all { all: unset; cursor: pointer; box-sizing: border-box; min-height: 44px; display: inline-flex; align-items: center; white-space: nowrap; flex-shrink: 0; font-size: 16px; font-weight: 600; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: var(--ground); }
   main { flex-grow: 1; overflow-y: auto; padding: 28px 64px 24px; display: flex; flex-direction: column; gap: 26px; }
   section { display: flex; flex-direction: column; gap: 10px; }
   h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; color: var(--ink-3); }
@@ -144,17 +182,20 @@
   .text { display: flex; flex-direction: column; gap: 4px; flex-grow: 1; min-width: 0; }
   .title { font-size: 17px; font-weight: 500; }
   .detail { font-size: 14px; color: var(--ink-3); }
-  .act { all: unset; cursor: pointer; font-size: 15px; padding: 9px 16px; border-radius: var(--radius-control); background: var(--control); color: var(--ink); }
+  /* Cibles tactiles d'au moins 44 px (Thor, Deck). */
+  .act { all: unset; cursor: pointer; box-sizing: border-box; min-height: 44px; display: inline-flex; align-items: center; font-size: 15px; padding: 9px 16px; border-radius: var(--radius-control); background: var(--control); color: var(--ink); }
   .act:focus { background: var(--accent); color: var(--ground); }
   .item { transition: background-color 600ms ease-out; }
   .item.success { animation: success-flash 900ms ease-out; }
-  @keyframes success-flash { 0% { background: color-mix(in srgb, var(--ok) 16%, var(--surface)); } 100% { background: var(--surface); } }
+  /* Pas de color-mix() : la WebView de la Thor (Chromium 109) l'ignore (Chrome 111+). Voile vert par ombre intérieure,
+     posé sur le fond quel qu'il soit (--ok = #5fd39a). */
+  @keyframes success-flash { 0% { box-shadow: inset 0 0 0 999px rgba(95, 211, 154, 0.16); } 100% { box-shadow: inset 0 0 0 999px rgba(95, 211, 154, 0); } }
   .done { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); animation: pop 320ms var(--ease-pop); }
   .mini { width: 120px; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; display: block; }
   .mini span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 120ms linear; }
-  .empty { color: var(--ink-3); font-size: 17px; }
   .fail { font-size: 13px; color: #ff9b9b; }
-  .item.app { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+  /* Teinte douce de l'accent du profil (variable déjà calculée par profil, sans color-mix). */
+  .item.app { background: var(--accent-soft); }
   .bar { display: block; margin-top: 8px; height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
   .bar span { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 160ms linear; }
   .bar span.indet { animation: indet 1.2s ease-in-out infinite; }

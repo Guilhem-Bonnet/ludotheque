@@ -16,10 +16,16 @@
   let conflict = $state(initial);
   let chosen = $state<'local' | 'server' | null>(null);
 
+  // Délais de la mise en scène : annulés si l'écran est quitté avant (B pendant l'animation), sinon
+  // le retour programmé dépilerait un écran de plus ou relancerait un jeu depuis un autre écran.
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const later = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms));
+
   onMount(() => {
     focusFirst();
     // Une seule note douce à l'arrivée : attire l'attention sans alarmer.
-    setTimeout(() => feedback('conflict'), 180);
+    later(() => feedback('conflict'), 180);
+    return () => timers.forEach(clearTimeout);
   });
 
   const sides = $derived<[string, ConflictSide][]>([['local', conflict.local], ['server', conflict.server]]);
@@ -55,8 +61,8 @@
       }
     }
     // La carte choisie se soulève, l'autre s'efface vers le bas ; puis l'accord « sauvegarde ».
-    setTimeout(() => feedback('saved'), 260);
-    setTimeout(() => {
+    later(() => feedback('saved'), 260);
+    later(() => {
       if (!isDemo && !conflict.played) router.replace({ name: 'passage', preparation: realPreparation(conflict.game, conflict.profile, router.profile?.name) });
       else router.back();
     }, 1100);
@@ -78,16 +84,20 @@
           <span class="dev"><Icon name={side.deviceKind} size={28} />{side.device}</span>
           {#if side.ahead}<span class="ahead">Plus de temps de jeu</span>{/if}
         </span>
-        <span class="shot" role="img" aria-label="Capture de la dernière partie sur {side.device}">Capture de la dernière partie</span>
+        <!-- Aucune capture d'écran n'existe pour une sauvegarde : le temps de jeu, seul critère sûr, en grand. -->
+        <span class="big">
+          <span class="k">Temps de jeu</span>
+          <span class="num">{side.playtime}</span>
+          <span class="delta" class:hot={side.ahead}>{side.delta}</span>
+        </span>
         <span class="facts">
           <span><span class="k">Dernière partie</span>{side.when}</span>
-          <span><span class="k">Temps de jeu</span>{side.playtime} <span class="delta" class:hot={side.ahead}>{side.delta}</span></span>
         </span>
       </button>
     {/each}
   </main>
 
-  <ButtonHints hints={[{ key: 'A', label: 'Utiliser cette sauvegarde' }, { key: 'Y', label: 'Détails' }, { key: 'B', label: 'Annuler' }]} />
+  <ButtonHints hints={[{ key: 'A', label: 'Utiliser cette sauvegarde' }, { key: 'B', label: 'Annuler' }]} />
 </div>
 
 <style>
@@ -116,10 +126,11 @@
   .card-head { display: flex; align-items: center; justify-content: space-between; }
   .dev { display: flex; align-items: center; gap: 12px; font-size: 22px; font-weight: 600; }
   .ahead { font-size: 13px; font-weight: 600; color: var(--ground); background: var(--accent-ink); padding: 5px 10px; border-radius: 8px; }
-  .shot { flex-grow: 1; min-height: 160px; border-radius: 12px; background: var(--raised); display: flex; align-items: flex-end; padding: 16px; font-size: 14px; color: var(--ink-3); }
-  .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; font-size: 17px; }
+  .big { flex-grow: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 8px 0; border-top: 1px solid rgba(255, 255, 255, 0.07); border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+  .num { font-size: 52px; font-weight: 600; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; font-size: 17px; }
   .facts > span { display: flex; flex-direction: column; gap: 4px; }
   .k { color: var(--ink-4); font-size: 14px; }
-  .delta { font-size: 14px; color: var(--ink-3); }
+  .delta { font-size: 15px; color: var(--ink-3); }
   .delta.hot { color: var(--accent-ink); }
 </style>

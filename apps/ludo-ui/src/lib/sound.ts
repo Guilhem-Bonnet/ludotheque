@@ -88,7 +88,8 @@ const SOUNDS: Record<SoundName, () => void> = {
   move: () => tone({ n: 69, d: 0.16, g: 0.16, wet: 0.12, glide: 0.97 }),
   ok: () => { tone({ n: 76, d: 0.2, g: 0.17, lp: 1600, glide: 1.06 }); tone({ n: 81, t: 0.07, a: 0.015, d: 0.3, g: 0.11, lp: 1800, wet: 0.2 }); },
   back: () => tone({ n: 69, d: 0.2, g: 0.14, lp: 1100, glide: 0.88 }),
-  tab: () => tone({ n: 84, a: 0.008, d: 0.06, g: 0.07, lp: 1800, wet: 0.05 }),
+  // Attaque portée de 8 à 12 ms le 21/11 (règle de la palette : aucune attaque sous 12 ms).
+  tab: () => tone({ n: 84, a: 0.012, d: 0.06, g: 0.07, lp: 1800, wet: 0.05 }),
   err: () => tone({ n: 52, a: 0.02, d: 0.3, g: 0.16, lp: 600, glide: 0.95 }),
   saved: () => pad([57, 64, 69]),
   conflict: () => tone({ n: 72, a: 0.03, d: 0.6, g: 0.11, lp: 1200, wet: 0.3 }),
@@ -104,14 +105,40 @@ const SOUNDS: Record<SoundName, () => void> = {
   updated: () => { [69, 72, 76].forEach((n, k) => tone({ n, t: k * 0.085, a: 0.015, d: k === 2 ? 0.8 : 0.4, g: 0.11, lp: 1700, wet: 0.25 })); },
 };
 
-/** Joue un son de la palette (sans effet tant que l'utilisateur n'a pas interagi : règle des navigateurs). */
+/**
+ * Un son demandé par un contexte audio en veille ne part que s'il suit de près une interaction
+ * (touche, bouton, toucher) : c'est la réponse à ce geste. Mesuré entre le geste et la DEMANDE, pas la
+ * fin de la reprise, pour qu'une sortie audio lente à se réveiller (Bluetooth, PipeWire) ne l'avale pas.
+ */
+const GESTURE_WINDOW_MS = 1000;
+let lastGesture = Number.NEGATIVE_INFINITY;
+
+/**
+ * Joue un son de la palette.
+ * - Fenêtre cachée (une partie au premier plan) : aucun son, rien ne se superpose au jeu.
+ * - Contexte audio en veille (aucune interaction encore, ou suspendu par le système) : le son n'est
+ *   PAS programmé, sinon tous les sons accumulés partiraient d'un coup à la première touche ; il ne
+ *   part que s'il répond à une interaction récente (voir GESTURE_WINDOW_MS), sinon il est abandonné.
+ */
 export function play(name: SoundName) {
-  if (muted || !setup()) return;
-  SOUNDS[name]();
+  if (muted || document.visibilityState === 'hidden' || !setup() || !ctx) return;
+  if (ctx.state === 'running') {
+    SOUNDS[name]();
+    return;
+  }
+  const asked = performance.now();
+  if (asked - lastGesture > GESTURE_WINDOW_MS) {
+    void ctx.resume().catch(() => {});
+    return;
+  }
+  void ctx.resume().then(() => {
+    if (!muted && document.visibilityState !== 'hidden') SOUNDS[name]();
+  }).catch(() => {});
 }
 
 /** À appeler sur la première interaction (touche, bouton manette) pour débloquer l'audio. */
 export function unlock() {
+  lastGesture = performance.now();
   setup();
 }
 
@@ -125,11 +152,21 @@ export function setMuted(m: boolean) {
   if (master && ctx) master.gain.setTargetAtTime(m ? 0 : volume * 0.8, ctx.currentTime, 0.02);
 }
 
+/** Durée maximale du cliquetis de synchronisation (ms), au-delà il se tait même si l'opération continue. */
+const SYNC_RHYTHM_MAX_MS = 60_000;
+
 /**
  * Cliquetis régulier pendant une synchronisation : un RYTHME sonore (comme une animation), pas une
  * scrutation — il ne lit aucun état, la fin de l'opération l'arrête (fonction renvoyée).
  */
 export function syncRhythm(): () => void {
   const t = setInterval(() => play('syncTick'), 900);
-  return () => clearInterval(t);
+  // Délai de garde unique : une opération qui ne se termine jamais (requête sans réponse, écran quitté
+  // pendant l'attente) ne laisse pas le cliquetis tourner indéfiniment.
+  const guard = setTimeout(stop, SYNC_RHYTHM_MAX_MS);
+  function stop() {
+    clearInterval(t);
+    clearTimeout(guard);
+  }
+  return stop;
 }
