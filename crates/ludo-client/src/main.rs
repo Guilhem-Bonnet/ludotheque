@@ -602,10 +602,15 @@ fn spawn_device_stream(serial: &str, script: &str, tx: std::sync::mpsc::Sender<W
 ///   `am kill`), qui n'écrit PAS `am_proc_died` (mesuré sur la Thor le 22/11 : « Fermer le jeu » de la
 ///   Ludothèque passe par « Forcer l'arrêt », sans synchro tant que seul `am_proc_died` était lu).
 ///
-/// Le processus peut porter un suffixe (`info.cemu.cemu:EmulationProcess`) : seul le paquet compte.
+/// Format par défaut de logcat (threadtime) : l'étiquette est complétée à 8 caractères
+/// (« I am_kill : [… »), d'où la recherche du `[` qui suit l'étiquette. Le processus peut porter un
+/// suffixe (`info.cemu.cemu:EmulationProcess`) : seul le paquet compte.
 fn proc_died(line: &str) -> Option<WatchEv> {
-    let inner = line.split("am_proc_died:").nth(1).or_else(|| line.split("am_kill:").nth(1))?;
-    let inner = inner.trim().trim_start_matches('[');
+    // Étiquette exacte : suivie d'une espace (complément) ou de « : ».
+    let exacte = |t: &str| line.find(t).filter(|i| matches!(line.as_bytes().get(i + t.len()), Some(b' ' | b':')));
+    let tag = exacte(" am_proc_died").or_else(|| exacte(" am_kill"))?;
+    let rest = &line[tag..];
+    let inner = &rest[rest.find(": [")? + 3..];
     let process = inner.split(',').nth(2)?.trim();
     let package = process.split(':').next().unwrap_or(process);
     (!package.is_empty()).then(|| WatchEv::ProcDied(package.to_string()))
@@ -1043,12 +1048,14 @@ mod tests_evenements {
         let l = "11-16 21:39:17.846  2143  8889 I am_proc_died: [0,18736,dev.eden.eden_emulator,905,19]";
         assert!(matches!(proc_died(l), Some(WatchEv::ProcDied(p)) if p == "dev.eden.eden_emulator"));
         assert!(proc_died("--------- beginning of events").is_none());
-        // Arrêt forcé (« Forcer l'arrêt ») : seul am_kill est écrit (Thor, 22/11 12:54:24).
-        let k = "11-22 12:54:24.069 I/am_kill ( 2143): [0,10659,org.azahar_emu.azahar,900,stop org.azahar_emu.azahar due to from pid 3826]";
+        // Arrêt forcé (« Forcer l'arrêt ») : seul am_kill est écrit, étiquette complétée (Thor, 22/11 12:58:25).
+        let k = "11-22 12:58:25.782  2143  2741 I am_kill : [0,11764,org.azahar_emu.azahar,900,stop org.azahar_emu.azahar due to from pid 3826]";
         assert!(matches!(proc_died(k), Some(WatchEv::ProcDied(p)) if p == "org.azahar_emu.azahar"));
         // Processus secondaire d'un émulateur : le paquet seul (Thor, 22/11 11:10:38).
         let c = "11-22 11:10:38.215  2143  2414 I am_proc_died: [0,1113,info.cemu.cemu:EmulationProcess,0,2]";
         assert!(matches!(proc_died(c), Some(WatchEv::ProcDied(p)) if p == "info.cemu.cemu"));
+        // Une autre étiquette (ligne parasite) ne compte pas.
+        assert!(proc_died("11-22 12:58:25.782  2143  2741 I am_killer_x: [0,1,a.b,0]").is_none());
     }
 
     #[test]
