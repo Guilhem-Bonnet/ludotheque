@@ -116,3 +116,23 @@ button { font: inherit; color: inherit; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--hint); border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ———————————————————————————————————————————————————————————————
+   Gabarits d'écran (lot « ecrans », 21/11/2026) — voir lib/layout.ts.
+   <html data-format="portrait|compact|large|ultra|super" data-side="none|right|both|bottom">
+   Variables : --page-w, --page-h, --side-w, --bottom-h, --stage-max, --gutter (px logiques).
+   Chaque écran est un `.screen` plein cadre (fond d'ambiance compris) ; le gabarit réserve, par un
+   rembourrage, la place des colonnes latérales (accueil, fiche) ou centre les écrans de lecture.
+   Le fond d'ambiance (position absolue, inset 0) couvre toujours toute la fenêtre.
+   ——————————————————————————————————————————————————————————————— */
+:root { --page-w: 1280px; --page-h: 800px; --side-w: 0px; --bottom-h: 0px; --stage-max: 1760px; --gutter: 48px; }
+
+.screen-layer > .screen { transition: padding var(--t-std) var(--ease-land); }
+html[data-side='right'] .screen-layer[data-colonnes] > .screen { padding-right: calc(var(--side-w) + var(--gutter)); }
+html[data-side='both'] .screen-layer[data-colonnes] > .screen { padding-inline: calc(var(--side-w) + var(--gutter)); }
+html[data-side='bottom'] .screen-layer[data-colonnes] > .screen { padding-bottom: var(--bottom-h); }
+/* Écrans de lecture (mises à jour, réglages, profil, conflit, passage…) : centrés sur 21:9 et 32:9. */
+html[data-format='ultra'] .screen-layer[data-centre] > .screen,
+html[data-format='super'] .screen-layer[data-centre] > .screen { padding-inline: max(0px, calc((100% - var(--stage-max)) / 2)); }
+/* Menu ou dialogue ouvert : les colonnes s'effacent (le tiroir d'options s'ouvre du bord droit). */
+.app:has([data-modal]) .colonnes { opacity: 0; visibility: hidden; }

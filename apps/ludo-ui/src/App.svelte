@@ -6,6 +6,8 @@
   import { router } from './lib/router.svelte';
   import { startAppUpdateChecks } from './lib/appUpdate.svelte';
   import StateNotice from './lib/components/StateNotice.svelte';
+  import Colonnes from './lib/components/ecrans/Colonnes.svelte';
+  import { applyLayout, computeLayout, computeZoom, layout, screenHasSide, screenIsWide } from './lib/layout';
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
   import Bibliotheque from './screens/Bibliotheque.svelte';
@@ -45,31 +47,46 @@
   let accentAnim = $state(false);
 
   // L'interface est dessinée pour 1280×800 (Steam Deck) et s'adapte à la fenêtre par le ZOOM NATIF de la
-  // vue (comme Ctrl+ d'un navigateur) : le moteur redessine textes et images à la résolution réelle (net)
-  // et la page voit directement une fenêtre de ~1280×800 px logiques (100vh juste). Ni `zoom` CSS
-  // (WebKitGTK l'applique aussi aux vh : hauteur corrigée deux fois) ni `transform: scale` (image agrandie,
-  // floue). Recalcul sur l'événement de redimensionnement ; dans un navigateur (démo), échelle 1.
-  let zoom = 1;
+  // vue (comme Ctrl+ d'un navigateur) : le moteur redessine textes et images à la résolution réelle (net).
+  // Ni `zoom` CSS (WebKitGTK l'applique aussi aux vh : hauteur corrigée deux fois) ni `transform: scale`
+  // (image agrandie, floue). Le zoom est piloté par la hauteur et plafonné (lib/layout.ts) : la largeur en
+  // plus d'un écran 21:9 ou 32:9 sert aux colonnes latérales et aux tuiles, au lieu de rester vide.
+  // Recalcul sur l'événement `resize`, regroupé sur l'image suivante (une rafale de redimensionnement = un
+  // seul calcul) ; dans un navigateur (démo), le zoom est celui du navigateur et seule la mise en page suit.
+  /** Zoom réellement appliqué à la vue (la taille « 100 % » de la fenêtre = innerWidth × zoom appliqué). */
+  let appliedZoom = 1;
+  let resizeQueued = false;
+  function onResize() {
+    if (resizeQueued) return;
+    resizeQueued = true;
+    // Une seule image demandée par rafale d'événements `resize` : ce n'est pas une boucle (aucune relance).
+    requestAnimationFrame(() => {
+      resizeQueued = false;
+      void rescale();
+    });
+  }
+  function relayout() {
+    applyLayout(computeLayout(window.innerWidth, window.innerHeight));
+  }
   async function rescale() {
-    if (isDemo) return;
+    if (isDemo) return relayout();
     if (isAndroid) {
       // Android : la WebView n'a pas de zoom natif réglable ; la largeur logique de la page est imposée
       // par la balise viewport (vue large activée dans MainActivity) pour voir au moins 1280×800.
       const ratio = screen.width / screen.height;
       const width = Math.ceil(Math.max(1280, 800 * ratio));
       document.querySelector('meta[name="viewport"]')?.setAttribute('content', `width=${width}, user-scalable=no`);
-      return;
+      return relayout();
     }
-    // Taille de la fenêtre en pixels « 100 % » : la vue zoomée rapporte des pixels logiques.
-    const w = window.innerWidth * zoom;
-    const h = window.innerHeight * zoom;
-    const next = Math.max(0.75, Math.min(w / 1280, h / 800));
-    if (Math.abs(next - zoom) < 0.005) return;
-    zoom = next;
-    // Compensation optique des icônes : trait affiné quand l'interface grandit (1 à 1×, 0,76 à 1,74×).
-    document.documentElement.style.setProperty('--icon-optique', String(Math.max(0.6, 1 / Math.sqrt(next))));
-    const { getCurrentWebview } = await import('@tauri-apps/api/webview');
-    await getCurrentWebview().setZoom(next);
+    const next = computeZoom(window.innerWidth * appliedZoom, window.innerHeight * appliedZoom);
+    if (Math.abs(next - appliedZoom) >= 0.005) {
+      // Compensation optique des icônes : trait affiné quand l'interface grandit (1 à 1×, 0,76 à 1,74×).
+      document.documentElement.style.setProperty('--icon-optique', String(Math.max(0.6, 1 / Math.sqrt(next))));
+      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+      await getCurrentWebview().setZoom(next);
+      appliedZoom = next;
+    }
+    relayout();
   }
 
   /** Démonstration seulement : `?ecran=bibliotheque|fiche|maj|passage|conflit` ouvre un écran directement. */
@@ -81,8 +98,8 @@
     const byId = (id: string) => games.find((g) => g.id === id) ?? games[0];
     if (ecran === 'bibliotheque') router.go({ name: 'bibliotheque' });
     else if (ecran === 'maj') router.go({ name: 'mises-a-jour' });
-else if (ecran === 'profil') router.go({ name: 'profil' });
-else if (ecran === 'reglages') router.go({ name: 'reglages' });
+    else if (ecran === 'profil') router.go({ name: 'profil' });
+    else if (ecran === 'reglages') router.go({ name: 'reglages' });
     else if (ecran === 'fiche') router.go({ name: 'fiche', game: byId('switch-lm3') });
     else if (ecran === 'passage' || ecran === 'conflit') {
       const r = await api.prepare(router.profile.id, ecran === 'conflit' ? 'switch-botw' : 'nds-diamant');
@@ -92,11 +109,11 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
   }
 
   onMount(() => {
-    // Mise à jour de l'app : vérifiée au démarrage puis toutes les 30 min (sans bloquer ; échec silencieux ici).
+    // Mise à jour de l'app : vérifiée au démarrage puis au retour du focus sur la fenêtre (sans bloquer ; échec silencieux ici).
     startAppUpdateChecks();
     installNav();
-    rescale();
-    window.addEventListener('resize', rescale);
+    void rescale();
+    window.addEventListener('resize', onResize);
     // B : un menu ouvert se referme d'abord ; sinon, écran précédent.
     const onBack = () => {
       if (document.querySelector('[data-modal]')) window.dispatchEvent(new CustomEvent('ludo:modal-back'));
@@ -105,7 +122,10 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
     window.addEventListener('ludo:back', onBack);
 
     void boot();
-    return () => window.removeEventListener('ludo:back', onBack);
+    return () => {
+      window.removeEventListener('ludo:back', onBack);
+      window.removeEventListener('resize', onResize);
+    };
   });
 
   /* Démarrage : appareil (configuration) puis profils (serveur). Échec = écran d'erreur, jamais de démo. */
@@ -158,7 +178,14 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
     <div class="boot-error"><StateNotice title={bootError.title} detail={bootError.detail} action="Réessayer" onaction={() => void boot()} /></div>
   {:else if device}
     {#key router.screen}
-      <div class="screen-layer" in:screenIn out:screenOut onintroend={focusFirst}>
+      <div
+        class="screen-layer"
+        data-colonnes={screenHasSide(router.screen.name) && router.profile ? '' : undefined}
+        data-centre={!screenHasSide(router.screen.name) && !screenIsWide(router.screen.name) ? '' : undefined}
+        in:screenIn
+        out:screenOut
+        onintroend={focusFirst}
+      >
       {#if router.screen.name === 'qui-joue'}
         <QuiJoue {device} />
       {:else if router.screen.name === 'accueil' && router.profile}
@@ -180,6 +207,9 @@ else if (ecran === 'reglages') router.go({ name: 'reglages' });
       {/if}
       </div>
     {/key}
+    {#if $layout.side !== 'none' && router.profile && screenHasSide(router.screen.name)}
+      <Colonnes {device} />
+    {/if}
   {/if}
 </div>
 
