@@ -33,6 +33,10 @@ export interface CartShape {
   padRight: number;
   /** Pastille de disque (GameCube) : centre et rayon, dans le bandeau. */
   disc?: { cx: number; cy: number; r: number };
+  /** Rayons du contour (px), pour que l'anneau de focus, l'ombre et le halo le suivent. */
+  radius: { tl: number; tr: number; br: number; bl: number };
+  /** Arête haute éclairée : début et fin du trait, à l'intérieur des coins (ou de la coupe). */
+  edge: [number, number];
 }
 
 const h = (v: number) => Math.round(v * 2) / 2;
@@ -68,6 +72,14 @@ export function bandHeight(s: number): number {
 }
 
 export function cartShape(c: Console | string, s: number): CartShape {
+  return baseShape(c, s);
+}
+
+function withFrame(sh: Omit<CartShape, 'radius' | 'edge'>, s: number, rt: number, rb: number, cutTR = 0): CartShape {
+  return { ...sh, radius: { tl: rt, tr: cutTR ? Math.min(rt, cutTR / 2) : rt, br: rb, bl: rb }, edge: [h(rt + 2), h(s - (cutTR ? cutTR : rt) - 2)] };
+}
+
+function baseShape(c: Console | string, s: number): CartShape {
   const band = bandHeight(s);
   const inset = 3;
   const base = { band, padLeft: h(band * 0.42), padRight: h(band * 0.3) };
@@ -76,36 +88,36 @@ export function cartShape(c: Console | string, s: number): CartShape {
     case 'switch': {
       const rt = h(s * 0.045), rb = h(s * 0.075);
       // Lèvre de préhension : trait fin sous le bandeau, comme la marche moulée en haut d'une carte.
-      return { ...base, outline: roundedRect(s, rt, rb), grooves: `M${h(band * 0.42)} ${h(band - 3.5)}H${h(s - band * 0.3)}`, window: win(3, rb - inset) };
+      return withFrame({ ...base, outline: roundedRect(s, rt, rb), grooves: `M${h(band * 0.42)} ${h(band - 3.5)}H${h(s - band * 0.3)}`, window: win(3, rb - inset) }, s, rt, rb);
     }
     case 'switch2': {
       const rt = h(s * 0.045), rb = h(s * 0.075);
       const notch = { x: h(s * 0.7), w: h(Math.max(10, s * 0.09)), d: h(Math.max(4, s * 0.03)) };
       // La fenêtre s'arrête au-dessus de l'encoche pour que le creux reste lisible.
-      return { ...base, outline: roundedRect(s, rt, rb, { notch }), grooves: `M${h(band * 0.42)} ${h(band - 3.5)}H${h(s - band * 0.3)}`, window: { ...win(3, rb - inset), bottom: h(notch.d + 2) } };
+      return withFrame({ ...base, outline: roundedRect(s, rt, rb, { notch }), grooves: `M${h(band * 0.42)} ${h(band - 3.5)}H${h(s - band * 0.3)}`, window: { ...win(3, rb - inset), bottom: h(notch.d + 2) } }, s, rt, rb);
     }
     case '3ds': {
       const r = h(s * 0.05);
       const tab = { y: h(s * 0.58), hgt: h(Math.max(10, s * 0.1)), d: h(Math.max(2.5, s * 0.016)) };
-      return { ...base, outline: roundedRect(s, r, r, { tab }), grooves: '', window: win(3, r - inset) };
+      return withFrame({ ...base, outline: roundedRect(s, r, r, { tab }), grooves: '', window: win(3, r - inset) }, s, r, r);
     }
     case 'ds': {
       const r = h(s * 0.05), cut = h(Math.max(8, s * 0.07));
-      return { ...base, padRight: h(cut * 0.75 + band * 0.18), outline: roundedRect(s, r, r, { chamferTR: cut }), grooves: '', window: win(3, r - inset) };
+      return withFrame({ ...base, padRight: h(cut * 0.75 + band * 0.18), outline: roundedRect(s, r, r, { chamferTR: cut }), grooves: '', window: win(3, r - inset) }, s, r, r, cut);
     }
     case 'gc': {
       const r = h(s * 0.085), dr = h(band * 0.27);
       const disc = { cx: h(band * 0.42 + dr), cy: h(band / 2), r: dr };
-      return { ...base, padLeft: h(band * 0.42 + dr * 2 + band * 0.2), outline: roundedRect(s, r, r), grooves: '', window: win(4, r - inset), disc };
+      return withFrame({ ...base, padLeft: h(band * 0.42 + dr * 2 + band * 0.2), outline: roundedRect(s, r, r), grooves: '', window: win(4, r - inset), disc }, s, r, r);
     }
     case 'wiiu': {
       const r = h(s * 0.11), spine = h(Math.max(6, s * 0.035));
       // Tranche du boîtier : la fenêtre commence après elle ; un trait marque le pli.
-      return { ...base, padLeft: h(spine + band * 0.3), outline: roundedRect(s, r, r), grooves: `M${spine} ${h(r * 0.6)}V${h(s - r * 0.6)}`, window: win(4, r - inset, spine + 1.5) };
+      return withFrame({ ...base, padLeft: h(spine + band * 0.3), outline: roundedRect(s, r, r), grooves: `M${spine} ${h(r * 0.6)}V${h(s - r * 0.6)}`, window: win(4, r - inset, spine + 1.5) }, s, r, r);
     }
     default: {
       const r = h(s * 0.07);
-      return { ...base, outline: roundedRect(s, r, r), grooves: '', window: win(3, r - inset) };
+      return withFrame({ ...base, outline: roundedRect(s, r, r), grooves: '', window: win(3, r - inset) }, s, r, r);
     }
   }
 }

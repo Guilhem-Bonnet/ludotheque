@@ -57,13 +57,15 @@
   let failed = $state('');
   const cover = $derived(game.cover && failed !== game.cover ? game.cover : undefined);
   // Couleurs du boîtier par console : teintes propres à l'app, inspirées des boîtes de chaque console ;
-  // texte sombre sur les bandeaux clairs (3DS, DS).
+  // texte sombre sur les bandeaux clairs (3DS, DS). Chaque paire bandeau/encre tient au moins 4,5:1
+  // (nom de console en 13 px) : Switch 2 et Wii U approfondis le 21/11 (3,2 et 3,5:1 avant), et
+  // écartés l'un de l'autre (bleu franc / bleu canard) pour ne plus se confondre.
   const CASES: Record<string, { band: string; ink: string }> = {
     switch: { band: '#d8202c', ink: '#ffffff' },
-    switch2: { band: '#1f9ad6', ink: '#ffffff' },
+    switch2: { band: '#1668b8', ink: '#ffffff' },
     '3ds': { band: '#e9ebee', ink: '#b3141f' },
     ds: { band: '#c3c7cc', ink: '#24272c' },
-    wiiu: { band: '#1593c4', ink: '#ffffff' },
+    wiiu: { band: '#0e7490', ink: '#ffffff' },
     gc: { band: '#5c4fa6', ink: '#ffffff' },
   };
   const CONSOLE_NAMES: Record<string, string> = { switch: 'SWITCH', switch2: 'SWITCH 2', '3ds': '3DS', ds: 'DS', wiiu: 'WII U', gc: 'GAMECUBE' };
@@ -82,7 +84,11 @@
   const stateWords = $derived(words ?? size >= 250);
   // Titre de la jaquette illustrée : borné à 3 lignes dans la fenêtre ; un titre long (> 24 signes)
   // passe en plus petit avant d'être coupé (bug signalé par le lot bugs le 21/11, titre de 70 signes).
-  const titleSize = $derived(Math.round(size * (game.short.length > 24 ? 0.095 : game.short.length > 14 ? 0.112 : 0.13)));
+  const titleSize = $derived(Math.max(13, Math.round(size * (game.short.length > 24 ? 0.095 : game.short.length > 14 ? 0.112 : 0.13))));
+  // Rayons du contour, repris par l'anneau de focus (+8 px), l'ombre et le halo.
+  const rad = $derived(shape.radius);
+  // Mot d'état : jamais sous 13 px (hauteur de marque × 0,56 ≥ 13).
+  const markH = $derived(stateWords ? Math.max(24, Math.round(shape.band * 0.66)) : Math.round(shape.band * 0.72));
 </script>
 
 <button
@@ -98,7 +104,8 @@
   style:--band={box.band}
   style:--band-ink={box.ink}
   style:--band-h="{shape.band}px"
-  style:--r-bottom="{win.rBottom + win.bottom}px"
+  style:--r="{rad.tl}px {rad.tr}px {rad.br}px {rad.bl}px"
+  style:--r-ring="{rad.tl + 8}px {rad.tr + 8}px {rad.br + 8}px {rad.bl + 8}px"
   tabindex={still ? -1 : undefined}
   style:width="{size}px"
   style:height="{size}px"
@@ -106,6 +113,7 @@
   data-autofocus={autofocus ? '' : undefined}
   data-sound={sound}
   data-hero={hero ? '' : undefined}
+  data-game={game.id}
   data-console={game.console}
   aria-label={syncState ? `${game.title}, ${syncState.label}` : game.title}
   {onfocus}
@@ -113,7 +121,7 @@
 >
   <svg class="shell" viewBox="0 0 {size} {size}" aria-hidden="true">
     <path class="body" d={shape.outline}></path>
-    <path class="edge" d="M{win.rTop + 6} 0.75H{size - win.rTop - 6}"></path>
+    <path class="edge" d="M{shape.edge[0]} 0.75H{shape.edge[1]}"></path>
     {#if shape.grooves}<path class="groove" d={shape.grooves}></path>{/if}
     {#if shape.disc}
       <circle class="disc" cx={shape.disc.cx} cy={shape.disc.cy} r={shape.disc.r}></circle>
@@ -146,7 +154,7 @@
       <span class="ridges" aria-hidden="true">{#each { length: ridges } as _}<i></i>{/each}</span>
     {/if}
     <span class="fill"></span>
-    <SyncBadge {game} size={Math.round(shape.band * (stateWords ? 0.66 : 0.72))} tone="band" labelled={stateWords} />
+    <SyncBadge {game} size={markH} tone="band" labelled={stateWords} />
   </span>
 </button>
 
@@ -161,7 +169,7 @@
 
   .tile {
     all: unset; cursor: pointer; flex-shrink: 0; box-sizing: border-box;
-    border-radius: var(--r-bottom, var(--radius-tile)); padding: 0;
+    border-radius: var(--r, var(--radius-tile)); padding: 0;
     display: flex; flex-direction: column; justify-content: flex-start;
     position: relative; isolation: isolate; overflow: visible;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
@@ -188,12 +196,14 @@
   .photo::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2); pointer-events: none; }
 
   .top { display: flex; align-items: center; gap: 8px; height: var(--band-h); box-sizing: border-box; flex-shrink: 0;
-    transition: transform 300ms var(--ease-pop) 70ms; transform-origin: left center; }
+    transition: transform 300ms var(--ease-pop) 70ms; transform-origin: center; }
   .fill { flex: 1; min-width: 0; }
   /* Nom de la console : une police libre par console (esprit, pas copie), posée sur la ligne optique du bandeau. */
   .band-label { font-weight: 700; letter-spacing: 0.06em; color: var(--band-ink); line-height: 1.1; padding-top: 1px; white-space: nowrap; font-synthesis: none; flex-shrink: 0; }
   /* Place trop juste : c'est le mot d'état qui cède (points de suspension), jamais le nom de la console. */
   .top :global(.mark) { flex-shrink: 1; min-width: 0; }
+  /* « Non installé » : pictogramme moins effacé que par défaut (0,72 tombait sous 3:1 sur les bandeaux sombres). */
+  .top :global(.mark.quiet) { opacity: 0.9; }
   .tile[data-console='switch'] .band-label { font-family: 'Cart Switch', var(--font); font-weight: 800; letter-spacing: 0.05em; }
   .tile[data-console='switch2'] .band-label { font-family: 'Cart Switch2', var(--font); font-weight: 700; letter-spacing: 0.08em; }
   .tile[data-console='3ds'] .band-label { font-family: 'Cart 3DS', var(--font); font-weight: 600; letter-spacing: 0.04em; }
@@ -201,16 +211,18 @@
   .tile[data-console='gc'] .band-label { font-family: 'Cart GC', var(--font); font-weight: 800; letter-spacing: 0.03em; padding-top: 3px; }
   .tile[data-console='wiiu'] .band-label { font-family: 'Cart WiiU', var(--font); font-weight: 400; letter-spacing: 0.07em; }
   /* Stries de préhension (DS, 3DS), gravées dans le plastique, à l'encre du bandeau. */
-  .ridges { display: inline-flex; gap: 3px; height: 44%; align-items: stretch; flex-shrink: 0; margin-left: 4px; }
-  .ridges i { width: 1.5px; border-radius: 1px; background: var(--band-ink); opacity: 0.3; }
+  .ridges { display: inline-flex; gap: 3px; height: 46%; align-items: stretch; flex-shrink: 0; margin-left: 4px; }
+  .ridges i { width: 2px; border-radius: 1px; background: var(--band-ink); opacity: 0.42; }
 
   /* Focus : se soulève, l'ombre descend et s'adoucit (contre-mouvement). */
   .tile:focus { transform: translateY(-4px); box-shadow: 0 22px 44px rgba(0, 0, 0, 0.5), 0 6px 12px rgba(0, 0, 0, 0.25); }
 
   /* Anneau d'accent : se pose en grandissant de 95 % à 100 %. */
   .ring {
-    position: absolute; inset: calc(-8px / var(--ring-k, 1)); border-radius: calc(var(--r-bottom, var(--radius-tile)) + 8px); pointer-events: none;
-    box-shadow: inset 0 0 0 calc(4px / var(--ring-k, 1)) var(--accent); opacity: 0; transform: scale(0.95);
+    position: absolute; inset: calc(-8px / var(--ring-k, 1)); border-radius: var(--r-ring, calc(var(--radius-tile) + 8px)); pointer-events: none;
+    /* Anneau d'accent doublé d'un filet clair intérieur : il reste visible même quand l'accent du profil
+       a la teinte du boîtier (bleu sur Switch 2, par exemple) ou dans un flux vidéo compressé. */
+    box-shadow: inset 0 0 0 calc(4px / var(--ring-k, 1)) var(--accent), inset 0 0 0 calc(6px / var(--ring-k, 1)) rgba(255, 255, 255, 0.85); opacity: 0; transform: scale(0.95);
     transition: opacity 150ms ease-out, transform 220ms var(--ease-pop);
   }
   .tile:focus .ring { opacity: 1; transform: scale(1); }
@@ -218,7 +230,7 @@
   /* Halo qui respire deux fois puis se pose (ambiance) : pas de boucle infinie, qui coûtait une image
      par trame tant que la tuile gardait le focus (analyse du 21/11 : 31 % de CPU pendant une partie). */
   .tile::after {
-    content: ''; position: absolute; inset: -8px; border-radius: calc(var(--r-bottom, var(--radius-tile)) + 8px); pointer-events: none; z-index: -3;
+    content: ''; position: absolute; inset: -8px; border-radius: var(--r-ring, calc(var(--radius-tile) + 8px)); pointer-events: none; z-index: -3;
     box-shadow: 0 0 26px 2px var(--accent); opacity: 0; transition: opacity var(--t-std) ease-out;
   }
   .tile:focus::after { animation: breathe 3.2s var(--ease-calm) 2 forwards; }
@@ -264,6 +276,6 @@
     .tile:focus, .tile.lifting, .tile.dimmed { transform: none; }
     .tile:focus .title, .tile:focus .top { transform: none; }
     .tile:focus :global(.far), .tile:focus :global(.near), .tile.lifting :global(.near) { transform: none; }
-    .tile:focus::after { animation: none; opacity: 0.18; }
+    .tile:focus::after { animation: none; opacity: 0.12; }
   }
 </style>
