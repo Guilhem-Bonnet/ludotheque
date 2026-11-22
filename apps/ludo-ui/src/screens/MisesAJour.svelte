@@ -24,7 +24,11 @@
     if (progress[it.id] !== undefined && progress[it.id] !== 'fait') return;
     if (progress[it.id] === 'fait') return;
     delete failed[it.id];
+    const row = (document.activeElement as HTMLElement | null)?.closest('.item');
     progress[it.id] = 0;
+    // Le bouton cède la place à la barre : le focus passe au bouton voisin au lieu de se perdre
+    // (sinon la croix repartirait du haut de l'écran).
+    requestAnimationFrame(() => keepFocusNear(row));
     const [game, file] = it.id.split('|');
     try {
       await api.installContent(game, Number(file), (p) => (progress[it.id] = Math.round(p * 100)));
@@ -35,6 +39,15 @@
       failed[it.id] = e instanceof Error ? e.message : String(e);
       feedback('err');
     }
+  }
+
+  function keepFocusNear(row: Element | null | undefined) {
+    if (!row || (document.activeElement && document.activeElement !== document.body)) return;
+    const acts = [...document.querySelectorAll<HTMLElement>('.item .act')];
+    const after = acts.find((el) => row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const target = after ?? acts.at(-1);
+    if (target) target.focus({ preventScroll: false });
+    else focusFirst();
   }
 
   function load() {
@@ -50,9 +63,24 @@
     });
   }
 
-  function runAll() {
-    items.forEach((it, k) => setTimeout(() => run(it), k * 300));
+  /**
+   * Tout installer, un élément après l'autre : en parallèle, la mise à jour et le DLC d'un même jeu
+   * mélangeaient leurs barres (la progression est suivie par jeu) et les sons de fin s'empilaient.
+   */
+  let runningAll = $state(false);
+  async function runAll() {
+    if (runningAll) return;
+    runningAll = true;
+    try {
+      for (const it of items) if (progress[it.id] === undefined) await run(it);
+    } finally {
+      runningAll = false;
+      // Le bouton disparaît quand tout est lancé : le focus ne doit pas rester sur un élément retiré.
+      if (!pending) focusFirst();
+    }
   }
+  /** Reste-t-il un élément à lancer ? (Sinon le bouton « Tout mettre à jour » n'a plus de sens.) */
+  const pending = $derived(items.some((it) => progress[it.id] === undefined));
   onMount(() => {
     load();
     // Ouvrir l'écran relance la recherche d'une nouvelle version de l'app (sauf si déjà trouvée).
@@ -69,7 +97,7 @@
 <div class="screen">
   <header>
     <h1>Mises à jour</h1>
-    {#if items.length}<button class="all focusable" data-autofocus onclick={runAll}>Tout mettre à jour</button>{/if}
+    {#if items.length && (pending || runningAll)}<button class="all focusable" data-autofocus aria-busy={runningAll} onclick={runAll}>{runningAll ? 'Mise à jour…' : 'Tout mettre à jour'}</button>{/if}
   </header>
 
   <main>
@@ -98,7 +126,7 @@
           {:else if appUpdate.status === 'restarting'}
             <span class="pct">Redémarrage…</span>
           {:else}
-            <button class="act focusable" data-autofocus onclick={() => { feedback('ok'); void installAppUpdate(); }}>{appUpdate.status === 'error' ? 'Réessayer' : 'Mettre à jour'}</button>
+            <button class="act focusable" data-autofocus data-sound="none" onclick={() => { feedback('ok'); void installAppUpdate(); }}>{appUpdate.status === 'error' ? 'Réessayer' : 'Mettre à jour'}</button>
           {/if}
         </div>
       </section>
@@ -135,7 +163,8 @@
   .screen { height: 100%; display: flex; flex-direction: column; }
   header { padding: 36px 64px 0; display: flex; align-items: center; justify-content: space-between; }
   h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
-  .all { all: unset; cursor: pointer; font-size: 16px; font-weight: 600; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: var(--ground); }
+  .all[aria-busy='true'] { opacity: 0.7; cursor: default; }
+  .all { all: unset; cursor: pointer; white-space: nowrap; flex-shrink: 0; font-size: 16px; font-weight: 600; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: var(--ground); }
   main { flex-grow: 1; overflow-y: auto; padding: 28px 64px 24px; display: flex; flex-direction: column; gap: 26px; }
   section { display: flex; flex-direction: column; gap: 10px; }
   h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; color: var(--ink-3); }
@@ -152,7 +181,6 @@
   .done { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); animation: pop 320ms var(--ease-pop); }
   .mini { width: 120px; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; display: block; }
   .mini span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 120ms linear; }
-  .empty { color: var(--ink-3); font-size: 17px; }
   .fail { font-size: 13px; color: #ff9b9b; }
   .item.app { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
   .bar { display: block; margin-top: 8px; height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
