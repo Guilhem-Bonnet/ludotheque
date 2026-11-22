@@ -1491,8 +1491,8 @@ mod tests {
         };
         let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "n64")];
         let inv = vec![
-            ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None },
-            ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()) },
+            ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None, rom: None },
+            ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()), rom: None },
         ];
         apply_inventory(&mut lib, &inv);
         assert_eq!((lib[0].install, lib[0].stream, lib[0].emulator.as_str(), lib[0].sync), ("installe", false, "Eden", "a_jour"));
@@ -1810,7 +1810,7 @@ mod tests {
             ludo_proto::DeviceInventory {
                 device: "thor".into(),
                 updated_at: 0,
-                games: vec![ludo_proto::DeviceGame { game: "switch2-x".into(), installed: false, stream: true, save: false, stream_app: None }],
+                games: vec![ludo_proto::DeviceGame { game: "switch2-x".into(), installed: false, stream: true, save: false, stream_app: None, rom: None }],
             },
         ];
         let r = remote_devices(inv, "pc");

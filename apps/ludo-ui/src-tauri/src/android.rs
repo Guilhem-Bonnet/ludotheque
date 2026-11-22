@@ -226,7 +226,12 @@ pub enum Plan {
 pub fn plan(game: &CatalogGame, roms: &[RomFile], conf: &AndroidConf, inv: Option<&DeviceGame>, mode: Option<&str>) -> Result<Plan, String> {
     let local = || -> Result<Plan, String> {
         let emu = emulator_for(&game.console).ok_or("Aucun émulateur Android pris en charge pour cette console")?;
-        let rom = find_rom(game, roms).ok_or_else(|| format!("Jeu absent du dossier des ROM ({})", emu.dir))?;
+        // ROM désignée par l'inventaire du PC (trouvée par nom ou par identifiant de titre), sinon par nom.
+        let rom = inv
+            .and_then(|i| i.rom.as_deref())
+            .and_then(|r| roms.iter().find(|f| f.is_dir == emu.folder && format!("{}/{}", f.dir, f.name) == r))
+            .or_else(|| find_rom(game, roms))
+            .ok_or_else(|| format!("Jeu absent du dossier des ROM ({})", emu.dir))?;
         Ok(Plan::Local { emu, uri: rom.uri.clone() })
     };
     let stream = || -> Result<Plan, String> {
@@ -519,7 +524,7 @@ mod tests {
     fn plan_local_puis_flux() {
         let conf = AndroidConf::parse("serveur = \"x\"\nappareil = \"thor\"\n[moonlight]\nhote = \"H\"\n");
         let mk8 = game("switch-mk8", "switch", "switch/Mario Kart 8 Deluxe [0100152000022000][v0].nsp");
-        let inv = DeviceGame { game: "switch-mk8".into(), installed: false, stream: true, save: true, stream_app: Some("MK8 · Ludothèque".into()) };
+        let inv = DeviceGame { game: "switch-mk8".into(), installed: false, stream: true, save: true, stream_app: Some("MK8 · Ludothèque".into()), rom: None };
         assert_eq!(plan(&mk8, &[], &conf, Some(&inv), None), Ok(Plan::Stream { host: "H".into(), app: "MK8 · Ludothèque".into(), hdr: false }));
         let roms = [rom("switch", "Mario Kart 8 Deluxe [0100152000022000][US][v0].nsp")];
         assert!(matches!(plan(&mk8, &roms, &conf, Some(&inv), None), Ok(Plan::Local { .. })));
@@ -530,5 +535,24 @@ mod tests {
         // Appli imposée par la configuration.
         let conf = AndroidConf::parse("[moonlight]\nhote = \"H\"\napplis = { switch-mk8 = \"Autre\" }\n");
         assert_eq!(stream_app(&conf, Some(&inv), "switch-mk8").as_deref(), Some("Autre"));
+    }
+
+    /// LM2 : nom du catalogue et nom sur la Thor différents (même identifiant de titre, rapprochés par
+    /// le PC) ; l'app lance la ROM que l'inventaire désigne.
+    #[test]
+    fn rom_designee_par_l_inventaire() {
+        let conf = AndroidConf::parse("serveur = \"x\"\nappareil = \"thor\"\n");
+        let lm2 = game("3ds-3ds0239-luigis-mansion-2", "3ds", "3ds/3DS0239 - Luigis Mansion 2(Europe)(En,Fr,Ge,It,Es,Nl,Pt,Ru).cxi");
+        let roms = [rom("n3ds", "Luigi's Mansion - Dark Moon (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi")];
+        assert!(plan(&lm2, &roms, &conf, None, None).is_err(), "le nom seul ne la trouve pas");
+        let inv = DeviceGame {
+            game: lm2.id.clone(),
+            installed: true,
+            stream: false,
+            save: false,
+            stream_app: None,
+            rom: Some("n3ds/Luigi's Mansion - Dark Moon (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi".into()),
+        };
+        assert!(matches!(plan(&lm2, &roms, &conf, Some(&inv), None), Ok(Plan::Local { uri, .. }) if uri == roms[0].uri));
     }
 }
