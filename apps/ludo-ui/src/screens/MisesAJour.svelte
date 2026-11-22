@@ -173,7 +173,7 @@
   .screen { height: 100%; display: flex; flex-direction: column; }
   header { padding: 36px 64px 0; display: flex; align-items: center; justify-content: space-between; }
   h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
-  .all { all: unset; cursor: pointer; white-space: nowrap; flex-shrink: 0; font-size: 16px; font-weight: 600; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: var(--ground); }
+  .all { all: unset; cursor: pointer; box-sizing: border-box; min-height: 44px; display: inline-flex; align-items: center; white-space: nowrap; flex-shrink: 0; font-size: 16px; font-weight: 600; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: var(--ground); }
   main { flex-grow: 1; overflow-y: auto; padding: 28px 64px 24px; display: flex; flex-direction: column; gap: 26px; }
   section { display: flex; flex-direction: column; gap: 10px; }
   h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; color: var(--ink-3); }
@@ -182,7 +182,8 @@
   .text { display: flex; flex-direction: column; gap: 4px; flex-grow: 1; min-width: 0; }
   .title { font-size: 17px; font-weight: 500; }
   .detail { font-size: 14px; color: var(--ink-3); }
-  .act { all: unset; cursor: pointer; font-size: 15px; padding: 9px 16px; border-radius: var(--radius-control); background: var(--control); color: var(--ink); }
+  /* Cibles tactiles d'au moins 44 px (Thor, Deck). */
+  .act { all: unset; cursor: pointer; box-sizing: border-box; min-height: 44px; display: inline-flex; align-items: center; font-size: 15px; padding: 9px 16px; border-radius: var(--radius-control); background: var(--control); color: var(--ink); }
   .act:focus { background: var(--accent); color: var(--ground); }
   .item { transition: background-color 600ms ease-out; }
   .item.success { animation: success-flash 900ms ease-out; }
