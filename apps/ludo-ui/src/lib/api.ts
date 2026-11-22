@@ -181,7 +181,15 @@ const demoApi: LudoApi = {
   },
   async profiles() { return PROFILES; },
   async recent() { return GAMES.slice(0, 5); },
-  async library() { return GAMES; },
+  // `?jeux=300` : bibliothèque gonflée de copies (essai de performance de la bibliothèque).
+  async library() {
+    const n = Number(new URLSearchParams(location.search).get('jeux'));
+    if (!(n > GAMES.length)) return GAMES;
+    return Array.from({ length: n }, (_, i) => {
+      const g = GAMES[i % GAMES.length];
+      return i < GAMES.length ? g : { ...g, id: `${g.id}-${i}`, title: `${g.title} ${i}`, last: undefined };
+    });
+  },
   async history() {
     return [
       { rev: 9, device: 'Steam Deck', deviceKind: 'deck', when: "Aujourd'hui 20:15", playtime: '12 h 40', current: true },
