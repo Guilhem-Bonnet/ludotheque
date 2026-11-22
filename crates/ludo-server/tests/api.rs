@@ -311,6 +311,19 @@ async fn profils_creation_mise_a_jour_et_ordre() {
 }
 
 #[tokio::test]
+async fn profil_avatar_perso_accepte_hors_format_refuse() {
+    let a = app();
+    let (s, b) = call(&a, put_profile_req("claire", profile_json("claire", "Claire", "perso:link-tp"))).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+    let p: Profile = serde_json::from_slice(&b).unwrap();
+    assert_eq!(p.avatar_kind.as_deref(), Some("perso:link-tp"));
+    for kind in ["perso:", "perso:Link", "perso:../x", "inconnu"] {
+        let (s, b) = call(&a, put_profile_req("claire", profile_json("claire", "Claire", kind))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{kind} : {}", String::from_utf8_lossy(&b));
+    }
+}
+
+#[tokio::test]
 async fn profils_invalides_refuses() {
     let a = app();
     let mut sans_prefs = profile_json("claire", "Claire", "chat");

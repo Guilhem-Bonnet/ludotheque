@@ -128,7 +128,8 @@ impl Default for ProfilePrefs {
 pub struct Profile {
     pub id: ProfileId,
     pub name: String,
-    /// Personnage illustré (une valeur de [`AVATAR_KINDS`]) ; absent = initiale sur l'accent.
+    /// Personnage : une valeur de [`AVATAR_KINDS`], ou un avatar personnalisé `perso:<slug>` (slug de
+    /// 1 à 40 caractères `[a-z0-9-]`, validé par le serveur) ; absent = initiale sur l'accent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_kind: Option<String>,
     pub accent: String,
