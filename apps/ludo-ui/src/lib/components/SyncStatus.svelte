@@ -56,8 +56,10 @@
   .orbit { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; opacity: 0.9; }
   .sync .ico :global(svg:not(.orbit)) { opacity: 0.85; }
   .cloud.sync { gap: 13px; padding-left: 15px; }
-  .conflit { background: color-mix(in srgb, var(--conflict) 22%, transparent); }
-  .attente { background: color-mix(in srgb, var(--pending) 18%, transparent); }
+  /* Teintes précalculées (--conflict #c58cff à 22 %, --pending #f2b84b à 18 %) : color-mix() est absent de la
+     WebView de la Thor (Chromium 109), la déclaration y serait ignorée. */
+  .conflit { background: rgba(197, 140, 255, 0.22); }
+  .attente { background: rgba(242, 184, 75, 0.18); }
   /* Focus : la pastille se soulève, l'anneau d'accent se pose. */
   .cloud.focusable:focus { background: rgba(255, 255, 255, 0.2); transform: translateY(-2px); box-shadow: 0 0 0 3px var(--accent), 0 8px 18px rgba(0, 0, 0, 0.3); }
   @media (prefers-reduced-motion: no-preference) {

@@ -50,14 +50,16 @@
   .hint { all: unset; cursor: pointer; padding: 6px 8px; margin: -6px -8px; border-radius: 10px; display: flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out; }
   .key {
     width: 24px; height: 24px; border-radius: 50%; background: var(--hint); color: var(--ink);
-    font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center;
     transition: transform var(--t-std) var(--ease-pop), background-color var(--t-quick) ease-out, box-shadow var(--t-std) var(--ease-land);
   }
+  /* 13 px minimum : lisible sur le Deck (1280×800). Halo de la touche allumée : --accent-soft (teinte
+     d'accent précalculée par profil), pas color-mix() — absent de la WebView de la Thor (Chromium 109). */
   .key.primary { background: var(--ink); color: var(--ground); }
-  .kbd { display: none; width: auto; min-width: 24px; padding: 0 7px; box-sizing: border-box; border-radius: 6px; font-size: 11px; }
+  .kbd { display: none; width: auto; min-width: 24px; padding: 0 7px; box-sizing: border-box; border-radius: 6px; font-size: 13px; }
   :global(html[data-input='key']) .kbd { display: flex; }
   :global(html[data-input='key']) .pad { display: none; }
   .hint:hover { color: var(--ink); background: rgba(255, 255, 255, 0.06); }
   .hint.lit { color: var(--ink); }
-  .hint.lit .key { transform: scale(0.86); background: var(--accent); color: var(--ground); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); transition-duration: 60ms; }
+  .hint.lit .key { transform: scale(0.86); background: var(--accent); color: var(--ground); box-shadow: 0 0 0 4px var(--accent-soft); transition-duration: 60ms; }
 </style>

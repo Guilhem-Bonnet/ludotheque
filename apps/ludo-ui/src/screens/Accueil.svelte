@@ -407,7 +407,8 @@
   .who { display: flex; align-items: center; gap: 14px; }
   .who-text { display: flex; flex-direction: column; gap: 2px; }
   .name { font-size: 17px; font-weight: 600; }
-  .device { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+  /* 13 px minimum (lisible sur le Deck, 1280×800). */
+  .device { font-size: 13px; color: rgba(255, 255, 255, 0.72); }
   .status { display: flex; align-items: center; gap: 14px; font-size: 15px; color: var(--ink); }
 
   .row-wrap { padding: 48px 0 0 48px; }
