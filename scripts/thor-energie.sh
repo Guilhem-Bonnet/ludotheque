@@ -26,8 +26,8 @@ releve() {
     echo "statut $(cat /sys/class/power_supply/battery/status)"
     echo "ecran $(dumpsys power | grep -o "mWakefulness=[A-Za-z]*" | head -1 | cut -d= -f2)"
     echo "doze $(dumpsys deviceidle | grep -m1 -o "mState=[A-Z_]*" | cut -d= -f2) $(dumpsys deviceidle | grep -m1 -o "mLightState=[A-Z_]*" | cut -d= -f2)"
-    echo "suspensions $(cat /sys/power/suspend_stats/success)"
-    echo "echecs $(cat /sys/power/suspend_stats/fail)"
+    echo "suspensions $(cat /sys/power/suspend_stats/success 2>/dev/null || echo 0)"
+    echo "echecs $(cat /sys/power/suspend_stats/fail 2>/dev/null || echo 0)"
     cd /sys/class/wakeup && for w in *; do
       a=$(cat $w/active_count 2>/dev/null) || continue
       [ "$a" = 0 ] && continue
@@ -52,6 +52,8 @@ def lire(p):
     return d, src
 (a, sa), (b, sb) = lire(sys.argv[1]), lire(sys.argv[2])
 h = (float(b["boottime"]) - float(a["boottime"])) / 3600
+if h <= 0:
+    sys.exit("relevés de même instant ou dans le désordre : rien à comparer")
 print(f"période : {h*60:.1f} min ; écran {a['ecran']} → {b['ecran']} ; doze {a['doze']} → {b['doze']} ; statut {a['statut']} → {b['statut']}")
 dn = int(a["niveau"]) - int(b["niveau"])
 dq = (int(a["charge_uah"]) - int(b["charge_uah"])) / 1000
@@ -79,7 +81,7 @@ def h(s):
 print("période | écran éteint %/h | écran allumé %/h")
 for b in re.split(r"\n  Daily from ", txt)[1:]:
     per = b.split(":\n")[0]
-    f = lambda k: (lambda m: f"{100 / h(m.group(1)):.2f} ({m.group(2)} pas)" if m else "—")(re.search(rf"Discharge screen {k} time: ([^(]+)\(from (\d+) steps", b))
+    f = lambda k: (lambda m: f"{100 / h(m.group(1)):.2f} ({m.group(2)} pas)" if m and h(m.group(1)) > 0 else "—")(re.search(rf"Discharge screen {k} time: ([^(]+)\(from (\d+) steps", b))
     off, on = f("off"), f("on")
     print(f"{per} | {off} | {on}")
 '
@@ -91,7 +93,7 @@ case "${1:-}" in
   historique) historique ;;
   doze)
     case "${2:-etat}" in
-      etat) adb_ shell dumpsys deviceidle | grep -E 'mLightEnabled|mState=' ;;
+      etat) adb_ shell dumpsys deviceidle | grep -E 'mLightEnabled|mState=' || echo 'doze : état introuvable' ;;
       activer) adb_ shell dumpsys deviceidle enable all ;;
       retour) adb_ shell dumpsys deviceidle disable all ;;
       *) echo "doze etat|activer|retour" >&2; exit 2 ;;

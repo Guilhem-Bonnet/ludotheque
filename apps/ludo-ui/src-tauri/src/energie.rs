@@ -1,9 +1,10 @@
 //! Énergie : état de la batterie (indicateur d'angle) et repos de l'interface.
 //!
 //! Tout arrive par événement, jamais par scrutation :
-//! - **Android** (Ayn Thor) : le plugin Kotlin `EnergiePlugin` reçoit `ACTION_BATTERY_CHANGED` tant que
-//!   l'app est visible et le pousse lui-même aux pages (événement DOM `ludo-batterie`) ; il met aussi
-//!   les minuteries JavaScript en pause quand l'app n'est plus visible (écran éteint, jeu lancé).
+//! - **Android** (Ayn Thor) : la page lit la batterie elle-même (`navigator.getBattery()` de la WebView,
+//!   événements `levelchange` / `chargingchange`) ; le plugin Kotlin `EnergiePlugin` met les minuteries
+//!   JavaScript en pause quand l'app n'est plus visible et baisse la luminosité de l'écran du haut au
+//!   repos (commande `energie_repos`).
 //! - **Linux** (Steam Deck, portable) : batterie lue dans `/sys/class/power_supply` au démarrage, puis
 //!   relue à chaque changement signalé par UPower (`upower --monitor`, flux poussé par D-Bus) ; sans
 //!   UPower, l'interface relit seulement au retour du focus (événement de fenêtre).
@@ -40,8 +41,9 @@ pub fn batterie_etat() -> Option<Batterie> {
 
 /// Repos de l'interface (inactivité) : sur Android, assombrit l'écran du haut (luminosité de la
 /// fenêtre de l'activité) et prévient la page du haut ; ailleurs, rien de plus que le voile CSS.
+// Asynchrone : `run_mobile_plugin` attend la réponse du fil d'interface Android, jamais sur la boucle principale.
 #[tauri::command]
-pub fn energie_repos(app: tauri::AppHandle, actif: bool) -> Result<(), String> {
+pub async fn energie_repos(app: tauri::AppHandle, actif: bool) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
         android::repos(&app, actif)
@@ -78,6 +80,10 @@ fn lire(dir: &std::path::Path) -> Option<Batterie> {
     Some(Batterie { niveau, en_charge: secteur || status == "Charging" || status == "Full" })
 }
 
+/// `upower --monitor` en cours (bureau), arrêté à la fermeture de l'app par [`arreter`].
+#[cfg(target_os = "linux")]
+static UPOWER: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+
 /// Bureau : suit UPower et émet [`EVENT_BATTERIE`] quand l'état lu change. Rien sans batterie.
 /// `upower --monitor` n'écrit qu'à un changement (signal D-Bus de UPower) : la boucle de lecture
 /// attend ces lignes, elle ne relit rien d'elle-même. Fin du flux (UPower absent ou arrêté) = fin du
@@ -88,9 +94,12 @@ pub fn suivre(app: tauri::AppHandle) {
     use std::process::{Command, Stdio};
     use tauri::Emitter;
     let Some(mut dernier) = batterie_etat() else { return };
+    let Ok(mut child) = Command::new("upower").arg("--monitor").stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
+    let Some(out) = child.stdout.take() else { return };
+    if let Ok(mut g) = UPOWER.lock() {
+        *g = Some(child);
+    }
     std::thread::spawn(move || {
-        let Ok(mut child) = Command::new("upower").arg("--monitor").stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
-        let Some(out) = child.stdout.take() else { return };
         for line in BufReader::new(out).lines() {
             if line.is_err() {
                 break;
@@ -102,8 +111,20 @@ pub fn suivre(app: tauri::AppHandle) {
                 }
             }
         }
-        let _ = child.wait();
+        // Flux fermé : processus terminé (ou tué par `arreter`), récupéré ici.
+        if let Some(mut c) = UPOWER.lock().ok().and_then(|mut g| g.take()) {
+            let _ = c.wait();
+        }
     });
+}
+
+/// Fermeture de l'app : `upower --monitor` ne doit pas lui survivre.
+pub fn arreter() {
+    #[cfg(target_os = "linux")]
+    if let Some(mut c) = UPOWER.lock().ok().and_then(|mut g| g.take()) {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
 }
 
 #[cfg(target_os = "android")]

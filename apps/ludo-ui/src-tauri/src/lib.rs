@@ -1461,7 +1461,10 @@ pub fn run() {
             }
             // Arrêt voulu malgré la partie : l'émulateur est terminé proprement, la sauvegarde reste
             // locale et sera synchronisée au prochain lancement.
-            tauri::RunEvent::Exit => launch::terminate_running(),
+            tauri::RunEvent::Exit => {
+                launch::terminate_running();
+                energie::arreter();
+            }
             _ => {}
         });
 }
