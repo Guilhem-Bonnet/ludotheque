@@ -92,7 +92,7 @@ enum Cmd {
         resoudre: Option<Choix>,
     },
     /// Démon : synchronise l'appareil adb à chaque événement — branchement (USB ou Wi-Fi, flux
-    /// `adb track-devices`), fermeture d'un émulateur (`am_proc_died` du journal Android),
+    /// `adb track-devices`), fermeture d'un émulateur (`am_proc_died` ou `am_kill` du journal Android),
     /// écriture d'une sauvegarde (`inotifyd` sur l'appareil, anti-rebond). Aucune scrutation.
     AdbWatch,
     /// Démon : surveille (inotify) les dossiers de sauvegarde des émulateurs de CET appareil et
@@ -596,10 +596,19 @@ fn spawn_device_stream(serial: &str, script: &str, tx: std::sync::mpsc::Sender<W
     Some(child)
 }
 
-/// `am_proc_died: [user,pid,paquet,…]` → paquet.
+/// Fin d'un processus de l'appareil → paquet :
+/// - `am_proc_died: [user,pid,processus,…]` : mort naturelle ou plantage ;
+/// - `am_kill: [user,pid,processus,adj,raison]` : arrêt forcé (« Forcer l'arrêt », `am force-stop`,
+///   `am kill`), qui n'écrit PAS `am_proc_died` (mesuré sur la Thor le 22/11 : « Fermer le jeu » de la
+///   Ludothèque passe par « Forcer l'arrêt », sans synchro tant que seul `am_proc_died` était lu).
+///
+/// Le processus peut porter un suffixe (`info.cemu.cemu:EmulationProcess`) : seul le paquet compte.
 fn proc_died(line: &str) -> Option<WatchEv> {
-    let inner = line.split("am_proc_died:").nth(1)?.trim().trim_start_matches('[');
-    inner.split(',').nth(2).map(|p| WatchEv::ProcDied(p.trim().to_string()))
+    let inner = line.split("am_proc_died:").nth(1).or_else(|| line.split("am_kill:").nth(1))?;
+    let inner = inner.trim().trim_start_matches('[');
+    let process = inner.split(',').nth(2)?.trim();
+    let package = process.split(':').next().unwrap_or(process);
+    (!package.is_empty()).then(|| WatchEv::ProcDied(package.to_string()))
 }
 
 /// Ligne d'`inotifyd -` : « <événement>\t<dossier>[\t<nom>] ». `n` (création) dans une racine
@@ -714,7 +723,7 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                         let (dirs, pk) = watch_dirs(ctx, &dev);
                         packages = pk;
                         // Fin de partie : mort du processus de l'émulateur (journal d'événements Android).
-                        if let Some(c) = spawn_device_stream(&serial, "logcat -b events -T 1 -s am_proc_died", tx.clone(), proc_died) {
+                        if let Some(c) = spawn_device_stream(&serial, "logcat -b events -T 1 -s am_proc_died am_kill", tx.clone(), proc_died) {
                             watchers.push(c);
                         }
                         // Écritures de sauvegarde (inotifyd de toybox : w = fichier fermé après écriture, m = renommé vers
@@ -1034,6 +1043,12 @@ mod tests_evenements {
         let l = "11-16 21:39:17.846  2143  8889 I am_proc_died: [0,18736,dev.eden.eden_emulator,905,19]";
         assert!(matches!(proc_died(l), Some(WatchEv::ProcDied(p)) if p == "dev.eden.eden_emulator"));
         assert!(proc_died("--------- beginning of events").is_none());
+        // Arrêt forcé (« Forcer l'arrêt ») : seul am_kill est écrit (Thor, 22/11 12:54:24).
+        let k = "11-22 12:54:24.069 I/am_kill ( 2143): [0,10659,org.azahar_emu.azahar,900,stop org.azahar_emu.azahar due to from pid 3826]";
+        assert!(matches!(proc_died(k), Some(WatchEv::ProcDied(p)) if p == "org.azahar_emu.azahar"));
+        // Processus secondaire d'un émulateur : le paquet seul (Thor, 22/11 11:10:38).
+        let c = "11-22 11:10:38.215  2143  2414 I am_proc_died: [0,1113,info.cemu.cemu:EmulationProcess,0,2]";
+        assert!(matches!(proc_died(c), Some(WatchEv::ProcDied(p)) if p == "info.cemu.cemu"));
     }
 
     #[test]

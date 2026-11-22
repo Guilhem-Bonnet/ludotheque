@@ -45,6 +45,12 @@
     }
     enCours.confirmation = null;
     feedback('ok');
+    // La carte disparaît avec le bouton qui avait le focus : il revient à la tuile choisie de l'accueil.
+    requestAnimationFrame(() => {
+      const tuile = document.querySelector<HTMLElement>('.slot.focused .tile');
+      if (tuile) tuile.focus({ preventScroll: true });
+      else focusFirst();
+    });
     // Android : la page d'Android (« Forcer l'arrêt ») s'ouvre ; le jeu suivant part au retour ici.
     if (isAndroid && d.ensuite) enCours.apresRetour = d.ensuite;
     else d.ensuite?.();

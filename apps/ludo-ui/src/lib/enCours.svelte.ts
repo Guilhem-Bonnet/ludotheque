@@ -1,8 +1,8 @@
 // Menu en jeu (lot menu-jeu du 22/11) : jeu ouvert pendant que la Ludothèque est devant.
 //
-// Android : pendant une partie, la Ludothèque revient devant (bouton Mode via le service d'accessibilité
-// facultatif MenuJeuService.kt, raccourci AYN « Lancer une appli », HOME puis Cocoon) ; l'accueil met
-// alors le jeu en tête (carte « En cours » : Reprendre, Fermer le jeu). HOME n'est jamais capté.
+// Android : pendant une partie, la Ludothèque revient devant par le raccourci de touches AYN « Start
+// app » ou HOME puis Cocoon (aucune touche système captée) ; l'accueil met alors le jeu en tête
+// (carte « En cours » : Reprendre, Fermer le jeu).
 // L'état est relu quand la page redevient visible (`visibilitychange`) : un événement, pas une
 // scrutation. Bureau : la partie est portée par l'écran « En jeu » (Passage) ; seules `reprendre` et
 // `fermer` servent (réduire la fenêtre, terminer l'émulateur).
@@ -17,8 +17,6 @@ export interface JeuEnCours {
 }
 
 export interface EtatMenu {
-  serviceActif: boolean;
-  serviceRequis: boolean;
   jeu?: JeuEnCours;
 }
 
@@ -30,7 +28,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 /** Démonstration (navigateur) : `?enCours=<id du jeu>` simule une partie ouverte depuis 42 min. */
 function demoEtat(): EtatMenu {
   const id = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('enCours') : null;
-  return { serviceActif: true, serviceRequis: true, jeu: id ? { game: id, depuisMs: Date.now() - 42 * 60_000 } : undefined };
+  return { jeu: id ? { game: id, depuisMs: Date.now() - 42 * 60_000 } : undefined };
 }
 
 /** Durée de session lisible : « 42 min », « 1 h 05 ». */
@@ -42,7 +40,7 @@ export function dureeSession(depuisMs: number, maintenant = Date.now()): string 
 }
 
 class EnCoursStore {
-  etat = $state<EtatMenu>({ serviceActif: false, serviceRequis: false });
+  etat = $state<EtatMenu>({});
   /** Le jeu ouvert vient de rendre la main à la Ludothèque (l'accueil met sa carte en avant). */
   retour = $state(0);
   /** Confirmation affichée : fermer le jeu ouvert, puis éventuellement lancer `ensuite`. */
@@ -100,10 +98,6 @@ class EnCoursStore {
     const oui = this.fermetureDemandee;
     this.fermetureDemandee = false;
     return oui;
-  }
-
-  async reglages(): Promise<void> {
-    if (!isDemo) await invoke('menuJeuReglages');
   }
 
   /** Démarre l'écoute : état relu au démarrage et chaque fois que la Ludothèque redevient visible. */
