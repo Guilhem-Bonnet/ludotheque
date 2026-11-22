@@ -49,6 +49,9 @@
     background: rgba(255, 255, 255, 0.1); font-size: 15px; color: var(--ink); white-space: nowrap;
     transition: background-color var(--t-std) ease-out, transform var(--t-quick) var(--ease-pop), box-shadow var(--t-std) var(--ease-land);
   }
+  /* Cible tactile ≥ 44 px sans changer le dessin (pastille de 34 px) : zone invisible qui déborde de 5 px. */
+  .cloud { position: relative; }
+  .cloud::before { content: ''; position: absolute; inset: -5px 0; }
   .ico { display: inline-flex; position: relative; }
   .orbit { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; opacity: 0.9; }
   .sync .ico :global(svg:not(.orbit)) { opacity: 0.85; }

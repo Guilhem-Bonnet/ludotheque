@@ -116,3 +116,7 @@ button { font: inherit; color: inherit; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--hint); border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* Fenêtre sans focus ou cachée (nav.ts pose `data-idle`) : toutes les animations en boucle s'arrêtent,
+   pour ne rien coûter pendant une partie. Elles reprennent là où elles étaient au retour du focus. */
+[data-idle] *, [data-idle] *::before, [data-idle] *::after { animation-play-state: paused !important; }

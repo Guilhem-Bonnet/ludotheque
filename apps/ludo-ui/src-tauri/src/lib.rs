@@ -9,6 +9,9 @@
 
 pub mod android;
 pub mod rumble;
+// Manette native : démarrée au bureau seulement (sur Android, MainActivity traduit les entrées).
+#[cfg_attr(mobile, allow(dead_code))]
+pub mod pad;
 
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
 use ludo_client::api::Client;
@@ -1330,10 +1333,25 @@ pub fn run() {
         android::prepare_env(app.handle());
         Ok(())
     });
+    // Bureau : manette lue nativement (pad.rs), transmise à l'interface seulement fenêtre au premier plan.
+    #[cfg(desktop)]
+    let builder = builder.setup(|app| {
+        let handle = app.handle().clone();
+        pad::init(move |e| {
+            let _ = handle.emit(pad::EVENT_PAD, e);
+        });
+        Ok(())
+    });
     builder
         // Partie en cours : la fenêtre ne se ferme pas (l'émulateur serait orphelin et la
         // sauvegarde jamais envoyée) ; l'interface affiche « Partie en cours : fermer le jeu d'abord ».
         .on_window_event(|window, event| {
+            // Focus de la fenêtre : la manette native n'agit qu'au premier plan, et l'interface met ses
+            // animations en pause (WebKitGTK n'envoie pas toujours `blur` à la page).
+            if let tauri::WindowEvent::Focused(focused) = event {
+                pad::set_focus(*focused);
+                let _ = window.app_handle().emit(pad::EVENT_FOCUS, *focused);
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if launch::game_running() {
                     api.prevent_close();
