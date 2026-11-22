@@ -15,6 +15,7 @@
   import { glideIntoView } from '../lib/glide';
   import { router } from '../lib/router.svelte';
   import Icon from '../lib/components/Icon.svelte';
+  import { layout } from '../lib/layout';
   import type { Console, DeviceInfo, Game, RemoteDevice } from '../lib/types';
 
   // Bibliothèque façon boutique de console : bannière « À la une » et une rangée par console quand
@@ -75,6 +76,8 @@
   let indicator = $state({ x: 0, w: 0, ready: false });
   $effect(() => {
     const el = tabEls[st.tab];
+    // Gabarit changé (fenêtre redimensionnée, passage à l'écran du bas de la Thor) : onglets déplacés, on remesure.
+    void $layout;
     if (!el) return;
     const prev = untrack(() => indicator);
     indicator = { x: el.offsetLeft, w: el.offsetWidth, ready: prev.ready || prev.w > 0 };
@@ -279,6 +282,18 @@
   const home = $derived(st.tab === 0 && !st.avail && !st.sync && !st.played && st.sort === 'recents' && !term && !remote);
   const sorted = $derived(sortGames(games));
   const featured = $derived(sorted.filter((g) => g.last && recentRank.has(g.id)));
+  // Écran du bas de la Thor en double écran : la vitrine du jeu choisi est sur l'écran du haut (EcranHaut.svelte),
+  // la bannière « À la une » n'est pas répétée en bas ; la place va à la grille (lot thor-ui, 22/11).
+  const vitrine = $derived($layout.ecran === 'bas' ? [] : featured);
+  // Bannière retirée alors qu'elle avait le focus (écran du bas annoncé après le montage) : le focus revient à la
+  // première tuile au lieu de tomber sur la page (revue).
+  $effect(() => {
+    void vitrine.length;
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (!a || a === document.body || !a.isConnected) focusFirst();
+    });
+  });
   const rows = $derived(
     TABS.slice(1)
       .map((t, i) => ({ tab: i + 1, label: t.label, all: sorted.filter((g) => g.console === t.id) }))
@@ -299,7 +314,7 @@
    * première rangée, la bannière. Sans cible (dernière rangée) : calcul spatial habituel.
    */
   function navTo(r: number, col: number): string | undefined {
-    if (r < 0) return featured.length ? '.une .btn.primary' : undefined;
+    if (r < 0) return vitrine.length ? '.une .btn.primary' : undefined;
     const row = rows[r];
     if (!row) return undefined;
     const last = Math.min(row.all.length, ROW_MAX) - (row.all.length > ROW_MAX ? 0 : 1);
@@ -447,8 +462,8 @@
       {:else if loaded && games.length === 0}
         <StateNotice icon="grid" title="Aucun jeu dans le catalogue" detail="Ajouter des ROM sur le serveur, puis relancer le balayage." autofocus={false} />
       {:else if home}
-        {#if featured.length}
-          <Une game={featured[0]} autofocus={!restoreShown} others={featured.slice(1, 4)} onplay={(g) => void play(g)} onopen={open} />
+        {#if vitrine.length}
+          <Une game={vitrine[0]} autofocus={!restoreShown} others={vitrine.slice(1, 4)} onplay={(g) => void play(g)} onopen={open} />
         {/if}
         {#each rows as row, ri (row.tab)}
           <section class="row" aria-label={row.label} data-row={ri}>
@@ -458,7 +473,7 @@
               {#each row.all.slice(0, ROW_MAX) as g, i (g.id)}
                 {@const s = stateOf(g)}
                 <div class="cell" style:--i={Math.min(i, 8)} data-cell={g.id} data-col={i} data-nav-up={navTo(ri - 1, i)} data-nav-down={navTo(ri + 1, i)}>
-                  <Tile game={g} size={168} autofocus={auto(g, !featured.length && ri === 0 && i === 0)} onfocus={() => (focusedId = g.id)} onclick={() => open(g)} />
+                  <Tile game={g} size={168} autofocus={auto(g, !vitrine.length && ri === 0 && i === 0)} onfocus={() => (focusedId = g.id)} onclick={() => open(g)} />
                   <span class="t">{g.title}</span>
                   <span class="s" style:color={s[1]}>{s[0]}</span>
                 </div>
@@ -592,4 +607,26 @@
   .sentinel { height: 1px; }
   .empty { display: flex; align-items: center; gap: 18px; color: var(--ink-3); font-size: 17px; }
   .empty p { margin: 0; }
+
+  /* ——— Écran du bas de la Ayn Thor en double écran (lot thor-ui, 22/11) ———
+     Vue ≈ 723×630 px logiques à l'échelle du Deck. Recherche, onglets, filtres et grille en bas ; la vitrine du
+     jeu choisi est en haut. Onglets et filtres sur une ligne chacun, qui défile au doigt (rien ne passe à la
+     ligne ni ne rapetisse) ; cibles ≥ 44 px, textes ≥ 13 px. */
+  :global(html[data-ecran='bas']) header { padding: 14px 24px 0; gap: 10px; }
+  :global(html[data-ecran='bas']) h1 { font-size: 22px; }
+  :global(html[data-ecran='bas']) .meta { display: none; }
+  :global(html[data-ecran='bas']) .search { max-width: none; }
+  :global(html[data-ecran='bas']) .line.wrap { flex-direction: column; align-items: stretch; flex-wrap: nowrap; row-gap: 8px; }
+  :global(html[data-ecran='bas']) .tabs,
+  :global(html[data-ecran='bas']) .filters { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; flex-shrink: 1; min-width: 0; margin: 0 -24px; padding: 2px 24px; }
+  :global(html[data-ecran='bas']) .tabs::-webkit-scrollbar,
+  :global(html[data-ecran='bas']) .filters::-webkit-scrollbar { display: none; }
+  :global(html[data-ecran='bas']) .filters { justify-content: flex-start; }
+  :global(html[data-ecran='bas']) .tab { min-height: 24px; padding: 10px 14px; flex-shrink: 0; }
+  :global(html[data-ecran='bas']) .bumper { flex-shrink: 0; }
+  :global(html[data-ecran='bas']) .pill { flex-shrink: 0; white-space: nowrap; }
+  :global(html[data-ecran='bas']) main { padding: 16px 24px 20px; }
+  :global(html[data-ecran='bas']) .grid { gap: 22px 18px; }
+  :global(html[data-ecran='bas']) .t { font-size: 16px; }
+  :global(html[data-ecran='bas']) .s { font-size: 14px; }
 </style>

@@ -34,6 +34,8 @@ export interface Layout {
   bottomH: number;
   stageMax: number;
   gutter: number;
+  /** `bas` : écran du bas de la Thor en double écran (vitrine du jeu sur l'écran du haut). */
+  ecran?: EcranMode;
 }
 
 /** Hauteur logique de référence : 800 (Deck, 1080p), 900 dès que l'écran dépasse 1100 px de haut (1440p, 4K). */
@@ -58,6 +60,29 @@ export function computeZoom(physW: number, physH: number): number {
   return Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)) * 1000) / 1000;
 }
 
+/**
+ * Taille physique d'un px CSS du Steam Deck, en dp Android : 1280 px sur la largeur d'un écran 7" 1280×800
+ * (≈ 215 ppp) = 0,118 mm ; 1 dp = 1/160 po = 0,159 mm → 0,744 dp. L'interface est dessinée et réglée pour le
+ * Deck (« 13 px minimum », cibles de 44 px) : à cette échelle, ces règles gardent le même sens physique.
+ */
+export const DECK_PX_DP = 0.744;
+
+/** Mode d'affichage annoncé par la coque Android (DoubleEcran.kt) : `bas` = écran du bas de la Thor en double écran. */
+export type EcranMode = 'bas' | 'seul' | undefined;
+
+/**
+ * Largeur logique (balise viewport) de la WebView Android pour une fenêtre de `outerW`×`outerH` dp.
+ * - Écran du bas de la Thor (`bas`, 538×469 dp en paysage) : 1 px CSS = 1 px du Deck (≈ 723×630 px logiques).
+ *   Mesuré le 22/11 avec l'ancienne règle (1280 px imposés) : 0,97 px physique par px CSS pour une densité de
+ *   2,31, soit une interface 2,4× plus petite qu'une appli Android et ~56 % de sa taille sur le Deck.
+ * - Un seul écran (Thor écran du haut, autres appareils) : règle d'origine, au moins 1280×800 visibles.
+ */
+export function androidViewportWidth(outerW: number, outerH: number, mode: EcranMode): number {
+  const ratio = outerW > 0 && outerH > 0 ? outerW / outerH : 16 / 10;
+  if (mode === 'bas' && outerW > 0) return Math.round(outerW / DECK_PX_DP);
+  return Math.ceil(Math.max(BASE_W, 800 * ratio));
+}
+
 /** Gabarit d'après le rapport largeur/hauteur : 16:10 et 3:2 → compact, 16:9 → large, 21:9 → ultra, 32:9 → super. */
 export function formatFor(ratio: number): Format {
   if (ratio < 0.9) return 'portrait';
@@ -68,10 +93,11 @@ export function formatFor(ratio: number): Format {
 }
 
 /** Mise en page pour une vue logique de `w`×`h` px. */
-export function computeLayout(w: number, h: number): Layout {
+export function computeLayout(w: number, h: number, mode?: EcranMode): Layout {
   const ratio = w > 0 && h > 0 ? w / h : 16 / 10;
   const format = formatFor(ratio);
-  const gutter = format === 'portrait' ? 32 : 48;
+  // Écran du bas de la Thor (≈ 723 px logiques) : marge de 24 px, la largeur va aux tuiles.
+  const gutter = mode === 'bas' ? 24 : format === 'portrait' ? 32 : 48;
   // Colonne latérale : 452 px de contenu + sa marge ; l'écran garde toujours au moins 1280 px.
   const sideW = 452;
   let side: Side = 'none';
@@ -88,7 +114,7 @@ export function computeLayout(w: number, h: number): Layout {
   }
   // Écrans de lecture (listes, réglages, conflit) : centrés, jamais plus larges que 1760 px.
   const stageMax = 1760;
-  return { format, ratio, w, h, side, sideW: side === 'none' || side === 'bottom' ? 0 : sideW, bottomH, stageMax, gutter };
+  return { format, ratio, w, h, side, sideW: side === 'none' || side === 'bottom' ? 0 : sideW, bottomH, stageMax, gutter, ecran: mode };
 }
 
 /** Écrans qui reçoivent les colonnes latérales (les autres sont centrés ou pleine largeur). */

@@ -339,4 +339,24 @@
   .tag { display: inline-flex; align-items: center; gap: 4px; }
   .mini { width: 120px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
   .mini span { display: block; height: 100%; background: var(--accent); transition: width 90ms linear; }
+
+  /* ——— Écran du bas de la Ayn Thor en double écran (lot thor-ui, 22/11) ———
+     Vue ≈ 723×630 px logiques à l'échelle du Deck. La jaquette entière et le titre sont sur l'écran du haut
+     (EcranHaut.svelte) : ici, les actions (Jouer en premier) et l'historique, lisibles et touchables. */
+  :global(html[data-ecran='bas']) main { gap: 20px; padding: 20px 24px 0; }
+  :global(html[data-ecran='bas']) aside { width: 240px; gap: 14px; }
+  :global(html[data-ecran='bas']) .art,
+  :global(html[data-ecran='bas']) .gname { display: none; }
+  :global(html[data-ecran='bas']) .actions { flex-direction: column; gap: 10px; }
+  :global(html[data-ecran='bas']) .primary { padding: 16px 0; font-size: 19px; }
+  :global(html[data-ecran='bas']) .secondary { padding: 13px 0; }
+  :global(html[data-ecran='bas']) dl { font-size: 15px; gap: 8px 14px; }
+  :global(html[data-ecran='bas']) .panel { padding: 16px; max-height: calc(100% - 16px); }
+  :global(html[data-ecran='bas']) h1 { font-size: 22px; }
+  :global(html[data-ecran='bas']) .tab { font-size: 17px; }
+  :global(html[data-ecran='bas']) .row { flex-wrap: wrap; gap: 6px 12px; padding: 12px 14px; font-size: 15px; min-height: 52px; }
+  :global(html[data-ecran='bas']) .dev,
+  :global(html[data-ecran='bas']) .when { width: auto; }
+  :global(html[data-ecran='bas']) .content .role,
+  :global(html[data-ecran='bas']) .csize { display: none; }
 </style>
