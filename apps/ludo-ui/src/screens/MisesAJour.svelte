@@ -141,6 +141,20 @@
         </div>
       </section>
     {/if}
+    {#if appUpdate.status === 'indisponible' && appUpdate.info}
+      <!-- Android : rien à installer depuis l'app (aucune APK publiée, ou app d'essai) ; la raison en
+           clair plutôt qu'un bouton qui échouerait à chaque appui. -->
+      <section>
+        <h2>Ludothèque</h2>
+        <div class="item app">
+          <span class="thumb" style:background="linear-gradient(160deg, #4cc3ff, #1c3546)"><Icon name="update" size={26} color="#fff" /></span>
+          <span class="text">
+            <span class="title">Mise à jour de l'application</span>
+            <span class="detail">{appUpdate.info}</span>
+          </span>
+        </div>
+      </section>
+    {/if}
     {#each GROUPS as grp (grp.id)}
       {@const list = items.filter((i) => i.group === grp.id)}
       {#if list.length}

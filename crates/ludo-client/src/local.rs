@@ -195,9 +195,72 @@ pub fn eden_game_dirs(data: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Jeux du catalogue retrouvés par identifiant de titre (lu dans l'en-tête des ROM) parmi les ROM
+/// d'un appareil que le nom n'a pas permis de rapprocher : même jeu, autre nom de fichier. Relevé
+/// sur la Thor le 22/11 (7 jeux 3DS) : « Luigi's Mansion - Dark Moon » pour « Luigis Mansion 2 »,
+/// titres anglais des Layton, « Pokemon Rumble Blast » pour « Super Pokemon Rumble », langues
+/// « (M8) » contre leur liste, « (Rev 2) » en plus.
+///
+/// `games` : (jeu, identifiant de sa ROM de base au catalogue) ; `roms` : (chemin, identifiant).
+/// Une ROM ne sert qu'un jeu (le premier dans l'ordre de `games`) ; un identifiant nul est ignoré
+/// (en-tête vierge ou lu à moitié : jamais une preuve d'identité).
+pub fn pair_by_title_id<'a>(games: &[(&'a str, u64)], roms: &[(&'a str, u64)]) -> BTreeMap<&'a str, &'a str> {
+    let mut out = BTreeMap::new();
+    let mut used = std::collections::BTreeSet::new();
+    for (game, tid) in games.iter().filter(|(_, t)| *t != 0) {
+        if let Some((rom, _)) = roms.iter().find(|(r, t)| t == tid && !used.contains(r)) {
+            used.insert(*rom);
+            out.insert(*game, *rom);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Les 7 jeux 3DS de la Thor déclarés « non installés » le 22/11 (noms relevés par `adb shell ls`,
+    /// identifiants lus dans l'en-tête des deux copies, identiques) ; Pokémon Rumble World, absent de
+    /// la Thor, le reste.
+    #[test]
+    fn jeux_3ds_de_la_thor_retrouves_par_identifiant() {
+        let cas: [(&str, &str, &str, u64); 7] = [
+            ("3ds-3ds0239-luigis-mansion-2", "3DS0239 - Luigis Mansion 2(Europe)(En,Fr,Ge,It,Es,Nl,Pt,Ru).cxi", "n3ds/Luigi's Mansion - Dark Moon (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi", 0x0004000000076500),
+            ("3ds-3ds1772-pokemon-ultra-moon", "3DS1772 - Pokemon Ultra Moon (Europe)(M8).cxi", "n3ds/Pokemon Ultra Moon (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi", 0x00040000001b5100),
+            ("3ds-3ds1773-pokemon-ultra-sun", "3DS1773 - Pokemon Ultra Sun (Europe)(M8).cxi", "n3ds/Pokemon Ultra Sun (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi", 0x00040000001b5000),
+            ("3ds-3ds0589-professeur-layton-et-lheritage-des-aslantes", "3DS0589 - Professeur Layton et lHeritage des Aslantes (Europe) (Fr).cxi", "n3ds/Professor Layton and the Azran Legacy (Europe) (Fr).cxi", 0x00040000000f3200),
+            ("3ds-3ds0217-professeur-layton-et-le-masque-des-miracles", "3DS0217 - Professeur Layton et le Masque des Miracles (Europe)(Fr).cxi", "n3ds/Professor Layton and the Miracle Mask (Europe) (Fr).cxi", 0x00040000000a8800),
+            ("3ds-3ds1841-super-pokemon-rumble", "3DS1841 - Super Pokemon Rumble (v01) (Europe) (En,Fr,Gr,It,Sp).cxi", "n3ds/Pokemon Rumble Blast (Europe) (En,Fr,De,Es,It).cxi", 0x0004000000066d00),
+            ("3ds-3ds1370-tomodachi-life", "3DS1370 - Tomodachi Life (Europe) (En,Fr,De,Es,It,Nl) (Rev 2).cxi", "n3ds/Tomodachi Life (Europe) (En,Fr,De,Es,It,Nl).cxi", 0x000400000008c400),
+        ];
+        for (_, serveur, thor, _) in &cas {
+            // Constat : ni la clé exacte ni la clé souple ne rapprochent ces deux noms.
+            assert_ne!(match_key(serveur), match_key(thor), "{thor}");
+            assert_ne!(loose_key(serveur), loose_key(thor), "{thor}");
+        }
+        let mut games: Vec<(&str, u64)> = cas.iter().map(|(g, _, _, t)| (*g, *t)).collect();
+        games.push(("3ds-3ds1438-pokemon-rumble-world", 0x0004000000185a00));
+        let roms: Vec<(&str, u64)> = cas.iter().map(|(_, _, r, t)| (*r, *t)).collect();
+        let found = pair_by_title_id(&games, &roms);
+        for (g, _, r, _) in &cas {
+            assert_eq!(found.get(g), Some(r), "{g}");
+        }
+        assert!(!found.contains_key("3ds-3ds1438-pokemon-rumble-world"), "absent de la Thor : reste non installé");
+    }
+
+    #[test]
+    fn identifiant_nul_ou_deja_pris_ignore() {
+        // En-tête vierge : identifiant 0, jamais une preuve.
+        assert!(pair_by_title_id(&[("a", 0)], &[("x.cxi", 0)]).is_empty());
+        // Deux fiches du catalogue pour la même ROM : la première seulement.
+        let p = pair_by_title_id(&[("a", 7), ("b", 7)], &[("x.cxi", 7)]);
+        assert_eq!(p.get("a"), Some(&"x.cxi"));
+        assert!(!p.contains_key("b"));
+        // Deux copies sur l'appareil : chacune sert une fiche.
+        let p = pair_by_title_id(&[("a", 7), ("b", 7)], &[("x.cxi", 7), ("y.3ds", 7)]);
+        assert_eq!((p.get("a"), p.get("b")), (Some(&"x.cxi"), Some(&"y.3ds")));
+    }
 
     #[test]
     fn cle_de_rapprochement() {

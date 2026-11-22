@@ -33,6 +33,11 @@ if [ -z "${JAVA_HOME:-}" ]; then
 fi
 keytool="${JAVA_HOME:+$JAVA_HOME/bin/}keytool"
 command -v "$keytool" >/dev/null || { echo "keytool introuvable (JDK attendu dans JAVA_HOME ou ~/.cache/jdk/jdk-21*)" >&2; exit 1; }
+# keytool traduit ses sorties selon la locale (« SHA 256: » en français, constat du 22/11) : sortie
+# anglaise imposée pour lire l'empreinte.
+kt() { "$keytool" -J-Duser.language=en -J-Duser.country=US "$@"; }
+# Empreinte SHA-256 du certificat (« AB:CD:… »), quelle que soit l'orthographe de l'étiquette.
+empreinte() { sed -n -E 's/^[[:space:]]*SHA[ -]?256[[:space:]]*:[[:space:]]*//p' | head -1; }
 
 umask 077
 mkdir -p "$dir"
@@ -42,7 +47,7 @@ if [ -f "$store" ]; then
 else
   pass="$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)"
   # Mot de passe passé par l'environnement (jamais sur la ligne de commande, visible dans ps).
-  LUDO_KS_PASS="$pass" "$keytool" -genkeypair -keystore "$store" -storetype PKCS12 -alias "$alias" -keyalg RSA -keysize 4096 \
+  LUDO_KS_PASS="$pass" kt -genkeypair -keystore "$store" -storetype PKCS12 -alias "$alias" -keyalg RSA -keysize 4096 \
     -validity 36500 -dname "CN=Ludotheque, O=Ludotheque" -storepass:env LUDO_KS_PASS -keypass:env LUDO_KS_PASS >/dev/null 2>&1
   printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$store" "$pass" "$alias" "$pass" > "$props"
   chmod 600 "$store" "$props"
@@ -51,14 +56,15 @@ fi
 
 # Empreinte du certificat (publique) : permet de vérifier un APK avec apksigner verify --print-certs.
 pass="$(sed -n 's/^storePassword=//p' "$props")"
-LUDO_KS_PASS="$pass" "$keytool" -list -v -keystore "$store" -storepass:env LUDO_KS_PASS 2>/dev/null | grep -m1 'SHA256:' | sed 's/^[[:space:]]*/Certificat /'
+cert="$(LUDO_KS_PASS="$pass" kt -list -v -keystore "$store" -storepass:env LUDO_KS_PASS 2>/dev/null | empreinte || true)"
+[ -n "$cert" ] || { echo "Empreinte du certificat illisible (sortie de keytool inattendue)" >&2; exit 1; }
+echo "Certificat SHA256: $cert"
 
 if [ -n "$secrets" ]; then
   repo=Guilhem-Bonnet/ludotheque
   base64 -w0 "$store" | "$gh" secret set LUDO_ANDROID_KEYSTORE_B64 -R "$repo" >/dev/null
   printf '%s' "$pass" | "$gh" secret set LUDO_ANDROID_KEYSTORE_PASSWORD -R "$repo" >/dev/null
   printf '%s' "$alias" | "$gh" secret set LUDO_ANDROID_KEY_ALIAS -R "$repo" >/dev/null
-  cert="$(LUDO_KS_PASS="$pass" "$keytool" -list -v -keystore "$store" -storepass:env LUDO_KS_PASS 2>/dev/null | sed -n 's/^[[:space:]]*SHA256: //p' | head -1)"
   "$gh" variable set LUDO_ANDROID_CERT_SHA256 -R "$repo" --body "$cert" >/dev/null
   echo "Secrets du dépôt posés : LUDO_ANDROID_KEYSTORE_B64, LUDO_ANDROID_KEYSTORE_PASSWORD, LUDO_ANDROID_KEY_ALIAS (+ variable LUDO_ANDROID_CERT_SHA256)"
 fi

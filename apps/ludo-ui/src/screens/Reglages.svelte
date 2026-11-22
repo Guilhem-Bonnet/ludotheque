@@ -191,7 +191,7 @@
       {:else}
         <button class="row focusable" data-sound="none" onclick={() => void checkAppUpdate()} aria-busy={appUpdate.status === 'checking'} disabled={appUpdate.status === 'downloading' || appUpdate.status === 'restarting'}>
           <Icon name="update" size={22} />Rechercher une mise à jour
-          <span class="value">{appUpdate.status === 'checking' ? 'Recherche…' : appUpdate.status === 'none' ? 'À jour' : appUpdate.status === 'downloading' ? `Téléchargement… ${appUpdate.percent ?? ''}${appUpdate.percent === null ? '' : ' %'}` : appUpdate.status === 'restarting' ? 'Redémarrage…' : appUpdate.status === 'error' ? 'Vérification impossible' : ''}</span>
+          <span class="value">{appUpdate.status === 'checking' ? 'Recherche…' : appUpdate.status === 'none' ? 'À jour' : appUpdate.status === 'downloading' ? `Téléchargement… ${appUpdate.percent ?? ''}${appUpdate.percent === null ? '' : ' %'}` : appUpdate.status === 'restarting' ? 'Redémarrage…' : appUpdate.status === 'error' ? 'Vérification impossible' : appUpdate.status === 'indisponible' ? 'Indisponible ici' : ''}</span>
         </button>
       {/if}
     </section>

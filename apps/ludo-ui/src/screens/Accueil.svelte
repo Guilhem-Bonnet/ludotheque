@@ -25,6 +25,10 @@
   import type { DeviceInfo, Game } from '../lib/types';
   import { play } from '../lib/play';
   import { appUpdate } from '../lib/appUpdate.svelte';
+  import { layout } from '../lib/layout';
+  import Batterie from '../lib/components/Batterie.svelte';
+  import EnCours from '../lib/components/EnCours.svelte';
+  import { enCours } from '../lib/enCours.svelte';
 
   let { device }: { device: DeviceInfo } = $props();
 
@@ -164,8 +168,11 @@
   /** Prochain placement sans glisser (arrivée sur l'écran, retour d'une fiche). */
   let jump = false;
 
-  /** Entrée directionnelle (clavier, manette) : la tuile choisie se place en deuxième position. */
-  const anchor = (i: number) => Math.max(0, (i - 1) * PITCH);
+  /** Écran du bas de la Thor en double écran (`data-ecran="bas"`, DoubleEcran.kt) : rangée centrée. */
+  const bas = () => document.documentElement.dataset.ecran === 'bas';
+  /** Entrée directionnelle (clavier, manette) : la tuile choisie se place en deuxième position. Écran du bas
+   *  de la Thor : au centre (rembourrage de 50 % − 136 px de chaque côté, voir le style), quelle que soit l'entrée. */
+  const anchor = (i: number) => (bas() ? i * PITCH : Math.max(0, (i - 1) * PITCH));
 
   /** Pointage (souris, toucher) : on ne déplace pas ce que la main vise ; seulement révéler une tuile coupée. */
   function reveal(i: number) {
@@ -189,11 +196,25 @@
         jump = false;
         // La rangée vient d'être dessinée : on attend sa mise en page pour connaître sa largeur.
         requestAnimationFrame(() => g.to(anchor(i), true));
+      } else if (bas()) {
+        // Écran du bas : la tuile choisie (toucher ou manette) glisse au centre ; le second toucher l'ouvre.
+        g.to(anchor(i));
       } else if (input.kind === 'mouse' && document.documentElement.dataset.input === 'mouse') {
         /* survol : la rangée ne bouge pas sous le pointeur (molette, glisser, flèches de bord). Le CSS
            souris dépend de html[data-input], posé par nav.ts (PR entrees) : sans lui, ancien comportement. */
       } else if (input.kind === 'mouse' || input.kind === 'touch') reveal(i);
       else g.to(anchor(i));
+    });
+  });
+
+  /* Passage en double écran ou retour à un seul écran (annoncé après le montage, au réveil ou au retour d'un
+     émulateur) : le rembourrage de la rangée change, la tuile choisie est replacée sans glisser (revue). */
+  $effect(() => {
+    void $layout.ecran;
+    untrack(() => {
+      const el = row;
+      if (!el || !games.length) return;
+      requestAnimationFrame(() => glide(el, 'x').to(anchor(focused), true));
     });
   });
 
@@ -325,8 +346,11 @@
     <div class="status">
       <SyncStatus games={all} {offline} busy={syncing} onclick={syncNow} onfocus={() => (syncFocused = true)} onblur={() => (syncFocused = false)} />
       <span class="clock">{clock}</span>
+      <Batterie />
     </div>
   </header>
+  <!-- Menu en jeu (lot menu-jeu) : jeu ouvert en tête de l'accueil, Reprendre / Fermer le jeu. -->
+  <EnCours games={all} />
 
   {#if loadError}
     <div class="notice-wrap"><StateNotice title="Serveur injoignable" detail={loadError} action="Réessayer" onaction={() => void load(router.profile!.id)} /></div>
@@ -422,6 +446,8 @@
   {/if}
   {#if options}
     <ButtonHints hints={[{ key: 'A', label: 'Sélectionner' }, { key: 'B', label: 'Fermer' }]} />
+  {:else if enCours.carteFocalisee}
+    <ButtonHints hints={[{ key: 'A', label: 'Reprendre' }, { key: 'X', label: 'Fermer le jeu' }]} />
   {:else if syncFocused}
     <ButtonHints hints={[{ key: 'A', label: 'Synchroniser' }]} />
   {:else if profileFocused}
@@ -522,4 +548,22 @@
   .round { transition: transform var(--t-quick) var(--ease-pop), background-color var(--t-quick) ease-out, box-shadow var(--t-quick) var(--ease-land); width: 60px; height: 60px; border-radius: 50%; background: rgba(255, 255, 255, 0.13); display: flex; align-items: center; justify-content: center; position: relative; color: var(--ink); }
   .count { position: absolute; top: -2px; right: -2px; min-width: 22px; height: 22px; border-radius: 11px; background: var(--accent); color: var(--ground); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
   .notice-wrap { padding: 40px 48px 0; }
+
+  /* ——— Écran du bas de la Ayn Thor en double écran (lot thor-ui, 22/11) ———
+     Vue ≈ 723×630 px logiques à l'échelle du Deck (lib/layout.ts). Une rangée de grandes tuiles centrée
+     verticalement et horizontalement, la tuile choisie au milieu ; le titre, le temps de jeu et l'appareil de
+     la dernière partie sont sur l'écran du haut (EcranHaut.svelte) : pas répétés ici. Une carte ajoutée en
+     tête d'écran (« En cours », lot menu-jeu) pousse la rangée sans la couper (flex, aucune hauteur figée). */
+  :global(html[data-ecran='bas']) header { padding: 16px 24px 0; }
+  :global(html[data-ecran='bas']) .row-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: center; padding: 0; }
+  :global(html[data-ecran='bas']) .row { margin: 0; padding: 22px calc(50% - 136px) 22px; }
+  /* Cale de fin = décalage des tuiles après la choisie (40 px) : « Tous les jeux » se centre aussi (revue). */
+  :global(html[data-ecran='bas']) .row::after { flex-basis: 40px; }
+  :global(html[data-ecran='bas']) .caption-slot,
+  :global(html[data-ecran='bas']) .device-tab { display: none; }
+  :global(html[data-ecran='bas']) .edge { top: calc(50% - 28px); }
+  :global(html[data-ecran='bas']) nav { gap: 28px; padding-bottom: 16px; }
+  :global(html[data-ecran='bas']) .shortcut { font-size: 15px; gap: 6px; }
+  :global(html[data-ecran='bas']) .round { width: 64px; height: 64px; }
+  :global(html[data-ecran='bas']) .notice-wrap { padding: 24px 24px 0; }
 </style>

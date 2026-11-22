@@ -3,6 +3,21 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Mise à jour depuis l'app (MiseAJourApk.kt) : APK de la release confié à l'installeur d'Android. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Menu en jeu (MenuJeuPlugin.kt) : « Fermer le jeu » ferme l'émulateur passé en arrière-plan. -->
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+
+    <!-- Menu en jeu (MenuJeuService.kt) : reconnaître l'activité d'une appli lancée depuis un lanceur
+         (émulateurs, Moonlight, lanceurs) pour savoir quelle appli est au premier plan. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -26,6 +41,21 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Menu en jeu (facultatif) : bouton Mode pendant une partie lancée par la Ludothèque (activé
+             une fois par l'utilisateur dans Réglages > Accessibilité). HOME n'est jamais capté. -->
+        <service
+            android:name=".MenuJeuService"
+            android:exported="false"
+            android:label="@string/menu_jeu_service_nom"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/menu_jeu_service" />
+        </service>
 
         <provider
           android:name="androidx.core.content.FileProvider"

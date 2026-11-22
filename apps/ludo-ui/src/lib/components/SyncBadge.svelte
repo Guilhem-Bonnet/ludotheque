@@ -52,7 +52,7 @@
 
 {#if spec}
   {#if tone === 'band'}
-    <span class="mark" class:attention={spec.attention} class:quiet={game.install === 'non_installe' && !spec.attention} class:labelled style:--h="{size}px" title={spec.label}>
+    <span class="mark" class:attention={spec.attention} class:quiet={game.install === 'non_installe' && !game.stream && !spec.attention} class:flux={game.install === 'non_installe' && !!game.stream && !spec.attention} class:labelled style:--h="{size}px" title={spec.label}>
       <Icon name={spec.icon} size={Math.round(size * (spec.attention ? 0.7 : 0.78))} color="currentColor" label={labelled ? undefined : spec.label} />
       {#if labelled}<span class="word">{spec.short}</span>{/if}
     </span>
@@ -72,6 +72,14 @@
     height: var(--h); color: var(--band-ink, #fff); line-height: 1; white-space: nowrap;
   }
   .mark.quiet { opacity: 0.72; }
+  /* Jouable en flux depuis le PC (Moonlight) : jamais effacé comme « Non installé ». Capsule cerclée
+     à l'encre du bandeau : se distingue de loin par la forme (pas seulement par le pictogramme, trop
+     petit sur une tuile de bibliothèque), sans prendre l'aplat des états qui demandent une action. */
+  .mark.flux {
+    border: max(1.5px, calc(var(--h) * 0.07)) solid currentColor; border-radius: calc(var(--h) / 2);
+    padding: 0 calc(var(--h) * 0.2); box-sizing: border-box;
+  }
+  .mark.flux.labelled { padding: 0 calc(var(--h) * 0.34) 0 calc(var(--h) * 0.22); }
   .mark.attention {
     background: var(--band-ink, #fff); color: var(--band, #15171c);
     border-radius: calc(var(--h) / 2); padding: 0 calc(var(--h) * 0.24);

@@ -8,7 +8,7 @@
 //! Les fonctions de ce module sans pont Android (rapprochement des ROM, choix de l'émulateur, intents)
 //! se compilent partout, pour être testées sur le PC.
 
-use ludo_client::local::{match_key, title_key};
+use ludo_client::local::{loose_key, match_key, title_key};
 use ludo_proto::{CatalogGame, DeviceGame, FileRole};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -81,7 +81,9 @@ pub struct AndroidEmu {
     pub uri_extra: Option<&'static str>,
     /// Sous-dossier de l'arbre des ROM.
     pub dir: &'static str,
-    /// Jeu rangé en dossier (Wii U : `<jeu>/code/*.rpx`) : l'émulateur reçoit le `.rpx` du dossier.
+    /// Jeu rangé en dossier (Wii U : `<jeu>/code/*.rpx`) : l'émulateur reçoit le `.rpx` du dossier,
+    /// au format de SA bibliothèque (voir `folder_game_uri`) et avec l'arbre des ROM accordé, sinon il
+    /// ne voit pas les dossiers `meta/` et `content/` voisins.
     pub folder: bool,
 }
 
@@ -154,15 +156,35 @@ pub struct RomList {
     pub files: Vec<RomFile>,
 }
 
-/// ROM de ce jeu dans l'arbre : même nom (formats équivalents), sinon même identité Switch. Pour une
-/// console à jeux en dossier (Wii U), le dossier du jeu.
+/// ROM de ce jeu dans l'arbre, dans le sous-dossier de sa console seulement (pour une console à jeux
+/// en dossier, Wii U, le dossier du jeu), dans cet ordre :
+/// 1. même nom (formats équivalents `nsz`→`nsp`, `xcz`→`xci`) ;
+/// 2. même clé souple (`local::loose_key` : numérotation « 3DS0080 - » retirée, espaces et
+///    ponctuation ramenés) ET même extension : la règle de l'inventaire publié par le PC
+///    (`ludo-client` `rom_for`), sans quoi un jeu marqué « installé » ne se lance pas (Resident Evil
+///    Revelations, 22/11 : serveur « 3DS0080 - Resident Evil Revelations (Europe)(En,…).cxi »,
+///    Thor « Resident Evil Revelations (Europe) (En,…).cxi ») ;
+/// 3. même identité Switch `[<titre>]`, même version d'abord, sinon toute version (Thor « Pokemon
+///    Lets Go Pikachu [010003F003A34000].xci » sans `[v…]`, serveur `[v1.0.2]`) : c'est le même jeu
+///    pour l'émulateur, la version ne compte que pour la mise à jour.
 pub fn find_rom<'a>(game: &CatalogGame, files: &'a [RomFile]) -> Option<&'a RomFile> {
     let emu = emulator_for(&game.console)?;
     let bases: Vec<&str> = game.files.iter().filter(|f| f.role == FileRole::Base).map(|f| f.path.as_str()).collect();
     let in_dir = || files.iter().filter(|r| r.dir == emu.dir && r.is_dir == emu.folder);
+    let tid = |name: &str| title_key(name).map(|(t, _)| t);
+    // Identité Switch : seulement sur un fichier de jeu (un `.sav`, une image ou un `.bak` voisin portant
+    // le même `[titre]` n'est jamais pris pour la ROM).
+    let switch_rom = |r: &&RomFile| matches!(match_key(&r.name).1.as_str(), "nsp" | "xci");
     in_dir()
         .find(|r| bases.iter().any(|b| match_key(b) == match_key(&r.name)))
-        .or_else(|| in_dir().find(|r| title_key(&r.name).is_some_and(|t| bases.iter().any(|b| title_key(b).as_ref() == Some(&t)))))
+        .or_else(|| {
+            in_dir().find(|r| {
+                let key = loose_key(&r.name);
+                !key.is_empty() && bases.iter().any(|b| loose_key(b) == key && match_key(b).1 == match_key(&r.name).1)
+            })
+        })
+        .or_else(|| in_dir().filter(switch_rom).find(|r| title_key(&r.name).is_some_and(|t| bases.iter().any(|b| title_key(b).as_ref() == Some(&t)))))
+        .or_else(|| in_dir().filter(switch_rom).find(|r| tid(&r.name).is_some_and(|t| bases.iter().any(|b| tid(b).as_ref() == Some(&t)))))
 }
 
 /// Intent explicite vers une activité d'une autre app (`startActivity` du plugin Kotlin).
@@ -177,6 +199,9 @@ pub struct StartActivity {
     pub data: Option<String>,
     pub extras: BTreeMap<String, String>,
     pub bool_extras: BTreeMap<String, bool>,
+    /// Arbre des ROM accordé à l'app lancée (lecture, préfixe) : fichiers voisins de la ROM lisibles.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_tree: Option<String>,
 }
 
 /// Ouvre la ROM dans l'émulateur (URI content de l'arbre, lecture accordée à l'émulateur).
@@ -192,7 +217,60 @@ pub fn emulator_intent(emu: &AndroidEmu, rom_uri: &str) -> StartActivity {
         data: Some(rom_uri.to_string()),
         extras,
         bool_extras: BTreeMap::new(),
+        grant_tree: None,
     }
+}
+
+/// Jeu en dossier (Wii U) : URI du `.rpx` telle que Cemu l'écrit dans sa bibliothèque
+/// (`title_list_cache.xml`, relevé du 22/11) — arbre = dossier de la console, identifiant de document
+/// avec des `/` littéraux — et arbre des ROM à lui accorder. Avec l'URI d'arbre ordinaire
+/// (`…%2Fcode%2Fcking.rpx`), Cemu 0.5.1 écrit « Launching executable in standalone mode due to incorrect
+/// layout or missing meta files », prend un identifiant fictif et le jeu plante ; au format de sa
+/// bibliothèque il charge le titre (TitleId 00050000-10143500, Wind Waker HD, essai adb du 22/11).
+pub fn folder_game_intent(emu: &AndroidEmu, rpx_uri: &str) -> Option<StartActivity> {
+    let rest = rpx_uri.strip_prefix("content://")?;
+    let (authority, rest) = rest.split_once("/tree/")?;
+    let (tree_enc, doc_enc) = rest.split_once("/document/")?;
+    let (tree, doc) = (percent_decode(tree_enc)?, percent_decode(doc_enc)?);
+    let console_tree = format!("{}/{}", tree.trim_end_matches('/'), emu.dir);
+    if !doc.starts_with(&format!("{console_tree}/")) {
+        return None;
+    }
+    let uri = format!("content://{authority}/tree/{}/document/{}", uri_encode(&console_tree, false), uri_encode(&doc, true));
+    let mut intent = emulator_intent(emu, &uri);
+    // Dossier de la console seulement (préfixe de l'URI des données), pas tout l'arbre des ROM.
+    intent.grant_tree = Some(format!("content://{authority}/tree/{}", uri_encode(&console_tree, false)));
+    Some(intent)
+}
+
+/// Comme `Uri.encode` d'Android (caractères non réservés gardés), `/` gardé si demandé.
+fn uri_encode(s: &str, keep_slash: bool) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"_-!.~'()*".contains(&b) || (keep_slash && b == b'/') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+fn percent_decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = s.get(i + 1..i + 3).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Moonlight 12 : `ShortcutTrampoline` (exportée, sans filtre d'intent) avec l'hôte et l'appli
@@ -205,7 +283,26 @@ pub fn moonlight_intent(host_uuid: &str, app_name: &str, hdr: bool) -> StartActi
         data: None,
         extras: BTreeMap::from([("UUID".to_string(), host_uuid.to_string()), ("AppName".to_string(), app_name.to_string())]),
         bool_extras: BTreeMap::from([("HDR".to_string(), hdr)]),
+        grant_tree: None,
     }
+}
+
+/// Identifiant Moonlight d'une appli Sunshine, lu dans le raccourci que Cocoon écrit pour elle
+/// (`Roms/moonlight/<appli>.txt` : lignes `[moonlight_uuid] <hôte>` et `[moonlight_id] <nombre>`). Rendu
+/// seulement pour le même hôte. Avec l'extra `AppId`, `ShortcutTrampoline` lance l'appli sans chercher
+/// son nom dans le cache de Moonlight (code de Moonlight lu le 22/11) : c'est ce cache qui refusait une
+/// appli récente (« application non valide », 21/11). Cocoon lance ses flux ainsi (`launch_debug.log` :
+/// « Intent extras: UUID, AppId »).
+pub fn cocoon_app_id(text: &str, host: &str) -> Option<String> {
+    let field = |k: &str| text.lines().find_map(|l| l.trim().strip_prefix(k).map(|v| v.trim().to_string()));
+    let uuid = field("[moonlight_uuid]")?;
+    let id = field("[moonlight_id]")?;
+    (uuid.eq_ignore_ascii_case(host) && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then_some(id)
+}
+
+/// Nom du raccourci Cocoon d'une appli Sunshine.
+pub fn cocoon_file(app_name: &str) -> String {
+    format!("{app_name}.txt")
 }
 
 /// Appli Sunshine d'un jeu : réglage de l'appareil, sinon inventaire publié par le PC.
@@ -226,7 +323,12 @@ pub enum Plan {
 pub fn plan(game: &CatalogGame, roms: &[RomFile], conf: &AndroidConf, inv: Option<&DeviceGame>, mode: Option<&str>) -> Result<Plan, String> {
     let local = || -> Result<Plan, String> {
         let emu = emulator_for(&game.console).ok_or("Aucun émulateur Android pris en charge pour cette console")?;
-        let rom = find_rom(game, roms).ok_or_else(|| format!("Jeu absent du dossier des ROM ({})", emu.dir))?;
+        // ROM désignée par l'inventaire du PC (trouvée par nom ou par identifiant de titre), sinon par nom.
+        let rom = inv
+            .and_then(|i| i.rom.as_deref())
+            .and_then(|r| roms.iter().find(|f| f.is_dir == emu.folder && format!("{}/{}", f.dir, f.name) == r))
+            .or_else(|| find_rom(game, roms))
+            .ok_or_else(|| format!("Jeu absent du dossier des ROM ({})", emu.dir))?;
         Ok(Plan::Local { emu, uri: rom.uri.clone() })
     };
     let stream = || -> Result<Plan, String> {
@@ -366,7 +468,7 @@ mod bridge {
         }
         let found: Found = bridge(app)?.0.run_mobile_plugin("findRpx", UriArgs { uri }).map_err(|e| e.to_string())?;
         let rpx = found.uri.ok_or("Fichier .rpx introuvable dans le dossier du jeu (code/)")?;
-        Ok(emulator_intent(emu, &rpx))
+        folder_game_intent(emu, &rpx).ok_or_else(|| format!("Adresse du jeu inattendue : {rpx}"))
     }
 
     #[derive(Deserialize)]
@@ -398,6 +500,31 @@ mod bridge {
             tauri::plugin::mobile::PluginInvokeError::InvokeRejected(r) => r.message.unwrap_or_else(|| "Mise à jour impossible".into()),
             other => other.to_string(),
         }
+    }
+
+    #[derive(Deserialize)]
+    struct Texte {
+        text: Option<String>,
+    }
+
+    /// Flux : intent Moonlight, avec l'identifiant `AppId` du raccourci Cocoon s'il existe pour cette appli
+    /// et cet hôte (sinon le nom seul, cherché par Moonlight dans son cache).
+    pub fn stream_intent(app: &tauri::AppHandle, host: &str, name: &str, hdr: bool) -> StartActivity {
+        let mut intent = moonlight_intent(host, name, hdr);
+        let file = cocoon_file(name);
+        let id = list_roms_in(app, &["moonlight"])
+            .ok()
+            .and_then(|l| l.files.into_iter().find(|f| !f.is_dir && f.name == file))
+            .and_then(|f| bridge(app).ok()?.0.run_mobile_plugin::<Texte>("readText", UriArgs { uri: &f.uri }).ok()?.text)
+            .and_then(|t| cocoon_app_id(&t, host));
+        if let Some(id) = id {
+            intent.extras.insert("AppId".into(), id);
+        }
+        intent
+    }
+
+    fn list_roms_in(app: &tauri::AppHandle, dirs: &[&str]) -> Result<RomList, String> {
+        bridge(app)?.0.run_mobile_plugin("listRoms", ListArgs { dirs: dirs.iter().map(|d| d.to_string()).collect() }).map_err(|e| e.to_string())
     }
 
     pub fn start(app: &tauri::AppHandle, intent: &StartActivity) -> Result<(), String> {
@@ -510,6 +637,122 @@ mod tests {
     }
 
     #[test]
+    fn rom_renumerotee_ou_sans_version_trouvee() {
+        // Retour de Guilhem (22/11) : « certains jeux ne se lancent pas, comme Resident Evil Revelations ».
+        let re = game("3ds-3ds0080-resident-evil-revelations", "3ds", "3ds/3DS0080 - Resident Evil Revelations (Europe)(En,Fr,Ge,It,Es,jp).cxi");
+        let lgp = game("switch-010003f003a34000", "switch", "switch/Pokemon Lets Go Pikachu [010003F003A34000][v1.0.2].xci");
+        let roms = [
+            rom("n3ds", "Resident Evil Revelations (Europe) (En,Fr,Ge,It,Es,jp).cxi"),
+            rom("n3ds", "Resident Evil Revelations (Europe) (En,Fr,Ge,It,Es,jp).sav"),
+            rom("switch", "Pokemon Lets Go Eevee [0100187003A36000][v0].xci"),
+            rom("switch", "Pokemon Lets Go Pikachu [010003F003A34000].xci"),
+        ];
+        assert_eq!(find_rom(&re, &roms).unwrap().name, roms[0].name);
+        assert_eq!(find_rom(&lgp, &roms).unwrap().name, roms[3].name);
+        // Même titre, autre extension (fichier voisin) : jamais pris pour la ROM.
+        assert!(find_rom(&re, &roms[1..]).is_none());
+        // Identité Switch portée par un fichier qui n'est pas un jeu : refusé.
+        let voisins = [rom("switch", "Pokemon Lets Go Pikachu [010003F003A34000].sav"), rom("switch", "capture [010003F003A34000].jpg")];
+        assert!(find_rom(&lgp, &voisins).is_none());
+        // Même version préférée quand plusieurs copies existent.
+        let maj = game("switch-010003f003a34000", "switch", "switch/Pokemon Lets Go Pikachu [010003F003A34000][v65536].xci");
+        let two = [rom("switch", "X [010003F003A34000][v0].xci"), rom("switch", "Y [010003F003A34000][v65536].xci")];
+        assert_eq!(find_rom(&maj, &two).unwrap().name, two[1].name);
+    }
+
+    /// Audit du catalogue de la Thor sur données réelles (relevé du 22/11 : `ls Documents/Roms` par
+    /// adb, `/api/v1/devices`, `/api/v1/games`) : tout jeu que l'inventaire du PC dit installé a un
+    /// lancement local (émulateur de sa console) ; tout jeu en flux seulement part en flux.
+    #[test]
+    fn audit_catalogue_thor_reel() {
+        #[derive(Deserialize)]
+        struct Fx {
+            roms: Vec<FxRom>,
+            games: Vec<FxGame>,
+        }
+        #[derive(Deserialize)]
+        struct FxRom {
+            dir: String,
+            name: String,
+            is_dir: bool,
+        }
+        #[derive(Deserialize)]
+        struct FxGame {
+            id: String,
+            console: String,
+            installed: bool,
+            stream: bool,
+            stream_app: Option<String>,
+            bases: Vec<String>,
+        }
+        let fx: Fx = serde_json::from_str(include_str!("fixtures/thor-2026-11-22.json")).unwrap();
+        let roms: Vec<RomFile> =
+            fx.roms.iter().map(|r| RomFile { dir: r.dir.clone(), name: r.name.clone(), is_dir: r.is_dir, uri: format!("content://t/{}/{}", r.dir, r.name) }).collect();
+        let conf = AndroidConf::parse("[moonlight]\nhote = \"H\"\n");
+        let mut fails = Vec::new();
+        for g in &fx.games {
+            let files: Vec<_> = g
+                .bases
+                .iter()
+                .enumerate()
+                .map(|(i, p)| serde_json::json!({ "id": i, "role": "base", "path": p, "format": "x", "size": 1, "mtime": 0 }))
+                .collect();
+            let cg: CatalogGame = serde_json::from_value(serde_json::json!({
+                "id": g.id, "title": g.id, "short": g.id, "console": g.console,
+                "art": { "motif": "lune", "from": "#000000", "to": "#ffffff" }, "catalogued": false, "files": files
+            }))
+            .unwrap();
+            let inv = DeviceGame { game: g.id.clone(), installed: g.installed, stream: g.stream, save: false, stream_app: g.stream_app.clone(), rom: None };
+            match (g.installed, plan(&cg, &roms, &conf, Some(&inv), None)) {
+                (true, Ok(Plan::Local { emu, uri })) if uri.starts_with(&format!("content://t/{}/", emu.dir)) && emulator_for(&g.console) == Some(emu) => {}
+                (false, Ok(Plan::Stream { app, .. })) if Some(&app) == g.stream_app.as_ref() => {}
+                (_, other) => fails.push(format!("{} : {other:?}", g.id)),
+            }
+        }
+        assert!(fails.is_empty(), "{} jeux sans lancement correct :\n{}", fails.len(), fails.join("\n"));
+        assert!(fx.games.iter().any(|g| g.installed) && fx.games.iter().any(|g| !g.installed), "relevé incomplet");
+    }
+
+    #[test]
+    fn cemu_recoit_le_rpx_au_format_de_sa_bibliotheque() {
+        let cemu = emulator_for("wiiu").unwrap();
+        // URI rendue par findRpx (buildDocumentUriUsingTree sur l'arbre accordé à la Ludothèque).
+        let rpx = "content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms/document/primary%3ADocuments%2FRoms%2Fwiiu%2FThe%20Legend%20of%20Zelda%20The%20Wind%20Waker%20HD%2Fcode%2Fcking.rpx";
+        let i = folder_game_intent(cemu, rpx).unwrap();
+        // Exactement l'URI essayée par adb le 22/11 (Cemu charge 00050000-10143500).
+        assert_eq!(
+            i.data.as_deref(),
+            Some("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms%2Fwiiu/document/primary%3ADocuments/Roms/wiiu/The%20Legend%20of%20Zelda%20The%20Wind%20Waker%20HD/code/cking.rpx")
+        );
+        assert_eq!(i.grant_tree.as_deref(), Some("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms%2Fwiiu"));
+        assert!(i.data.as_deref().unwrap().starts_with(i.grant_tree.as_deref().unwrap()), "l'URI des données est couverte par l'arbre accordé");
+        // `%` mal formé : refusé.
+        assert_eq!(percent_decode("a%+1"), None);
+        assert_eq!(percent_decode("%C3%A9t%C3%A9"), Some("été".into()));
+        assert_eq!(uri_encode("Pokémon : l'été/x", true), "Pok%C3%A9mon%20%3A%20l'%C3%A9t%C3%A9/x");
+        assert_eq!((i.package_name.as_str(), i.activity.as_str()), ("info.cemu.cemu", "info.cemu.cemu.emulation.EmulationActivity"));
+        let v = serde_json::to_value(&i).unwrap();
+        assert!(v.get("grantTree").is_some());
+        // Les autres émulateurs ne reçoivent pas l'arbre.
+        assert!(serde_json::to_value(emulator_intent(emulator_for("3ds").unwrap(), "content://x")).unwrap().get("grantTree").is_none());
+        // Fichier hors du dossier de la console : refusé plutôt qu'une adresse fausse.
+        assert!(folder_game_intent(cemu, "content://a/tree/primary%3AR/document/primary%3AR%2Fgc%2Fx.rpx").is_none());
+    }
+
+    #[test]
+    fn identifiant_moonlight_du_raccourci_cocoon() {
+        // Fichier réel de la Thor (Documents/Roms/moonlight/Mario Kart 8 Deluxe · Ludothèque.txt, 22/11).
+        let txt = "# Stream Sunshine : Mario Kart 8 Deluxe · Ludothèque\n[moonlight_uuid] D062BBAF-CA0B-2224-D212-D3CE6FEF9502\n[moonlight_id] 1083797917\n";
+        assert_eq!(cocoon_app_id(txt, "D062BBAF-CA0B-2224-D212-D3CE6FEF9502").as_deref(), Some("1083797917"));
+        assert_eq!(cocoon_app_id(txt, "d062bbaf-ca0b-2224-d212-d3ce6fef9502").as_deref(), Some("1083797917"));
+        // Autre hôte, identifiant absent ou non numérique : pas d'AppId (nom seul).
+        assert_eq!(cocoon_app_id(txt, "AUTRE-HOTE"), None);
+        assert_eq!(cocoon_app_id("[moonlight_uuid] H\n", "H"), None);
+        assert_eq!(cocoon_app_id("[moonlight_uuid] H\n[moonlight_id] 12a\n", "H"), None);
+        assert_eq!(cocoon_file("Mario Kart 8 Deluxe · Ludothèque"), "Mario Kart 8 Deluxe · Ludothèque.txt");
+    }
+
+    #[test]
     fn adresse_de_mise_a_jour() {
         assert_eq!(AndroidConf::parse("").maj.url(), MAJ_URL);
         assert_eq!(AndroidConf::parse("[maj]\nandroid = \"http://127.0.0.1:8765/android.json\"\n").maj.url(), "http://127.0.0.1:8765/android.json");
@@ -519,7 +762,7 @@ mod tests {
     fn plan_local_puis_flux() {
         let conf = AndroidConf::parse("serveur = \"x\"\nappareil = \"thor\"\n[moonlight]\nhote = \"H\"\n");
         let mk8 = game("switch-mk8", "switch", "switch/Mario Kart 8 Deluxe [0100152000022000][v0].nsp");
-        let inv = DeviceGame { game: "switch-mk8".into(), installed: false, stream: true, save: true, stream_app: Some("MK8 · Ludothèque".into()) };
+        let inv = DeviceGame { game: "switch-mk8".into(), installed: false, stream: true, save: true, stream_app: Some("MK8 · Ludothèque".into()), rom: None };
         assert_eq!(plan(&mk8, &[], &conf, Some(&inv), None), Ok(Plan::Stream { host: "H".into(), app: "MK8 · Ludothèque".into(), hdr: false }));
         let roms = [rom("switch", "Mario Kart 8 Deluxe [0100152000022000][US][v0].nsp")];
         assert!(matches!(plan(&mk8, &roms, &conf, Some(&inv), None), Ok(Plan::Local { .. })));
@@ -530,5 +773,24 @@ mod tests {
         // Appli imposée par la configuration.
         let conf = AndroidConf::parse("[moonlight]\nhote = \"H\"\napplis = { switch-mk8 = \"Autre\" }\n");
         assert_eq!(stream_app(&conf, Some(&inv), "switch-mk8").as_deref(), Some("Autre"));
+    }
+
+    /// LM2 : nom du catalogue et nom sur la Thor différents (même identifiant de titre, rapprochés par
+    /// le PC) ; l'app lance la ROM que l'inventaire désigne.
+    #[test]
+    fn rom_designee_par_l_inventaire() {
+        let conf = AndroidConf::parse("serveur = \"x\"\nappareil = \"thor\"\n");
+        let lm2 = game("3ds-3ds0239-luigis-mansion-2", "3ds", "3ds/3DS0239 - Luigis Mansion 2(Europe)(En,Fr,Ge,It,Es,Nl,Pt,Ru).cxi");
+        let roms = [rom("n3ds", "Luigi's Mansion - Dark Moon (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi")];
+        assert!(plan(&lm2, &roms, &conf, None, None).is_err(), "le nom seul ne la trouve pas");
+        let inv = DeviceGame {
+            game: lm2.id.clone(),
+            installed: true,
+            stream: false,
+            save: false,
+            stream_app: None,
+            rom: Some("n3ds/Luigi's Mansion - Dark Moon (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi".into()),
+        };
+        assert!(matches!(plan(&lm2, &roms, &conf, Some(&inv), None), Ok(Plan::Local { uri, .. }) if uri == roms[0].uri));
     }
 }

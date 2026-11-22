@@ -16,6 +16,7 @@
 use gilrs::{Axis, Button, EventType, Gilrs};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Événement envoyé à l'interface : `{ key, pressed }`.
@@ -57,6 +58,27 @@ pub fn set_focus(focused: bool) {
 
 pub fn focused() -> bool {
     FOCUSED.load(Ordering::Relaxed)
+}
+
+/// Menu en jeu (lot menu-jeu du 22/11) : action à mener quand le bouton Guide est pressé pendant une
+/// partie lancée par la Ludothèque (ramener sa fenêtre devant). Enregistrée une fois par lib.rs.
+static MENU: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+pub fn on_menu<F: Fn() + Send + Sync + 'static>(f: F) {
+    let _ = MENU.set(Box::new(f));
+}
+
+/// Le bouton Guide est-il une demande de menu ? Seulement fenêtre SANS focus (sinon c'est la
+/// navigation ordinaire), pendant une partie lancée par cette app, et hors du mode Jeu du Steam Deck
+/// (gamescope : Steam garde le bouton Guide pour son propre menu, et la fenêtre ne se lève pas).
+/// Aucun autre bouton n'est jamais lu sans le focus.
+pub fn menu_demande(input: &Input, focused: bool, partie: bool, gamescope: bool) -> bool {
+    matches!(input, Input::Button(Button::Mode, true)) && !focused && partie && !gamescope
+}
+
+/// Session gamescope (mode Jeu du Steam Deck) ?
+fn sous_gamescope() -> bool {
+    std::env::var_os("GAMESCOPE_WAYLAND_DISPLAY").is_some() || std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.eq_ignore_ascii_case("gamescope"))
 }
 
 /// Seuils du stick (hystérésis) : appui au-delà de 0,6, relâchement en deçà de 0,4.
@@ -204,12 +226,18 @@ pub fn init<F: Fn(PadEvent) + Send + 'static>(emit: F) {
         // de repli de 10 ms (exception « source d'événement tombée » de CLAUDE.md), jamais une boucle à vide ;
         // au-delà de 30 s d'anomalie continue (epoll en échec), gilrs est recréé.
         let mut empty_streak = 0u32;
+        let gamescope = sous_gamescope();
         loop {
             match gilrs.next_event_blocking(None) {
                 Some(ev) => {
                     empty_streak = 0;
                     let Some(input) = Input::from_gilrs(&ev.event) else { continue };
                     let focus = focused();
+                    if menu_demande(&input, focus, ludo_client::launch::game_running(), gamescope) {
+                        if let Some(menu) = MENU.get() {
+                            menu();
+                        }
+                    }
                     let mapper = mappers.entry(ev.id).or_default();
                     if trace {
                         for e in mapper.peek(&input) {
@@ -251,6 +279,22 @@ pub fn init<F: Fn(PadEvent) + Send + 'static>(emit: F) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guide_ne_demande_le_menu_que_pendant_une_partie_sans_focus() {
+        let guide = Input::Button(Button::Mode, true);
+        assert!(menu_demande(&guide, false, true, false));
+        // Fenêtre au premier plan : navigation ordinaire, pas de menu.
+        assert!(!menu_demande(&guide, true, true, false));
+        // Aucune partie lancée par la Ludothèque : le bouton Guide reste à qui le veut.
+        assert!(!menu_demande(&guide, false, false, false));
+        // Mode Jeu du Deck (gamescope) : Steam garde le bouton Guide.
+        assert!(!menu_demande(&guide, false, true, true));
+        // Relâchement, ou autre bouton : jamais.
+        assert!(!menu_demande(&Input::Button(Button::Mode, false), false, true, false));
+        assert!(!menu_demande(&Input::Button(Button::South, true), false, true, false));
+        assert!(!menu_demande(&Input::Button(Button::Start, true), false, true, false));
+    }
 
     #[test]
     fn croix_et_boutons() {

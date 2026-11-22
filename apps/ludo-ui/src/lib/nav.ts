@@ -37,6 +37,7 @@ import { feedback } from './feedback';
 import { glideIntoView } from './glide';
 import { reducedMotion } from './motion';
 import { unlock, type SoundName } from './sound';
+import { entreeAvalee } from './repos';
 
 type Dir = 'up' | 'down' | 'left' | 'right';
 
@@ -373,7 +374,8 @@ export function installNav() {
     void import('@tauri-apps/api/event')
       .then(({ listen }) =>
         listen<{ key: string; pressed: boolean }>('ludo://manette', ({ payload: { key: k, pressed } }) => {
-          if (!active()) return;
+          // Repos (lot energie) : l'appui qui réveille l'écran n'agit pas.
+          if (!active() || entreeAvalee()) return;
           if ((DIRS as readonly string[]).includes(k)) {
             if (pressed) { unlock(); setInput('pad'); hold(`pad:${k}`, k as Dir); } else release(`pad:${k}`);
           } else if (pressed && k in PAD_KEY) padButton(PAD_KEY[k]);

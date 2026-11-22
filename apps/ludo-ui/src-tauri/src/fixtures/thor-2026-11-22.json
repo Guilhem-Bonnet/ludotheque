@@ -1,0 +1,1077 @@
+{
+"releve": "2026-11-22 Thor (adb ls Documents/Roms) + /api/v1/devices + /api/v1/games",
+"roms": [
+{
+"dir": "n3ds",
+"name": "Animal Crossing - New Leaf - Welcome Amiibo (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Bravely Second - End Layer (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Captain Toad - Treasure Tracker (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Dragon Quest VII - Fragments of the Forgotten Past (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Dragon Quest VIII - Journey of the Cursed King (Europe) (En,Fr,It,Sp,Gr).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Ever Oasis (Europe) (M6).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Fantasy Life (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Fire Emblem - Awakening (Europe) (En,Fr,Ge,It,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Fire Emblem Echoes - Shadows of Valentia (Europe) (M6).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Fire Emblem Fates - Special Edition (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Hey! Pikmin (Europe) (M6).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Kid Icarus Uprising (Europe) (En,Fr,Ge,It,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Kirby Triple Deluxe (Europe) (En,Ge,Fr,Sp,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Legend of Zelda - TriForce Heroes, The (Europe) (En,Fr,Ge,It,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Legend of Zelda, The - Majora's Mask 3D (Europe) (En,Fr,De,Es,It) (Rev 1).3ds",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Legend of Zelda, The - Ocarina of Time 3D (Europe) (En,Fr,De,Es,It) (Rev 1).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Luigi's Mansion (Europe) (En,Fr,Gr,It,Sp).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Luigi's Mansion - Dark Moon (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Mario & Luigi - Bowser's Inside Story Bowser Jr.'s Journey (Europe) (En,Fr,Gr,It,Sp).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Mario & Luigi - Dream Team Bros. (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 1).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Mario & Luigi - Paper Jam Bros. (Europe) (Du,Ge,En,Fr,Es,It,Pt,Ru).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Mario & Luigi - Superstar Saga Bowser's Minions (Europe) (M6).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Mario Kart 7 (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 1).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Mario Party - The Top 100 (Europe) (M6).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Metroid - Samus Returns (Europe) (En,Fr,De,Es,It,Nl).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Miitopia (Europe) (M6).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Monster Hunter 4 Ultimate (Europe) (En,Fr,De,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Monster Hunter Generations (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Monster Hunter Stories (Europe) (En,Fr,De,Es,It,Nl).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "New Super Mario Bros. 2 (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).3ds",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Paper Mario - Sticker Star (Europe) (En,Fr,Ge,It,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Alpha Sapphire (Europe) (En,Fr,Ge,It,Ja,Ko,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Art Academy (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Moon (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Mystery Dungeon - Gates to Infinity (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Omega Ruby (Europe) (En,Ja,Fr,De,Es,It,Ko).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Rumble Blast (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Sun (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Super Mystery Dungeon (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Ultra Moon (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Ultra Sun (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Pokemon Y (Europe) (En,Ja,Fr,De,Es,It,Ko).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Professor Layton and the Azran Legacy (Europe) (Fr).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Professor Layton and the Miracle Mask (Europe) (Fr).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Professor Layton vs Phoenix Wright - Ace Attorney (Europe) (En,Fr,De,Nl).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Rayman Origins (Europe) (En,Fr,De,Es,It,Nl) (Rev 1).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Resident Evil Revelations (Europe) (En,Fr,Ge,It,Es,jp).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Rhythm Heaven Megamix (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Shovel Knight (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Star Fox 64 3D v1.3 (Europe) (En,Fr,Ge,It,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Super Mario 3D Land (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 2).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Super Smash Bros. for Nintendo 3DS (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 10).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "The Legend of Zelda - A Link Between Worlds (Europe) (En,Fr,Ge,It,Es).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Tomodachi Life (Europe) (En,Fr,De,Es,It,Nl).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Yo-Kai Watch (Europe) (En,Fr,De,Es,It).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Yo-Kai Watch 2 - Psychic Specters (Europe) (M7).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Yo-Kai Watch 3 (France).cxi",
+"is_dir": false
+},
+{
+"dir": "n3ds",
+"name": "Yoshis New Island (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi",
+"is_dir": false
+},
+{
+"dir": "nds",
+"name": "Pokemon - Version Diamant (France) (Rev 5).nds",
+"is_dir": false
+},
+{
+"dir": "nds",
+"name": "Pokemon - Version Diamant (France) (Rev 5).sav",
+"is_dir": false
+},
+{
+"dir": "gc",
+"name": "Zelda Twilight Princess (EUR) [GZ2P01].rvz",
+"is_dir": false
+},
+{
+"dir": "switch",
+"name": "Pokemon Brilliant Diamond [0100000011D90000][v0](nsw2u.xyz).xci",
+"is_dir": false
+},
+{
+"dir": "switch",
+"name": "Pokemon Lets Go Pikachu [010003F003A34000].xci",
+"is_dir": false
+},
+{
+"dir": "switch",
+"name": "Pokemon Shining Pearl [010018E011D92000][v0](nsw2u.xyz).xci",
+"is_dir": false
+},
+{
+"dir": "switch",
+"name": "Pokémon FireRed Version (French Ver.) [01004B3023412000][v0].nsp",
+"is_dir": false
+},
+{
+"dir": "switch",
+"name": "Pokémon LeafGreen Version (French Ver.) [010087C02342E000][v0].nsp",
+"is_dir": false
+},
+{
+"dir": "switch",
+"name": "Super Mario Party [010036B0034E4000][v0].nsp",
+"is_dir": false
+},
+{
+"dir": "switch",
+"name": "The Legend of Zelda Skyward Sword HD [01002DA013484000].nsp",
+"is_dir": false
+},
+{
+"dir": "wiiu",
+"name": "The Legend of Zelda The Wind Waker HD",
+"is_dir": true
+}
+],
+"games": [
+{
+"id": "3ds-3ds0080-resident-evil-revelations",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0080 - Resident Evil Revelations (Europe)(En,Fr,Ge,It,Es,jp).cxi"
+]
+},
+{
+"id": "3ds-3ds0134-kid-icarus-uprising",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0134 - Kid Icarus Uprising (Europe) (En,Fr,Ge,It,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds0238-paper-mario-sticker-star",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0238 - Paper Mario - Sticker Star (Europe)(En,Fr,Ge,It,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds0244-fire-emblem-awakening",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0244 - Fire Emblem - Awakening (Europe)(En,Fr,Ge,It,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds0326-pokemon-mystery-dungeon-gates-to-infinity",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0326 - Pokemon Mystery Dungeon - Gates to Infinity (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds0450-pokemon-x",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0450 - Pokemon X (Europe) (En,Ja,Fr,De,Es,It,Ko).cxi"
+]
+},
+{
+"id": "3ds-3ds0451-pokemon-y",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0451 - Pokemon Y (Europe) (En,Ja,Fr,De,Es,It,Ko).cxi"
+]
+},
+{
+"id": "3ds-3ds0487-the-legend-of-zelda-a-link-between-worlds",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0487 - The Legend of Zelda - A Link Between Worlds (Europe)(En,Fr,Ge,It,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds0650-yoshis-new-island",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0650 - Yoshis New Island (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi"
+]
+},
+{
+"id": "3ds-3ds0664-professor-layton-vs-phoenix-wright-ace-attorney",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0664 - Professor Layton vs Phoenix Wright - Ace Attorney (Europe) (En,Fr,De,Nl).cxi"
+]
+},
+{
+"id": "3ds-3ds0930-kirby-triple-deluxe",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0930 - Kirby Triple Deluxe  (Europe)(En,Ge,Fr,Sp,It).cxi"
+]
+},
+{
+"id": "3ds-3ds0992-pokemon-art-academy",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS0992 - Pokemon Art Academy (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1042-fantasy-life",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1042 - Fantasy Life (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1128-pokemon-alpha-sapphire",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1128 - Pokemon Alpha Sapphire (Europe)(En,Fr,Ge,It,Ja,Ko,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds1129-pokemon-omega-ruby",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1129 - Pokemon Omega Ruby (Europe) (En,Ja,Fr,De,Es,It,Ko).cxi"
+]
+},
+{
+"id": "3ds-3ds1168-legend-of-zelda-the-ocarina-of-time-3d",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1168 - Legend of Zelda, The - Ocarina of Time 3D (Europe) (En,Fr,De,Es,It) (Rev 1).cxi"
+]
+},
+{
+"id": "3ds-3ds1186-monster-hunter-4-ultimate",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1186 - Monster Hunter 4 Ultimate (Europe)(En,Fr,De,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds1264-super-mario-3d-land",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1264 - Super Mario 3D Land (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 2).cxi"
+]
+},
+{
+"id": "3ds-3ds1321-mario-kart-7",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1321 - Mario Kart 7 (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 1).cxi"
+]
+},
+{
+"id": "3ds-3ds1362-legend-of-zelda-triforce-heroes-the",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1362 - Legend of Zelda - TriForce Heroes, The (Europe)(En,Fr,Ge,It,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds1368-star-fox-64-3d-v1-3",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1368 - Star Fox 64 3D v1.3 (Europe)(En,Fr,Ge,It,Es).cxi"
+]
+},
+{
+"id": "3ds-3ds1372-shovel-knight",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1372 - Shovel Knight (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1410-mario-luigi-paper-jam-bros",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1410 - Mario & Luigi - Paper Jam Bros. (Europe)(Du,Ge,En,Fr,Es,It,Pt,Ru).cxi"
+]
+},
+{
+"id": "3ds-3ds1433-rayman-origins",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1433 - Rayman Origins (Europe) (En,Fr,De,Es,It,Nl) (Rev 1).cxi"
+]
+},
+{
+"id": "3ds-3ds1452-pokemon-super-mystery-dungeon",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1452 - Pokemon Super Mystery Dungeon (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1460-bravely-second-end-layer",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1460 - Bravely Second - End Layer (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1462-mario-luigi-dream-team-bros",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1462 - Mario & Luigi - Dream Team Bros. (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 1).cxi"
+]
+},
+{
+"id": "3ds-3ds1487-yo-kai-watch",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1487 - Yo-Kai Watch (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1508-fire-emblem-fates-special-edition",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1508 - Fire Emblem Fates - Special Edition (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1545-monster-hunter-generations",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1545 - Monster Hunter Generations (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1569-dragon-quest-vii-fragments-of-the-forgotten-past",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1569 - Dragon Quest VII - Fragments of the Forgotten Past (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1581-rhythm-heaven-megamix",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1581 - Rhythm Heaven Megamix (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1605-pokemon-moon",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1605 - Pokemon Moon (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi"
+]
+},
+{
+"id": "3ds-3ds1606-pokemon-sun",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1606 - Pokemon Sun (Europe) (En,Ja,Fr,De,Es,It,Zh,Ko).cxi"
+]
+},
+{
+"id": "3ds-3ds1626-animal-crossing-new-leaf-welcome-amiibo",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1626 - Animal Crossing - New Leaf - Welcome Amiibo (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1638-dragon-quest-viii-journey-of-the-cursed-king",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1638 - Dragon Quest VIII - Journey of the Cursed King (Europe)(En,Fr,It,Sp,Gr).cxi"
+]
+},
+{
+"id": "3ds-3ds1641-super-smash-bros-for-nintendo-3ds",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1641 - Super Smash Bros. for Nintendo 3DS (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru) (Rev 10).cxi"
+]
+},
+{
+"id": "3ds-3ds1699-fire-emblem-echoes-shadows-of-valentia",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1699 - Fire Emblem Echoes - Shadows of Valentia (Europe)(M6).cxi"
+]
+},
+{
+"id": "3ds-3ds1720-ever-oasis",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1720- Ever Oasis (Europe)(M6).cxi"
+]
+},
+{
+"id": "3ds-3ds1740-hey-pikmin",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1740 - Hey! Pikmin (Europe)(M6).cxi"
+]
+},
+{
+"id": "3ds-3ds1741-miitopia",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1741 - Miitopia (Europe)(M6).cxi"
+]
+},
+{
+"id": "3ds-3ds1750-monster-hunter-stories",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1750 - Monster Hunter Stories (Europe) (En,Fr,De,Es,It,Nl).cxi"
+]
+},
+{
+"id": "3ds-3ds1752-metroid-samus-returns",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1752 - Metroid - Samus Returns (Europe) (En,Fr,De,Es,It,Nl).cxi"
+]
+},
+{
+"id": "3ds-3ds1755-yo-kai-watch-2-psychic-specters",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1755 - Yo-Kai Watch 2 - Psychic Specters (Europe)(M7).cxi"
+]
+},
+{
+"id": "3ds-3ds1756-mario-luigi-superstar-saga-bowser-s-minions",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1756 - Mario & Luigi - Superstar Saga   Bowser's Minions (Europe)(M6).cxi"
+]
+},
+{
+"id": "3ds-3ds1786-mario-party-the-top-100",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1786 - Mario Party - The Top 100 (Europe)(M6).cxi"
+]
+},
+{
+"id": "3ds-3ds1824-captain-toad-treasure-tracker",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1824 - Captain Toad - Treasure Tracker (Europe) (En,Fr,De,Es,It).cxi"
+]
+},
+{
+"id": "3ds-3ds1839-luigi-s-mansion",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1839 - Luigi's Mansion (Europe) (En,Fr,Gr,It,Sp).cxi"
+]
+},
+{
+"id": "3ds-3ds1849-mario-luigi-bowser-s-inside-story-bowser-jr-s-journey",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1849 - Mario & Luigi - Bowser's Inside Story   Bowser Jr.'s Journey (Europe) (En,Fr,Gr,It,Sp).cxi"
+]
+},
+{
+"id": "3ds-3ds1852-yo-kai-watch-3",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/3DS1852 - Yo-Kai Watch 3 (France).cxi"
+]
+},
+{
+"id": "3ds-legend-of-zelda-the-majora-s-mask-3d",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/Legend of Zelda, The - Majora's Mask 3D (Europe) (En,Fr,De,Es,It) (Rev 1).3ds"
+]
+},
+{
+"id": "3ds-new-super-mario-bros-2",
+"console": "3ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"3ds/New Super Mario Bros. 2 (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).3ds"
+]
+},
+{
+"id": "ds-pokemon-version-diamant",
+"console": "ds",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"ds/Pokemon - Version Diamant (France) (Rev 5).nds"
+]
+},
+{
+"id": "gc-zelda-twilight-princess",
+"console": "gc",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"gc/Zelda Twilight Princess (EUR) [GZ2P01].rvz"
+]
+},
+{
+"id": "switch-0100000011d90000",
+"console": "switch",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"switch/Pokemon Diamant Etincelant - Brilliant Diamond [0100000011D90000][v0].xcz"
+]
+},
+{
+"id": "switch-010003f003a34000",
+"console": "switch",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"switch/Pokemon Lets Go Pikachu [010003F003A34000][v1.0.2].xci"
+]
+},
+{
+"id": "switch-0100152000022000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Mario Kart 8 Deluxe · Ludothèque",
+"bases": [
+"switch/Mario Kart 8 Deluxe [0100152000022000][v0].nsz"
+]
+},
+{
+"id": "switch-010018e011d92000",
+"console": "switch",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"switch/Pokemon Perle Scintillante - Shining Pearl [010018E011D92000][v0].xcz"
+]
+},
+{
+"id": "switch-01002da013484000",
+"console": "switch",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"switch/The Legend of Zelda Skyward Sword HD [01002DA013484000][v0].nsz"
+]
+},
+{
+"id": "switch-010036b0034e4000",
+"console": "switch",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"switch/Super Mario Party [010036B0034E4000][v0].nsz"
+]
+},
+{
+"id": "switch-01004b3023412000",
+"console": "switch",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"switch/Pokemon Rouge Feu - FireRed (FR) [01004B3023412000][v0].nsz"
+]
+},
+{
+"id": "switch-01006f8002326000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Animal Crossing New Horizons",
+"bases": [
+"switch/Animal Crossing New Horizons [01006F8002326000][v0].nsz"
+]
+},
+{
+"id": "switch-01007ef00011e000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Zelda Breath of the Wild",
+"bases": [
+"switch/The Legend of Zelda Breath of the Wild [01007EF00011E000][v0].nsz"
+]
+},
+{
+"id": "switch-010087c02342e000",
+"console": "switch",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"switch/Pokemon Vert Feuille - LeafGreen (FR) [010087C02342E000][v0].nsz"
+]
+},
+{
+"id": "switch-0100a6301214e000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Fire Emblem Engage",
+"bases": [
+"switch/Fire Emblem Engage [0100A6301214E000][v0].nsz"
+]
+},
+{
+"id": "switch-0100abf008968000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Pokemon Epee",
+"bases": [
+"switch/Pokemon Epee - Sword [0100ABF008968000][v0+MAJ 1.3.2+2 DLC].xci"
+]
+},
+{
+"id": "switch-0100dca0064a6000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Luigi's Mansion 3",
+"bases": [
+"switch/Luigi's Mansion 3 [0100DCA0064A6000][v0].nsz"
+]
+},
+{
+"id": "switch-0100f2c0115b6000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Zelda Tears of the Kingdom",
+"bases": [
+"switch/The Legend of Zelda Tears of the Kingdom [0100F2C0115B6000][v0].xcz"
+]
+},
+{
+"id": "switch-0100ff500e34a000",
+"console": "switch",
+"installed": false,
+"stream": true,
+"stream_app": "Xenoblade Chronicles DE",
+"bases": [
+"switch/Xenoblade Chronicles Definitive Edition [0100FF500E34A000][v0].nsz"
+]
+},
+{
+"id": "switch2-pokemon-pokopia",
+"console": "switch2",
+"installed": false,
+"stream": true,
+"stream_app": "Pokemon Pokopia",
+"bases": [
+"switch2/Pokemon Pokopia [0400A3A01EE4C000]"
+]
+},
+{
+"id": "switch2-the-legend-of-zelda-ocarina-of-time",
+"console": "switch2",
+"installed": false,
+"stream": true,
+"stream_app": "Zelda Ocarina of Time (Switch 2)",
+"bases": [
+"switch2/The Legend of Zelda Ocarina of Time [0400486024DEC000][v131072].nup"
+]
+},
+{
+"id": "wiiu-the-legend-of-zelda-the-wind-waker-hd",
+"console": "wiiu",
+"installed": true,
+"stream": false,
+"stream_app": null,
+"bases": [
+"wiiu/The Legend of Zelda The Wind Waker HD"
+]
+}
+]
+}

@@ -8,6 +8,8 @@
 //! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
 pub mod android;
+pub mod energie;
+pub mod menu_jeu;
 pub mod profils;
 pub mod rumble;
 // Manette native : démarrée au bureau seulement (sur Android, MainActivity traduit les entrées).
@@ -1320,9 +1322,14 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     step(Step::Lancement, StepState::EnCours, None);
     let (intent, via, detail) = match &plan {
         android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
-        android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
+        android::Plan::Stream { host, app: name, hdr } => (android::stream_intent(app, host, name, *hdr), "flux", name.clone()),
     };
-    android::start(app, &intent)?;
+    // Menu en jeu : le jeu est retenu AVANT l'intent (sa fenêtre peut apparaître aussitôt).
+    menu_jeu::lance(app, game, &intent);
+    if let Err(e) = android::start(app, &intent) {
+        menu_jeu::oublier(app);
+        return Err(e);
+    }
     step(Step::Lancement, StepState::Fait, None);
     Ok(UiLaunch::Lance { via, detail })
 }
@@ -1413,8 +1420,11 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_process::init());
     // Android : pont Kotlin (intents, dossier des ROM) et configuration déposée par le PC.
+    // Énergie (lot energie, 22/11) : batterie de la Thor et repos de l'interface (energie.rs).
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(android::plugin()).setup(|app| {
+    let builder = builder.plugin(energie::plugin());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::plugin()).plugin(menu_jeu::plugin()).setup(|app| {
         android::prepare_env(app.handle());
         Ok(())
     });
@@ -1424,6 +1434,21 @@ pub fn run() {
         let handle = app.handle().clone();
         pad::init(move |e| {
             let _ = handle.emit(pad::EVENT_PAD, e);
+        });
+        // Batterie du Deck ou d'un portable : suivie par UPower (rien sur un PC fixe).
+        #[cfg(target_os = "linux")]
+        energie::suivre(app.handle().clone());
+        // Menu en jeu : bouton Guide pendant une partie → la fenêtre revient devant (écran « En jeu » :
+        // Reprendre, Fermer le jeu). Sous Wayland, le gestionnaire de fenêtres peut refuser le focus
+        // (l'app est alors signalée dans la barre des tâches).
+        let menu = app.handle().clone();
+        pad::on_menu(move || {
+            let _ = menu.emit(menu_jeu::EVENT_MENU, ());
+            if let Some(w) = menu.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
         });
         Ok(())
     });
@@ -1444,7 +1469,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer, energie::batterie_etat, energie::energie_repos, menu_jeu::jeu_en_cours, menu_jeu::reprendre_jeu, menu_jeu::fermer_jeu, menu_jeu::menu_jeu_reglages])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
@@ -1454,7 +1479,10 @@ pub fn run() {
             }
             // Arrêt voulu malgré la partie : l'émulateur est terminé proprement, la sauvegarde reste
             // locale et sera synchronisée au prochain lancement.
-            tauri::RunEvent::Exit => launch::terminate_running(),
+            tauri::RunEvent::Exit => {
+                launch::terminate_running();
+                energie::arreter();
+            }
             _ => {}
         });
 }
@@ -1491,8 +1519,8 @@ mod tests {
         };
         let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "n64")];
         let inv = vec![
-            ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None },
-            ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()) },
+            ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None, rom: None },
+            ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()), rom: None },
         ];
         apply_inventory(&mut lib, &inv);
         assert_eq!((lib[0].install, lib[0].stream, lib[0].emulator.as_str(), lib[0].sync), ("installe", false, "Eden", "a_jour"));
@@ -1810,7 +1838,7 @@ mod tests {
             ludo_proto::DeviceInventory {
                 device: "thor".into(),
                 updated_at: 0,
-                games: vec![ludo_proto::DeviceGame { game: "switch2-x".into(), installed: false, stream: true, save: false, stream_app: None }],
+                games: vec![ludo_proto::DeviceGame { game: "switch2-x".into(), installed: false, stream: true, save: false, stream_app: None, rom: None }],
             },
         ];
         let r = remote_devices(inv, "pc");

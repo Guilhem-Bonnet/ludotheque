@@ -296,6 +296,23 @@ impl Client {
             s => Err(Self::fail(s, &mut r)),
         }
     }
+
+    /// Premiers `len` octets d'un fichier du catalogue (`Range: bytes=0-<len-1>`), pour lire
+    /// l'identifiant de titre dans l'en-tête d'une ROM sans la télécharger. Un serveur qui ignore
+    /// `Range` répond 200 : seuls les `len` premiers octets sont lus, la connexion est ensuite fermée.
+    pub fn file_header(&self, game: &str, file_id: u64, len: usize) -> Result<Vec<u8>, ApiError> {
+        use std::io::Read;
+        let url = self.url(&format!("games/{game}/files/{file_id}"));
+        let mut r = self.download_agent.get(url).header("Range", format!("bytes=0-{}", len.saturating_sub(1))).call()?;
+        match r.status().as_u16() {
+            200 | 206 => {
+                let mut out = Vec::with_capacity(len);
+                r.body_mut().as_reader().take(len as u64).read_to_end(&mut out).map_err(|_| ApiError::Offline("lecture interrompue".into()))?;
+                Ok(out)
+            }
+            s => Err(Self::fail(s, &mut r)),
+        }
+    }
 }
 
 #[cfg(test)]

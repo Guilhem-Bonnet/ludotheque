@@ -6,10 +6,12 @@
   import { router } from './lib/router.svelte';
   import { startAppUpdateChecks } from './lib/appUpdate.svelte';
   import StateNotice from './lib/components/StateNotice.svelte';
+  import Repos from './lib/components/Repos.svelte';
   import Colonnes from './lib/components/ecrans/Colonnes.svelte';
-  import { applyLayout, computeLayout, computeZoom, layout, screenHasSide, screenIsWide } from './lib/layout';
+  import { androidViewportWidth, applyLayout, computeLayout, computeZoom, layout, screenHasSide, screenIsWide, type EcranMode } from './lib/layout';
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
+  import FermerJeu from './lib/components/FermerJeu.svelte';
   import Bibliotheque from './screens/Bibliotheque.svelte';
   import Conflit from './screens/Conflit.svelte';
   import FicheJeu from './screens/FicheJeu.svelte';
@@ -66,7 +68,7 @@
     });
   }
   function relayout() {
-    applyLayout(computeLayout(window.innerWidth, window.innerHeight));
+    applyLayout(computeLayout(window.innerWidth, window.innerHeight, document.documentElement.dataset.ecran as EcranMode));
   }
   // Un seul recalcul à la fois : `setZoom` est asynchrone (IPC) et déclenche lui-même un `resize` ; un calcul
   // lancé pendant l'attente lirait innerWidth au nouveau zoom × l'ancien. Les demandes arrivées pendant un
@@ -95,8 +97,10 @@
       // Le gabarit est recalculé au `resize` qui suit l'application de la balise.
       // Proportions de la VUE (fenêtre de l'app), pas de `screen` qui décrit l'écran 0 : sur l'écran du bas de la
       // Thor (1080×1240), screen.* donnait les proportions de l'écran du haut (constat et essai du lot thor2, 22/11).
-      const ratio = window.outerWidth > 0 && window.outerHeight > 0 ? window.outerWidth / window.outerHeight : screen.width / screen.height;
-      const width = Math.ceil(Math.max(1280, 800 * ratio));
+      // Écran du bas en double écran (`data-ecran="bas"`, posé par DoubleEcran.kt) : échelle du Deck (lib/layout.ts).
+      const width = window.outerWidth > 0
+        ? androidViewportWidth(window.outerWidth, window.outerHeight, document.documentElement.dataset.ecran as EcranMode)
+        : Math.ceil(Math.max(1280, (800 * screen.width) / screen.height));
       document.querySelector('meta[name="viewport"]')?.setAttribute('content', `width=${width}, user-scalable=no`);
       return relayout();
     }
@@ -142,6 +146,8 @@
     installNav();
     void rescale();
     window.addEventListener('resize', onResize);
+    // Passage en double écran ou retour à un seul écran (DoubleEcran.kt) : l'échelle de la vue change.
+    window.addEventListener('ludo-ecran', onResize);
     // B : un menu ouvert se referme d'abord ; sinon, écran précédent.
     const onBack = () => {
       if (document.querySelector('[data-modal]')) window.dispatchEvent(new CustomEvent('ludo:modal-back'));
@@ -153,6 +159,7 @@
     return () => {
       window.removeEventListener('ludo:back', onBack);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('ludo-ecran', onResize);
     };
   });
 
@@ -248,7 +255,10 @@
     {#if $layout.side !== 'none' && router.profile && screenHasSide(router.screen.name)}
       <Colonnes {device} />
     {/if}
+    <!-- Menu en jeu (lot menu-jeu) : confirmation « Fermer le jeu ? », depuis n'importe quel écran. -->
+    <FermerJeu />
   {/if}
+  <Repos />
 </div>
 
 <style>

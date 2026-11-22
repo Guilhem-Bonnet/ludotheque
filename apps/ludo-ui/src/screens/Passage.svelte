@@ -8,9 +8,24 @@
   import { feedback } from '../lib/feedback';
   import { reducedMotion, replay } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
+  import EnJeuActions from '../lib/components/EnJeuActions.svelte';
+  import { enCours } from '../lib/enCours.svelte';
   import { router } from '../lib/router.svelte';
   import type { LaunchEvent, LaunchResult, LaunchStep } from '../lib/api';
   import type { Preparation } from '../lib/types';
+
+  // Écran du bas de la Thor (attribut `data-ecran` de <html>, lot thor-ui) : vue ≈ 723×630, la jaquette
+  // est déjà en grand sur l'écran du haut, la tuile se fait plus petite. Suivi par MutationObserver
+  // (l'attribut peut être posé ou retiré après le montage : écran du bas éteint, rallumé).
+  const isBas = () => document.documentElement.dataset.ecran === 'bas';
+  let bas = $state(isBas());
+  const tileSize = $derived(bas ? 220 : 340);
+  onMount(() => {
+    bas = isBas();
+    const mo = new MutationObserver(() => (bas = isBas()));
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-ecran'] });
+    return () => mo.disconnect();
+  });
 
   // Écran de passage : n'apparaît que s'il y a quelque chose à faire (téléchargement, synchro).
   // Récit : le jeu arrive (élément partagé depuis la tuile), chaque étape se coche en se dessinant,
@@ -179,7 +194,10 @@
     for (const st of steps) st.state = 'fait';
     phase = 'sending';
     launching = false;
-    if (r.emulatorError) {
+    // « Fermer le jeu » (menu en jeu) termine l'émulateur par SIGTERM : sortie voulue, pas une erreur.
+    // Drapeau lu sans condition : il ne doit jamais survivre à la partie qui l'a posé.
+    const fermetureVoulue = enCours.consommerFermeture();
+    if (r.emulatorError && !fermetureVoulue) {
       // Sortie en erreur : la sauvegarde est synchronisée, mais ce n'est pas un succès à fêter.
       steps[4].label = 'Partie terminée';
       steps[5].label = 'L\u2019émulateur s\u2019est arrêté avec une erreur · sauvegarde synchronisée';
@@ -282,7 +300,7 @@
 <div class="screen" class:launching data-modal={busy ? "" : undefined}>
   <Ambiance art={preparation.game.art} cover={preparation.game.cover} background={preparation.game.background} x={14} dim />
   <main>
-    <div class="art" bind:this={art}><Tile game={preparation.game} size={340} big still hero shine={launching} lifting={launching} /></div>
+    <div class="art" bind:this={art}><Tile game={preparation.game} size={tileSize} big still hero shine={launching} lifting={launching} /></div>
     <div class="side" class:dim={launching}>
       <div class="head rise" style:--i={1}>
         <h1>{phase === 'playing' ? 'En jeu' : phase === 'sending' ? 'Sauvegarde' : launching ? 'Lancement' : 'Préparation'}</h1>
@@ -321,6 +339,8 @@
           <button class="act focusable" data-autofocus onclick={() => void runReal()}>{sendOnly ? 'Réessayer l\u2019envoi' : 'Réessayer'}</button>
           <button class="act focusable" onclick={() => router.back()}>Retour</button>
         </span>
+      {:else if phase === 'playing' && !isAndroid && !isDemo}
+        <EnJeuActions titre={preparation.game.title} />
       {:else if ended}
         <button class="act focusable" data-autofocus onclick={() => router.reset({ name: 'accueil' })}>Retour</button>
       {/if}
@@ -384,4 +404,8 @@
   }
   @media (prefers-reduced-motion: reduce) { .art:global(.back-from-game), .art:global(.saved), .spin { animation: none; } }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* Écran du bas de la Thor (≈ 723×630 à l'échelle du lot thor-ui) : marges et texte resserrés. */
+  :global(html[data-ecran='bas']) main { gap: 24px; padding: 0 24px; }
+  :global(html[data-ecran='bas']) .side { min-width: 0; gap: 18px; }
+  :global(html[data-ecran='bas']) ol { font-size: 16px; gap: 14px; }
 </style>

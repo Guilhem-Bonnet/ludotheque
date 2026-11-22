@@ -27,6 +27,8 @@ class StartArgs {
   var data: String? = null
   var extras: Map<String, String> = emptyMap()
   var boolExtras: Map<String, Boolean> = emptyMap()
+  /** Arbre des ROM à accorder à l'app lancée (lecture, préfixe) : jeux en dossier (Cemu, Wii U). */
+  var grantTree: String? = null
 }
 
 /** Adresse du fichier `android.json` des releases (réglage de l'appareil, sinon GitHub). */
@@ -126,6 +128,32 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve(out)
   }
 
+  /** Petit fichier texte de l'arbre des ROM (raccourci Moonlight de Cocoon), 4 Kio au plus. */
+  @Command
+  fun readText(invoke: Invoke) {
+    val args = invoke.parseArgs(RpxArgs::class.java)
+    val out = JSObject()
+    val tree = grantedTree()
+    // Seulement un document de l'arbre des ROM accordé (pas file://, ni un autre fournisseur).
+    if (tree != null && args.uri.startsWith(tree.toString() + "/document/")) {
+      try {
+        activity.contentResolver.openInputStream(Uri.parse(args.uri))?.use { s ->
+          val buf = ByteArray(4096)
+          var n = 0
+          while (n < buf.size) {
+            val r = s.read(buf, n, buf.size - n)
+            if (r < 0) break
+            n += r
+          }
+          out.put("text", String(buf, 0, n, Charsets.UTF_8))
+        }
+      } catch (e: Exception) {
+        // Illisible : lancement par le nom seul.
+      }
+    }
+    invoke.resolve(out)
+  }
+
   /** Arbre des ROM accordé et toujours valable (l'utilisateur peut retirer l'accès dans les réglages). */
   private fun grantedTree(): Uri? {
     val saved = prefs.getString("roms_tree", null) ?: return null
@@ -149,12 +177,30 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
     for ((k, v) in args.boolExtras) intent.putExtra(k, v)
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
+      // Comme Cocoon (« Granting tree URI permissions ») : l'émulateur lit les fichiers voisins de la ROM.
+      args.grantTree?.let {
+        activity.grantUriPermission(args.packageName, Uri.parse(it), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+      }
       activity.startActivity(intent)
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
+      revokeTree(args)
       invoke.reject("Application absente de l'appareil : ${args.packageName}")
     } catch (e: SecurityException) {
+      revokeTree(args)
       invoke.reject("Lancement refusé par Android : ${e.message}")
+    }
+  }
+
+  /** Lancement échoué : l'accès accordé à l'arbre de la console est retiré. */
+  private fun revokeTree(args: StartArgs) {
+    if (android.os.Build.VERSION.SDK_INT < 26) return
+    args.grantTree?.let {
+      try {
+        activity.revokeUriPermission(args.packageName, Uri.parse(it), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+      } catch (e: Exception) {
+        // Rien à retirer.
+      }
     }
   }
 

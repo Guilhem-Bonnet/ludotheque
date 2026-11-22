@@ -36,6 +36,10 @@ import java.security.MessageDigest
 class MiseAJourApk(private val activity: Activity, private val notify: (String) -> Unit) {
 
   companion object {
+    const val AUCUNE_APK = "Aucune version Android publiée avec cette version de la Ludothèque : prochaine publication à venir."
+    /** Paquet des APK publiées par la CI (variante release). */
+    const val PAQUET_RELEASE = "fr.srvdreamer.ludotheque"
+    const val ESSAI = "Version d'essai : mises à jour depuis le PC uniquement."
     const val AUTORISATION = "Autorisation requise : dans les réglages Android ouverts, activer « Autoriser cette source » pour la Ludothèque, puis revenir et relancer la mise à jour."
     private const val ACTION_STATUT = "fr.srvdreamer.ludotheque.MAJ_STATUT"
 
@@ -49,7 +53,10 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
     }
   }
 
-  class MajException(msg: String) : Exception(msg)
+  open class MajException(msg: String) : Exception(msg)
+
+  /** Aucune APK publiée avec la dernière release (404 sur l'adresse par défaut) : un état, pas une erreur. */
+  class AucuneApk : MajException(AUCUNE_APK)
 
   private fun installedCode(): Long {
     val info = activity.packageManager.getPackageInfo(activity.packageName, 0)
@@ -67,7 +74,10 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
     c.readTimeout = 30_000
     c.instanceFollowRedirects = true
     try {
-      if (c.responseCode == 404) throw MajException("Aucune version Android publiée")
+      // La CI ne publie l'APK (et android.json) qu'avec la clé de signature de l'app : une release
+      // faite avant la clé existe pour le PC mais pas pour Android. Constat du 22/11 (app-v0.7.0,
+      // clé créée ensuite).
+      if (c.responseCode == 404) throw AucuneApk()
       if (c.responseCode !in 200..299) throw MajException("Serveur des mises à jour : réponse ${c.responseCode}")
       return JSONObject(c.inputStream.bufferedReader().readText())
     } finally {
@@ -75,17 +85,36 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
     }
   }
 
-  /** `{ installee, code, version, versionCode, disponible, notes }`. */
+  /**
+   * Paquet de l'APK décrite par android.json (`package`, sinon celui des releases de la CI). Une APK
+   * d'un autre paquet ne remplace jamais l'app installée : l'app d'essai (`….debug`, installée depuis
+   * le PC) ne peut pas recevoir l'APK release, Android refuserait chaque tentative.
+   */
+  private fun autrePaquet(json: JSONObject): Boolean = json.optString("package", PAQUET_RELEASE) != activity.packageName
+
+  /** `{ installee, code, version, versionCode, disponible, notes, raison? }`. */
   fun verifier(url: String): JSObject {
-    val json = fetchJson(url)
-    val code = json.optLong("versionCode", 0)
     val out = JSObject()
     out.put("installee", installedName())
     out.put("code", installedCode())
+    // Aucune APK publiée : un état à expliquer, pas une erreur (l'app ne propose rien à installer).
+    val json = try {
+      fetchJson(url)
+    } catch (_: AucuneApk) {
+      out.put("version", "")
+      out.put("versionCode", 0)
+      out.put("notes", "")
+      out.put("disponible", false)
+      out.put("raison", AUCUNE_APK)
+      return out
+    }
+    val code = json.optLong("versionCode", 0)
     out.put("version", json.optString("version"))
     out.put("versionCode", code)
     out.put("notes", json.optString("notes"))
-    out.put("disponible", code > installedCode())
+    val autre = autrePaquet(json)
+    out.put("disponible", !autre && code > installedCode())
+    if (autre && code > installedCode()) out.put("raison", ESSAI)
     return out
   }
 
@@ -107,6 +136,7 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
   fun installer(url: String) {
     val json = fetchJson(url)
     if (json.optLong("versionCode", 0) <= installedCode()) throw MajException("Déjà à jour")
+    if (autrePaquet(json)) throw MajException(ESSAI)
     // HTTPS obligatoire ; HTTP accepté seulement si android.json vient lui-même d'une adresse HTTP
     // (essai local réglé dans config.toml, [maj] android). L'origine réelle est garantie par Android :
     // un APK signé par une autre clé que l'app installée est refusé.
