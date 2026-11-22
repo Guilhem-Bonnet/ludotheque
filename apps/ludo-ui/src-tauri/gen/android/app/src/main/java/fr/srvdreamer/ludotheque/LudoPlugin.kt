@@ -111,7 +111,7 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
     }.start()
   }
 
-  /** Fichier `.rpx` d'un jeu Wii U en dossier (`<jeu>/code/*.rpx`), pour Cemu. */
+  /** Fichier `.rpx` d'un jeu Wii U en dossier (fichier .rpx du sous-dossier « code » du jeu), pour Cemu. */
   @Command
   fun findRpx(invoke: Invoke) {
     val args = invoke.parseArgs(RpxArgs::class.java)
