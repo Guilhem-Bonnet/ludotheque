@@ -143,16 +143,19 @@ fn parse_od(text: &str) -> Vec<u8> {
     text.split_whitespace().filter_map(|b| u8::from_str_radix(b, 16).ok()).collect()
 }
 
-/// Extension en minuscules d'un chemin de ROM (`None` pour un dossier de jeu Wii U).
+/// Extension en minuscules d'un chemin de ROM (`None` pour un dossier de jeu Wii U), même règle que
+/// `local::match_key` : un nom de dossier peut contenir des points (« Super Smash Bros. for Wii U »).
 fn rom_ext(path: &str) -> Option<String> {
-    Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)
+    let base = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path);
+    let (_, ext) = base.rsplit_once('.')?;
+    (!ext.is_empty() && ext.len() <= 4 && ext.chars().all(|c| c.is_ascii_alphanumeric())).then(|| ext.to_ascii_lowercase())
 }
 
 impl Adb {
     /// Identifiant du jeu lu dans l'en-tête de la ROM de l'appareil (`ludo_core::rom`) : quelques
     /// centaines d'octets lus par `dd`, rien n'est écrit. Dossier Wii U : `meta/meta.xml`.
     pub fn rom_title_id(&self, remote: &str) -> Option<u64> {
-        match rom_ext(remote) {
+        match rom_ext(remote).filter(|e| ludo_core::rom::HEADER_EXTS.contains(&e.as_str())) {
             Some(ext) => {
                 let out = self.shell(&format!("dd if={} bs={} count=1 2>/dev/null | od -An -tx1 -v", sq(remote), ludo_core::rom::HEADER_LEN)).ok()?;
                 ludo_core::rom::title_id_from_header(&ext, &parse_od(&out))
@@ -277,10 +280,19 @@ mod tests {
     }
 
     #[test]
+    fn chemin_distant_du_miroir_lui_meme() {
+        let m = Path::new("/tmp/miroir");
+        assert_eq!(remote_of(m, m, "/sdcard/x/").as_deref(), Some("/sdcard/x"));
+        assert_eq!(remote_of(&m.join("a/b"), m, "/sdcard/x").as_deref(), Some("/sdcard/x/a/b"));
+    }
+
+    #[test]
     fn identifiant_lu_dans_les_octets_d_od() {
         assert_eq!(parse_od(" 4e 43 43 48 98 17\n 00 8f\n"), vec![0x4e, 0x43, 0x43, 0x48, 0x98, 0x17, 0x00, 0x8f]);
         assert!(parse_od("").is_empty());
         assert_eq!(rom_ext("/a/b/Jeu (Europe).CXI").as_deref(), Some("cxi"));
         assert_eq!(rom_ext("/a/b/The Legend of Zelda The Wind Waker HD"), None);
+        assert_eq!(rom_ext("/a/b/Super Smash Bros. for Wii U"), None);
+        assert_eq!(rom_ext("/a/b/Mario Kart 8 v1.1"), Some("1".into()), "même règle que match_key (≤ 4 alphanumériques)");
     }
 }

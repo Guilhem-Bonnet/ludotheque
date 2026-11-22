@@ -1,7 +1,7 @@
 //! Configuration d'un appareil (`~/.config/ludo/config.toml`) et construction des adaptateurs
 //! à partir des fiches d'émulateur.
 
-use crate::layout::{DirLayout, RyujinxLayout, SaveLayout};
+use crate::layout::{DirLayout, NamedFileLayout, RyujinxLayout, SaveLayout};
 use crate::detect::{self, Host};
 use ludo_core::fiche::{render, DeviceSettings, Fiche, FicheError, ProfileMode};
 use ludo_proto::CatalogGame;
@@ -291,6 +291,9 @@ pub struct Prepared {
     pub fiche: Fiche,
     /// Dossiers lus et écrits par l'adaptateur (sert à les recopier depuis un appareil distant).
     pub dirs: Vec<PathBuf>,
+    /// Motifs « ne garder que » (`!…`) quand le dossier est partagé par plusieurs jeux : un dossier
+    /// présent ne contient une sauvegarde de CE jeu que si l'un de ses fichiers y correspond.
+    pub keep: Vec<String>,
 }
 
 fn need<T: Clone>(v: &Option<T>, profile: &str, field: &'static str) -> Result<T, ConfigError> {
@@ -339,6 +342,7 @@ pub fn prepare_rom(cfg: &Config, emulator: &str, profile: &str, title_id: &str, 
     }
 
     let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut keep: Vec<String> = Vec::new();
     let layout: Box<dyn SaveLayout> = if fiche.id == "ryujinx" {
         let uid = need(&ids.ryujinx_user_id, profile, "ryujinx_user_id")?;
         vars.insert("profil_nom", need(&ids.ryujinx_nom, profile, "ryujinx_nom")?);
@@ -371,14 +375,27 @@ pub fn prepare_rom(cfg: &Config, emulator: &str, profile: &str, title_id: &str, 
         };
         dirs.push(account.clone());
         dirs.extend(device.clone());
-        // Dossier partagé par plusieurs jeux : seuls les fichiers du jeu (motifs « ! »).
-        let mut exclude = fiche.exclusions.clone();
+        // Dossier partagé par plusieurs jeux : seuls les fichiers du jeu (motifs « ! »). Les valeurs
+        // insérées (nom de ROM…) sont échappées : leurs « * » et « ? » restent des caractères.
+        let escaped: BTreeMap<&str, String> = vars.iter().map(|(k, v)| (*k, ludo_core::snapshot::escape_wildcards(v))).collect();
         for f in &fiche.fichiers {
-            exclude.push(format!("!{}", render(f, &vars)?));
+            keep.push(format!("!{}", render(f, &escaped)?));
         }
-        Box::new(DirLayout { account, device, exclude })
+        let mut exclude = fiche.exclusions.clone();
+        exclude.extend(keep.iter().cloned());
+        let inner = DirLayout { account, device, exclude };
+        match fiche.fichiers.as_slice() {
+            // Un seul fichier nommé d'après la ROM (melonDS) : nom fixe dans l'archive neutre, pour
+            // passer entre appareils dont la ROM ne porte pas le même nom.
+            [one] if one.contains("{rom_nom}") => {
+                let local = render(one, &vars)?;
+                let ext = Path::new(&local).extension().and_then(|e| e.to_str()).map(|e| format!(".{e}")).unwrap_or_default();
+                Box::new(NamedFileLayout { inner, local, neutral: format!("sauvegarde{ext}") })
+            }
+            _ => Box::new(inner),
+        }
     };
-    Ok(Prepared { layout, vars, fiche, dirs })
+    Ok(Prepared { layout, vars, fiche, dirs, keep })
 }
 
 /// Ligne de commande de lancement, découpée en arguments.
@@ -534,5 +551,13 @@ mod tests {
         let p = prepare_rom(&cfg, "melonds", "guilhem", "0000000041444146", Some(rom)).unwrap();
         assert_eq!(p.vars["code_jeu"], "ADAF");
         assert_eq!(p.vars["rom_nom"], "Pokemon - Version Diamant (France) (Rev 5)");
+        assert_eq!(p.keep, ["!Pokemon - Version Diamant (France) (Rev 5).sav"]);
+        // Joker dans le nom de la ROM : échappé dans le motif.
+        let p = prepare_rom(&cfg, "melonds", "guilhem", "0000000041444146", Some(Path::new("/r/Qui ?.nds"))).unwrap();
+        assert_eq!(p.keep, ["!Qui \\?.sav"]);
+        // Dolphin : seuls les fichiers GCI de Twilight Princess.
+        let p = prepare(&cfg, "dolphin", "guilhem", "0000475a32503031").unwrap();
+        assert_eq!(p.keep, ["!??-GZ2P-*.gci"]);
+        assert!(prepare(&cfg, "azahar", "guilhem", "0004000000125600").unwrap().keep.is_empty());
     }
 }

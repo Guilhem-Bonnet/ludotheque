@@ -17,6 +17,10 @@
 //! hexadécimaux : octets ASCII en gros-boutiste, complétés à gauche par des zéros
 //! (`GZ2P01` → `0000475a32503031`). [`ascii_code`] fait la conversion inverse.
 
+/// Extensions lues par [`title_id_from_header`] ; tout autre nom est traité comme un dossier de jeu
+/// Wii U (`meta/meta.xml`).
+pub const HEADER_EXTS: &[&str] = &["cxi", "3ds", "cci", "rvz", "wia", "iso", "gcm", "nds"];
+
 /// Octets d'en-tête à lire pour [`title_id_from_header`] (couvre tous les formats ci-dessus).
 pub const HEADER_LEN: usize = 0x120;
 
@@ -49,7 +53,8 @@ pub fn title_id_from_header(ext: &str, header: &[u8]) -> Option<u64> {
             b"NCSD" => u64_le(header, 0x108),
             _ => None,
         }
-        .filter(|&t| t >> 32 == 0x0004_0000),
+        // Jeux (00040000) et démos (00040002) ; le reste (système, mises à jour) n'a pas de sauvegarde ici.
+        .filter(|&t| matches!(t >> 32, 0x0004_0000 | 0x0004_0002)),
         "rvz" | "wia" => {
             let magic = header.get(0..4)?;
             (magic == b"RVZ\x01" || magic == b"WIA\x01").then_some(())?;

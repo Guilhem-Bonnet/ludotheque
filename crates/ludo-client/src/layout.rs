@@ -90,6 +90,43 @@ impl SaveLayout for DirLayout {
     }
 }
 
+/// Sauvegarde d'un seul fichier nommé d'après la ROM de l'appareil (melonDS : `<rom>.sav`). Dans
+/// l'archive neutre, le fichier porte un nom fixe (`neutral`) : une partie passe ainsi entre deux
+/// appareils dont la ROM est nommée différemment, ou après un renommage de la ROM.
+pub struct NamedFileLayout {
+    /// Dossier partagé, filtré sur le seul fichier du jeu (motif « ! » échappé).
+    pub inner: DirLayout,
+    /// Nom du fichier sur cet appareil.
+    pub local: String,
+    /// Nom du fichier dans l'archive neutre.
+    pub neutral: String,
+}
+
+/// Copie de l'archive où `account/<from>` devient `account/<to>` (le reste à l'identique).
+fn rename_in_archive(archive: &[u8], from: &str, to: &str) -> Result<Snapshot, LayoutError> {
+    let staging = tempfile::tempdir()?;
+    let dir = staging.path().join("neutre");
+    snapshot::restore(&dir, archive, &[])?;
+    let (src, dst) = (dir.join("account").join(from), dir.join("account").join(to));
+    if src.is_file() && !dst.exists() {
+        std::fs::rename(&src, &dst)?;
+    }
+    snapshot::snapshot(&dir, &[])?.ok_or(LayoutError::Snapshot(SnapshotError::EmptyArchive))
+}
+
+impl SaveLayout for NamedFileLayout {
+    fn export(&self) -> Result<Option<Snapshot>, LayoutError> {
+        match self.inner.export()? {
+            Some(s) => Ok(Some(rename_in_archive(&s.archive, &self.local, &self.neutral)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn import(&self, archive: &[u8]) -> Result<(), LayoutError> {
+        self.inner.import(&rename_in_archive(archive, &self.neutral, &self.local)?.archive)
+    }
+}
+
 /// Rangement Ryujinx : `bis/user/save/<index>/{0,1}`, l'index étant relié au jeu et au profil
 /// par `ExtraData0` (mesuré le 14/11 sur Ryubing 1.3.3) :
 /// octets 0..8 = identifiant du jeu (u64 LE), 8..24 = identifiant utilisateur,
@@ -275,5 +312,31 @@ mod tests {
         assert_ne!(lg.export().unwrap().unwrap().hash, lc.export().unwrap().unwrap().hash);
         lc.import(&lg.export().unwrap().unwrap().archive).unwrap();
         assert_eq!(fs::read(g.join("0/s")).unwrap(), b"guilhem", "Guilhem intact");
+    }
+
+    #[test]
+    fn sav_melonds_entre_deux_noms_de_rom() {
+        let t = tempfile::tempdir().unwrap();
+        let mk = |dir: &str, rom: &str| NamedFileLayout {
+            inner: DirLayout {
+                account: t.path().join(dir),
+                device: None,
+                exclude: vec![format!("!{}", ludo_core::snapshot::escape_wildcards(&format!("{rom}.sav")))],
+            },
+            local: format!("{rom}.sav"),
+            neutral: "sauvegarde.sav".into(),
+        };
+        // Thor : nom No-Intro ; autre appareil : nom court. Un autre jeu partage le dossier.
+        let thor = mk("thor/saves", "Pokemon - Version Diamant (France) (Rev 5)");
+        write(&t.path().join("thor/saves/Pokemon - Version Diamant (France) (Rev 5).sav"), b"badges-8");
+        write(&t.path().join("thor/saves/Mario Kart DS.sav"), b"mkds");
+        let neutral = thor.export().unwrap().unwrap();
+        let deck = mk("deck/saves", "Pokemon Diamant");
+        write(&t.path().join("deck/saves/Zelda.sav"), b"zelda");
+        deck.import(&neutral.archive).unwrap();
+        assert_eq!(fs::read(t.path().join("deck/saves/Pokemon Diamant.sav")).unwrap(), b"badges-8");
+        assert_eq!(fs::read(t.path().join("deck/saves/Zelda.sav")).unwrap(), b"zelda", "autre jeu intact");
+        assert_eq!(deck.export().unwrap().unwrap().hash, neutral.hash, "même forme neutre sur les deux appareils");
+        assert!(mk("vide", "X").export().unwrap().is_none());
     }
 }

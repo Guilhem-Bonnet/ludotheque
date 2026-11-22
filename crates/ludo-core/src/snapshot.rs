@@ -51,28 +51,66 @@ pub fn archive_hash(archive: &[u8]) -> String {
     hex::encode(Sha256::digest(archive))
 }
 
-/// Correspondance d'un nom avec un motif où `*` vaut n'importe quelle suite et `?` un caractère
-/// (les autres caractères, crochets et parenthèses compris, sont pris tels quels).
+/// Correspondance d'un nom avec un motif où `*` vaut n'importe quelle suite et `?` un caractère ;
+/// `\` rend littéral le caractère suivant (voir [`escape_wildcards`]). Les autres caractères,
+/// crochets et parenthèses compris, sont pris tels quels.
 pub fn wildcard(pattern: &str, name: &str) -> bool {
-    let (p, n): (Vec<char>, Vec<char>) = (pattern.chars().collect(), name.chars().collect());
+    #[derive(Clone, Copy, PartialEq)]
+    enum Tok {
+        Any,
+        One,
+        Lit(char),
+    }
+    let mut p = Vec::new();
+    let mut it = pattern.chars();
+    while let Some(c) = it.next() {
+        p.push(match c {
+            '*' => Tok::Any,
+            '?' => Tok::One,
+            '\\' => Tok::Lit(it.next().unwrap_or('\\')),
+            c => Tok::Lit(c),
+        });
+    }
+    let n: Vec<char> = name.chars().collect();
     let (mut pi, mut ni, mut star, mut mark) = (0, 0, None, 0);
     while ni < n.len() {
-        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni]) {
-            pi += 1;
-            ni += 1;
-        } else if pi < p.len() && p[pi] == '*' {
-            star = Some(pi);
-            mark = ni;
-            pi += 1;
-        } else if let Some(s) = star {
-            pi = s + 1;
-            mark += 1;
-            ni = mark;
-        } else {
-            return false;
+        match p.get(pi) {
+            Some(Tok::One) => {
+                pi += 1;
+                ni += 1;
+            }
+            Some(Tok::Lit(c)) if *c == n[ni] => {
+                pi += 1;
+                ni += 1;
+            }
+            Some(Tok::Any) => {
+                star = Some(pi);
+                mark = ni;
+                pi += 1;
+            }
+            _ => match star {
+                Some(s) => {
+                    pi = s + 1;
+                    mark += 1;
+                    ni = mark;
+                }
+                None => return false,
+            },
         }
     }
-    p[pi..].iter().all(|&c| c == '*')
+    p[pi..].iter().all(|&t| t == Tok::Any)
+}
+
+/// Rend littéraux `*`, `?` et `\` d'un texte inséré dans un motif (nom de ROM « Qui ? », etc.).
+pub fn escape_wildcards(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '*' | '?' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Vrai si `rel` (chemin relatif, séparateurs `/`) correspond à un motif d'exclusion.
@@ -298,6 +336,11 @@ mod tests {
         assert!(wildcard("Pokemon - Version Diamant (France) (Rev 5).sav", "Pokemon - Version Diamant (France) (Rev 5).sav"));
         assert!(!wildcard("a.sav", "a.sav.bak"));
         assert!(wildcard("*", ""));
+        // Texte inséré échappé : « ? » d'un nom de ROM ne vaut plus n'importe quel caractère.
+        let rom = escape_wildcards("Qui ? *Jeu*");
+        assert!(wildcard(&format!("{rom}.sav"), "Qui ? *Jeu*.sav"));
+        assert!(!wildcard(&format!("{rom}.sav"), "Qui X AJeuB.sav"));
+        assert!(wildcard(&escape_wildcards("a\\b"), "a\\b"));
         let keep = vec!["!??-GZ2P-*.gci".to_string(), "*.tmp".to_string()];
         assert!(!excluded("01-GZ2P-gczelda2.gci", &keep));
         assert!(excluded("01-GALE-smash.gci", &keep), "autre jeu de la carte : exclu");
