@@ -91,7 +91,9 @@ enum Cmd {
         #[arg(long, value_enum)]
         resoudre: Option<Choix>,
         /// Calcule et affiche l'inventaire de l'appareil (ROM trouvées, par nom ou par identifiant de
-        /// titre), sans rien synchroniser ni envoyer au serveur.
+        /// titre), sans rien synchroniser ni envoyer au serveur. Lit seulement : liste des ROM, en-têtes
+        /// (appareil et serveur) ; met à jour le cache local des identifiants (`title-ids.json`). Les jeux
+        /// marqués « à suivre » sont ceux dont les sauvegardes seront synchronisées au prochain vrai passage.
         #[arg(long)]
         a_blanc: bool,
     },
@@ -278,6 +280,7 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
     let rom_paths: Vec<String> = conf
         .roms
         .as_deref()
+        .map(|r| r.trim_end_matches('/'))
         .map(|r| ROM_DIRS.iter().flat_map(|c| dev.list(&format!("{r}/{c}")).into_iter().map(move |n| format!("{r}/{c}/{n}"))).collect())
         .unwrap_or_default();
     let rom_names: Vec<String> = rom_paths.iter().map(|p| p.rsplit('/').next().unwrap_or(p).to_string()).collect();
@@ -308,7 +311,9 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         .collect();
     if a_blanc {
         for g in inventory.values().filter(|g| g.installed || g.stream) {
-            println!("{}\t{}{}\t{}", g.game, if g.installed { "installé" } else { "-" }, if g.stream { " · flux" } else { "" }, g.rom.as_deref().unwrap_or(""));
+            // ROM présente = jeu suivi : ses sauvegardes seront synchronisées au prochain vrai passage.
+            let suivi = games.iter().find(|c| c.id == g.game).is_some_and(|c| rom_of(c).is_some());
+            println!("{}\t{}{}{}\t{}", g.game, if g.installed { "installé" } else { "-" }, if g.stream { " · flux" } else { "" }, if suivi { " · à suivre" } else { "" }, g.rom.as_deref().unwrap_or(""));
         }
         let n = inventory.values().filter(|g| g.installed).count();
         println!("À blanc : {n} jeux installés sur {}, rien synchronisé ni envoyé", ctx.cfg.appareil);
@@ -444,7 +449,7 @@ fn title_id_matches(
     // Fiches à rapprocher : ROM de base unique, d'un format à en-tête (pas un dossier Wii U).
     let wanted: Vec<(&ludo_proto::CatalogGame, &ludo_proto::GameFile)> = games
         .iter()
-        .filter(|g| !found(g))
+        .filter(|g| !found(g) && !rom_dirs_of(&g.console).is_empty())
         .filter_map(|g| {
             let mut base = g.files.iter().filter(|f| f.role == ludo_proto::FileRole::Base);
             match (base.next(), base.next()) {
@@ -455,7 +460,13 @@ fn title_id_matches(
         .collect();
     // ROM de l'appareil déjà attribuées par le nom : hors jeu.
     let claimed: std::collections::BTreeSet<&String> = games.iter().filter_map(|g| rom_for(g, rom_paths)).collect();
-    let free: Vec<String> = rom_paths.iter().filter(|p| has_header(p) && !claimed.contains(p)).cloned().collect();
+    // ROM restées sans jeu, dans les sous-dossiers des consoles à rapprocher seulement.
+    let dirs: std::collections::BTreeSet<&str> = wanted.iter().flat_map(|(g, _)| rom_dirs_of(&g.console).iter().copied()).collect();
+    let free: Vec<String> = rom_paths
+        .iter()
+        .filter(|p| has_header(p) && !claimed.contains(p) && p.rsplit('/').nth(1).is_some_and(|d| dirs.contains(d)))
+        .cloned()
+        .collect();
     let mut out = std::collections::BTreeMap::new();
     if wanted.is_empty() || free.is_empty() {
         return out;
@@ -465,17 +476,26 @@ fn title_id_matches(
         std::fs::read(&cache_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let before = cache.len();
     let mut catalog: Vec<(String, &str, u64)> = Vec::new();
+    let mut offline = false;
     for (g, f) in &wanted {
         let key = format!("{}/{}/{}", g.id, f.id, f.size);
         let tid = match cache.get(&key) {
             Some(t) => *t,
+            None if offline => 0,
             None => match client.file_header(&g.id, f.id, HEADER_LEN) {
-                Ok(h) => {
+                // En-tête complet : son identifiant (0 = format sans identifiant, noté pour ne pas relire).
+                Ok(h) if h.len() >= HEADER_LEN => {
                     let t = ludo_core::rom::title_id_from_header(&header_ext(&f.path), &h).unwrap_or(0);
                     cache.insert(key, t);
                     t
                 }
-                // Serveur injoignable : rien à noter, on réessaiera à la prochaine passe.
+                // Réponse courte (tronquée, page d'un intermédiaire) : rien de noté, relu à la prochaine passe.
+                Ok(_) => 0,
+                // Serveur injoignable : on arrête de le solliciter pour cette passe.
+                Err(ludo_client::api::ApiError::Offline(_)) => {
+                    offline = true;
+                    0
+                }
                 Err(_) => 0,
             },
         };
@@ -485,6 +505,9 @@ fn title_id_matches(
         if let Ok(json) = serde_json::to_vec_pretty(&cache) {
             let _ = std::fs::write(&cache_path, json);
         }
+    }
+    if catalog.iter().all(|(_, _, t)| *t == 0) {
+        return out;
     }
     let device_tids = dev.rom_title_ids(&free);
     // Rapprochement console par console (sous-dossiers de la console seulement).

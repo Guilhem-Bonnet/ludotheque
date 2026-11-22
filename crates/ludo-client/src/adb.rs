@@ -177,13 +177,20 @@ impl Adb {
         if readable.is_empty() {
             return out;
         }
-        let script: String = readable
-            .iter()
-            .map(|(i, _)| format!("dd if={} bs={} count=1 2>/dev/null | od -An -tx1 -v; echo =;", sq(&remotes[*i]), ludo_core::rom::HEADER_LEN))
-            .collect();
-        let Ok(text) = self.shell(&script) else { return out };
-        for ((i, ext), block) in readable.iter().zip(split_blocks(&text)) {
-            out[*i] = ludo_core::rom::title_id_from_header(ext, &parse_od(&block));
+        // Par paquets : une commande `sh -c` trop longue serait refusée (limite d'un argument).
+        for chunk in readable.chunks(100) {
+            let script: String = chunk
+                .iter()
+                .map(|(i, _)| format!("dd if={} bs={} count=1 2>/dev/null | od -An -tx1 -v; echo =;", sq(&remotes[*i]), ludo_core::rom::HEADER_LEN))
+                .collect();
+            match self.shell(&script) {
+                Ok(text) => {
+                    for ((i, ext), block) in chunk.iter().zip(split_blocks(&text)) {
+                        out[*i] = ludo_core::rom::title_id_from_header(ext, &parse_od(&block));
+                    }
+                }
+                Err(e) => eprintln!("lecture des en-têtes de ROM impossible : {e}"),
+            }
         }
         out
     }

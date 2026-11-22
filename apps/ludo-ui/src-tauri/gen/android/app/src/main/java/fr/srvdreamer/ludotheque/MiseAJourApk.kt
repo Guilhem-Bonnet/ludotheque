@@ -36,10 +36,10 @@ import java.security.MessageDigest
 class MiseAJourApk(private val activity: Activity, private val notify: (String) -> Unit) {
 
   companion object {
-    const val AUCUNE_APK = "Aucune version Android publiée avec la dernière version de la Ludothèque : elle arrivera avec la prochaine."
+    const val AUCUNE_APK = "Aucune version Android publiée avec cette version de la Ludothèque : prochaine publication à venir."
     /** Paquet des APK publiées par la CI (variante release). */
     const val PAQUET_RELEASE = "fr.srvdreamer.ludotheque"
-    const val ESSAI = "Version d'essai installée depuis le PC : ses mises à jour passent par le PC (scripts/apk.sh), pas par l'app."
+    const val ESSAI = "Version d'essai : mises à jour depuis le PC uniquement."
     const val AUTORISATION = "Autorisation requise : dans les réglages Android ouverts, activer « Autoriser cette source » pour la Ludothèque, puis revenir et relancer la mise à jour."
     private const val ACTION_STATUT = "fr.srvdreamer.ludotheque.MAJ_STATUT"
 
@@ -53,7 +53,10 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
     }
   }
 
-  class MajException(msg: String) : Exception(msg)
+  open class MajException(msg: String) : Exception(msg)
+
+  /** Aucune APK publiée avec la dernière release (404 sur l'adresse par défaut) : un état, pas une erreur. */
+  class AucuneApk : MajException(AUCUNE_APK)
 
   private fun installedCode(): Long {
     val info = activity.packageManager.getPackageInfo(activity.packageName, 0)
@@ -74,7 +77,7 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
       // La CI ne publie l'APK (et android.json) qu'avec la clé de signature de l'app : une release
       // faite avant la clé existe pour le PC mais pas pour Android. Constat du 22/11 (app-v0.7.0,
       // clé créée ensuite).
-      if (c.responseCode == 404) throw MajException(AUCUNE_APK)
+      if (c.responseCode == 404) throw AucuneApk()
       if (c.responseCode !in 200..299) throw MajException("Serveur des mises à jour : réponse ${c.responseCode}")
       return JSONObject(c.inputStream.bufferedReader().readText())
     } finally {
@@ -97,8 +100,7 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
     // Aucune APK publiée : un état à expliquer, pas une erreur (l'app ne propose rien à installer).
     val json = try {
       fetchJson(url)
-    } catch (e: MajException) {
-      if (e.message != AUCUNE_APK) throw e
+    } catch (_: AucuneApk) {
       out.put("version", "")
       out.put("versionCode", 0)
       out.put("notes", "")

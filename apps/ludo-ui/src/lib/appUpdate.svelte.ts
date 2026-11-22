@@ -35,6 +35,16 @@ async function androidInvoke<T>(cmd: string): Promise<T> {
   return invoke<T>(cmd);
 }
 
+/** Version refusée par Android pour signature (par appareil) : jamais reproposée tant que l'app
+ *  installée n'a pas changé. Stockage facultatif : sans lui, l'explication revient à l'essai suivant. */
+const REFUSED_KEY = 'ludo.apk.refusee';
+function rememberRefused(version: string): void {
+  try { localStorage.setItem(REFUSED_KEY, version); } catch { /* stockage indisponible */ }
+}
+function refusedVersion(): string | null {
+  try { return localStorage.getItem(REFUSED_KEY); } catch { return null; }
+}
+
 async function checkAndroid(): Promise<void> {
   appUpdate.status = 'checking';
   appUpdate.error = '';
@@ -43,6 +53,11 @@ async function checkAndroid(): Promise<void> {
     appUpdate.checkedAt = new Date();
     appUpdate.version = v.version;
     appUpdate.notes = v.notes;
+    if (v.disponible && v.version && v.version === refusedVersion()) {
+      appUpdate.info = APK_ETAPES.signature;
+      appUpdate.status = 'indisponible';
+      return;
+    }
     appUpdate.info = v.raison ?? '';
     appUpdate.status = v.disponible ? 'available' : v.raison ? 'indisponible' : 'none';
   } catch (e) {
@@ -54,7 +69,7 @@ async function checkAndroid(): Promise<void> {
 
 const APK_ETAPES: Record<string, string> = {
   annulee: 'Installation annulée',
-  signature: "Version installée signée par une autre clé que les versions publiées : désinstaller l'app une fois puis installer la version publiée depuis le PC (scripts/apk.sh --release --installer). Le profil retenu sur cet appareil sera à choisir de nouveau.",
+  signature: "Version installée signée par une autre clé que les versions publiées : désinstallation puis réinstallation depuis le PC nécessaires (une seule fois). Profil à choisir de nouveau ensuite.",
   echec: 'Installation refusée par Android',
 };
 
@@ -72,7 +87,9 @@ async function installAndroid(): Promise<void> {
         appUpdate.status = 'restarting';
       } else if (etape === 'signature') {
         // Refus définitif tant que l'app installée n'est pas remplacée à la main : expliqué, sans
-        // bouton « Réessayer » qui échouerait à chaque appui.
+        // bouton « Réessayer » qui échouerait à chaque appui. Version retenue : la prochaine
+        // vérification (retour au premier plan) ne la repropose pas.
+        rememberRefused(appUpdate.version);
         appUpdate.info = APK_ETAPES.signature;
         appUpdate.status = 'indisponible';
       } else if (APK_ETAPES[etape]) {

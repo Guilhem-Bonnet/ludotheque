@@ -56,7 +56,7 @@ fi
 
 # Empreinte du certificat (publique) : permet de vérifier un APK avec apksigner verify --print-certs.
 pass="$(sed -n 's/^storePassword=//p' "$props")"
-cert="$(LUDO_KS_PASS="$pass" kt -list -v -keystore "$store" -storepass:env LUDO_KS_PASS 2>/dev/null | empreinte)"
+cert="$(LUDO_KS_PASS="$pass" kt -list -v -keystore "$store" -storepass:env LUDO_KS_PASS 2>/dev/null | empreinte || true)"
 [ -n "$cert" ] || { echo "Empreinte du certificat illisible (sortie de keytool inattendue)" >&2; exit 1; }
 echo "Certificat SHA256: $cert"
 
