@@ -63,8 +63,17 @@ impl IntoResponse for StoreError {
             StoreError::NoRoms | StoreError::RomsUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
+        // Erreur serveur : le détail (SQLite, chemins, io, en anglais) va au journal du pod, jamais au
+        // client ; un refus (4xx) garde son message, qui dit quoi corriger.
         if status.is_server_error() {
             tracing::error!(erreur = %self, "erreur serveur");
+            let public = match self {
+                // Erreur de `catalogue.toml` : message en français destiné à l'administrateur, gardé.
+                StoreError::Catalog(_) => self.to_string(),
+                _ if status == StatusCode::SERVICE_UNAVAILABLE => "dossier des ROM indisponible".to_string(),
+                _ => "erreur interne du serveur".to_string(),
+            };
+            return (status, public).into_response();
         }
         (status, self.to_string()).into_response()
     }
