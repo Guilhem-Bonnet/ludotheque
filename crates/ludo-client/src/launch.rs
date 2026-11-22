@@ -710,3 +710,70 @@ mod tests_rom_convertie {
         assert_eq!(installed_rom(d.path(), "switch/Autre.nsz"), None);
     }
 }
+
+/// Arguments que Sunshine (Linux) passe réellement au programme d'une appli de `apps.json` : sans
+/// shell, la commande est découpée par boost.process v1 (`build_args`) sur les espaces ; seuls les
+/// guillemets DOUBLES groupent des mots (retirés s'ils encadrent le mot). Une apostrophe reste un
+/// caractère ordinaire : `--rom '/a b.nsp'` donne `'/a` et `b.nsp'`.
+pub fn sunshine_argv(cmd: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in cmd.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            ' ' if !quoted => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Problème d'une commande d'appli Sunshine `ludo run` : un mot qui commence par une apostrophe
+/// (chemin cité « à la shell », que Sunshine coupe aux espaces). `ludo` refuse alors ses arguments
+/// et quitte au démarrage du flux, sans lancer le jeu (18/11 : « App exited » dès la connexion).
+pub fn sunshine_cmd_problem(cmd: &str) -> Option<String> {
+    let argv = sunshine_argv(cmd);
+    if !argv.iter().any(|w| w.ends_with("ludo")) || !argv.iter().any(|w| w == "run") {
+        return None;
+    }
+    argv.iter()
+        .find(|w| w.starts_with('\''))
+        .map(|w| format!("mot cité par des apostrophes ({w}) : Sunshine ne les comprend pas, utiliser des guillemets doubles"))
+}
+
+#[cfg(test)]
+mod tests_sunshine {
+    use super::*;
+
+    #[test]
+    fn guillemets_doubles_groupent_les_mots() {
+        let cmd = r#"/bin/ludo run --rom "/mnt/Rom/Luigi's Mansion 3 [x].nsp" --lanceur "env A=1 /bin/ryu-stream""#;
+        assert_eq!(sunshine_argv(cmd), ["/bin/ludo", "run", "--rom", "/mnt/Rom/Luigi's Mansion 3 [x].nsp", "--lanceur", "env A=1 /bin/ryu-stream"]);
+        // Une apostrophe À L'INTÉRIEUR d'un mot cité (Luigi's) n'est pas un problème.
+        assert_eq!(sunshine_cmd_problem(cmd), None);
+    }
+
+    #[test]
+    fn apostrophes_coupent_le_chemin_et_sont_signalees() {
+        // Commande réelle de l'appli « Mario Kart 8 Deluxe · Ludothèque » au 18/11.
+        let cmd = "/home/u/.local/bin/ludo run --profil guilhem --jeu switch-0100152000022000 --rom '/mnt/Rom/Mario Kart 8 Deluxe [0100152000022000][v0].nsp' --lanceur \"env LSFG_MULT=2 /bin/ryu-stream\"";
+        let argv = sunshine_argv(cmd);
+        assert!(argv.contains(&"Kart".to_string()));
+        assert!(sunshine_cmd_problem(cmd).is_some());
+        assert_eq!(sunshine_cmd_problem(&cmd.replace('\'', "\"")), None);
+    }
+
+    #[test]
+    fn autre_appli_jamais_signalee() {
+        assert_eq!(sunshine_cmd_problem("/bin/ryu-stream '/a b.nsp'"), None);
+        assert_eq!(sunshine_cmd_problem(""), None);
+    }
+}

@@ -391,6 +391,10 @@ fn sunshine_apps(text: &str) -> SunshineApps {
         let cmd = app.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
         let Some(name) = app.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()) else { continue };
         let ludo = cmd.contains("ludo run");
+        // Appli `ludo run` mal citée : Sunshine lui passerait des arguments coupés (sortie immédiate).
+        if let Some(problem) = launch::sunshine_cmd_problem(cmd) {
+            eprintln!("Appli Sunshine « {name} » : {problem}");
+        }
         // Première appli trouvée pour un jeu, sauf si une appli `ludo run` arrive ensuite.
         fn keep<K: Ord>(map: &mut std::collections::BTreeMap<K, String>, key: K, name: &str, ludo: bool) {
             match map.entry(key) {
@@ -851,7 +855,7 @@ mod tests_sunshine {
         let json = r#"{"apps":[
             {"name":"Bureau","cmd":""},
             {"name":"Mario Kart 8 Deluxe","cmd":"env X=1 /bin/ryu-stream \"/mnt/Rom/Mario Kart 8 Deluxe [0100152000022000][v0].nsp\""},
-            {"name":"Mario Kart 8 Deluxe · Ludothèque","cmd":"/bin/ludo run --profil g --jeu switch-0100152000022000 --rom '/mnt/Rom/Mario Kart 8 Deluxe [0100152000022000][v0].nsp'"},
+            {"name":"Mario Kart 8 Deluxe · Ludothèque","cmd":"/bin/ludo run --profil g --jeu switch-0100152000022000 --rom \"/mnt/Rom/Mario Kart 8 Deluxe [0100152000022000][v0].nsp\""},
             {"name":"Pokopia","cmd":"/bin/lichii-stream \"/mnt/Rom2/Pokemon Pokopia [0400A3A01EE4C000]/updates/327680/exefs/main\""}
         ]}"#;
         let apps = sunshine_apps(json);
