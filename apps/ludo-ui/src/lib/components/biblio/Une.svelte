@@ -62,7 +62,8 @@
   .main { flex-grow: 1; min-width: 0; padding: 28px 36px; display: flex; flex-direction: column; gap: 10px; }
   .kicker { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255, 255, 255, 0.78); }
   h2 { margin: 0; font-size: 36px; font-weight: 600; line-height: 1.12; letter-spacing: -0.01em; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .meta { display: flex; align-items: center; gap: 14px; font-size: 16px; color: rgba(255, 255, 255, 0.86); }
+  .meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; font-size: 16px; color: rgba(255, 255, 255, 0.86); }
+  .meta > span { white-space: nowrap; }
   .actions { display: flex; gap: 12px; margin-top: auto; }
   .btn {
     all: unset; cursor: pointer; box-sizing: border-box; height: 48px; padding: 0 24px;

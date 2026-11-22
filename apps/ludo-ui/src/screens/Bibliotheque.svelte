@@ -82,12 +82,14 @@
 
   // Recherche : la saisie (`st.query`) est appliquée après la dernière frappe (anti-rebond, délai de
   // garde unique relancé à chaque frappe ; aucune lecture périodique).
-  let term = $state(st.query.trim());
+  /** Requête utile : vide si elle ne contient ni lettre ni chiffre (« - » ne filtre rien). */
+  const clean = (q: string) => (/[\p{L}\p{N}]/u.test(q) ? q.trim() : '');
+  let term = $state(clean(st.query));
   let debounce: ReturnType<typeof setTimeout> | undefined;
   function onQuery() {
     restore = null;
     clearTimeout(debounce);
-    debounce = setTimeout(() => (term = st.query.trim()), 110);
+    debounce = setTimeout(() => (term = clean(st.query)), 110);
   }
   function clearQuery() {
     clearTimeout(debounce);
@@ -111,8 +113,9 @@
     }
   }
   function closeKeyboard() {
+    if (!keyboard) return; // déjà fermé (B pendant l'animation de sortie)
     keyboard = false;
-    term = st.query.trim();
+    term = clean(st.query);
     feedback('back');
     // Retour sur le premier résultat (ou sur le champ s'il n'y en a pas).
     requestAnimationFrame(() => {
@@ -122,16 +125,16 @@
   }
   function onSearchKey(ev: KeyboardEvent) {
     if (ev.key === 'Escape') {
-      // Échap : efface la saisie, puis quitte le champ (un second Échap quitte l'écran).
+      // Échap : efface la saisie, puis quitte le champ vers les résultats (un Échap de plus, hors du champ, quitte l'écran).
       ev.preventDefault();
       ev.stopPropagation();
       if (st.query) clearQuery();
       else { searchEl?.blur(); focusResults(); }
-    } else if (ev.key === 'ArrowDown' || ev.key === 'Enter') {
+    } else if ((ev.key === 'ArrowDown' || ev.key === 'Enter') && !ev.isComposing) {
       ev.preventDefault();
       ev.stopPropagation();
       clearTimeout(debounce);
-      term = st.query.trim();
+      term = clean(st.query);
       requestAnimationFrame(focusResults);
     }
   }
@@ -144,6 +147,7 @@
   let loaded = $state(false);
   async function load() {
     loadError = null;
+    loaded = false;
     const profile = router.profile!.id;
     try {
       const [lib, recent] = await Promise.all([api.library(profile), api.recent(profile).catch(() => [] as Game[])]);
@@ -240,9 +244,10 @@
     const t = TABS[st.tab].id;
     if (t !== 'tout' && g.console !== t) return false;
     if (st.avail === 'installes' && !here(g)) return false;
-    if (st.avail === 'flux' && !flux(g)) return false;
+    if (st.avail === 'flux' && hasFlux && !flux(g)) return false;
     if (st.avail === 'serveur' && (here(g) || flux(g))) return false;
-    if (st.sync && !SYNC_STATES.includes(g.sync)) return false;
+    // État de synchro : propre à cet appareil (ignoré quand un autre appareil est regardé).
+    if (st.sync && !remote && !SYNC_STATES.includes(g.sync)) return false;
     if (st.played && !g.last) return false;
     return true;
   }
@@ -270,7 +275,8 @@
   });
 
   /** Vue d'accueil : onglet « Tout », rien de filtré, cet appareil. */
-  const home = $derived(st.tab === 0 && st.pristine && !remote);
+  // `term` (après l'anti-rebond) et non la saisie brute : la vue ne bascule qu'avec les résultats filtrés.
+  const home = $derived(st.tab === 0 && !st.avail && !st.sync && !st.played && st.sort === 'recents' && !term && !remote);
   const sorted = $derived(sortGames(games));
   const featured = $derived(sorted.filter((g) => g.last && recentRank.has(g.id)));
   const rows = $derived(
@@ -287,7 +293,8 @@
   const auto = (g: Game, fallback: boolean) => (restoreShown ? g.id === restore : fallback);
 
   /**
-   * Cible haut / bas d'une rangée de l'accueil (`data-nav-up|down`, lu par la navigation) : même
+   * Cible haut / bas d'une rangée de l'accueil (`data-nav-up|down`, lu par la navigation de la PR #43 ;
+   * avant sa fusion, calcul spatial habituel) : même
    * colonne dans la rangée voisine, ou sa dernière tuile si elle est plus courte ; au-dessus de la
    * première rangée, la bannière. Sans cible (dernière rangée) : calcul spatial habituel.
    */
@@ -327,6 +334,7 @@
   function toggleSync() { restore = null; st.sync = !st.sync; feedback('tab'); }
   function togglePlayed() { restore = null; st.played = !st.played; feedback('tab'); }
   function nextSort() {
+    if (term) { feedback('err'); return; } // pendant une recherche : ordre de pertinence
     restore = null;
     const i = SORTS.findIndex((s) => s.id === st.sort);
     st.sort = SORTS[(i + 1) % SORTS.length].id;
@@ -350,12 +358,15 @@
   let limit = $state(SLICE);
   let sentinel: HTMLElement | undefined = $state();
   $effect(() => {
-    void gridKey; void term;
-    // Retour d'une fiche : assez de cellules pour retrouver le jeu choisi.
-    const at = untrack(() => (st.focus ? shown.findIndex((x) => x.g.id === st.focus) : -1));
+    void gridKey; void term; void loaded;
+    // Retour d'une fiche : assez de cellules pour retrouver le jeu choisi (recalculé à l'arrivée des jeux).
+    const at = untrack(() => (restore ? shown.findIndex((x) => x.g.id === restore) : -1));
     limit = Math.max(SLICE, at + SLICE);
   });
   $effect(() => {
+    // Relu à chaque tranche : un nouvel observe() rend un premier rappel, la sentinelle encore visible
+    // (grand écran) fait donc ajouter la tranche suivante.
+    void limit;
     if (!sentinel || !mainEl) return;
     const io = new IntersectionObserver((e) => { if (e.some((x) => x.isIntersecting)) limit += SLICE; }, { root: mainEl, rootMargin: '0px 0px 600px 0px' });
     io.observe(sentinel);
@@ -392,7 +403,7 @@
           <span class="kbd" aria-hidden="true"><span class="k-pad">Y</span><span class="k-key">/</span></span>
         {/if}
       </div>
-      <span class="meta">{#if count}{count}{:else if remote}{installed} jeux sur {remote.name} · inventaire du {remote.updated}{:else}{games.length} jeux · {installed} installés · {device.freeSpace}{/if}</span>
+      <span class="meta" role="status" aria-live="polite">{#if count}{count}{:else if remote}{installed} jeux sur {remote.name} · inventaire du {remote.updated}{:else}{games.length} jeux · {installed} installés · {device.freeSpace}{/if}</span>
     </div>
     <div class="line wrap">
       <div class="tabs" role="tablist" aria-label="Consoles">
@@ -417,7 +428,7 @@
           <button class="pill focusable" data-sound="none" aria-pressed={st.avail === 'flux'} onclick={() => setAvail('flux')}>Via Moonlight</button>
         {/if}
         <button class="pill focusable" data-sound="none" aria-pressed={st.avail === 'serveur'} onclick={() => setAvail('serveur')}>Sur le serveur</button>
-        {#if toSync || st.sync}
+        {#if toSync || (st.sync && !remote)}
           <button class="pill focusable" data-sound="none" aria-pressed={st.sync} onclick={toggleSync}>À synchroniser<span class="n">{toSync}</span></button>
         {/if}
         <button class="pill focusable" data-sound="none" aria-pressed={st.played} onclick={togglePlayed}>Joués</button>
@@ -515,7 +526,7 @@
   /* Le champ porte lui-même l'anneau de focus : ici, la bordure du conteneur en tient lieu. */
   .search input:focus, .search input:focus-visible { box-shadow: none; outline: none; }
   .search input::-webkit-search-cancel-button { display: none; }
-  .clear { all: unset; cursor: pointer; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--ink-2); }
+  .clear { all: unset; cursor: pointer; width: 44px; height: 44px; margin-right: -6px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--ink-2); }
   .clear:hover { background: var(--hint); }
   .kbd > span { min-width: 24px; height: 24px; padding: 0 6px; box-sizing: border-box; border-radius: 12px; background: var(--hint); color: var(--ink); font-size: 12px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
   /* Touche montrée selon la dernière entrée (racine `data-input`, posée par la navigation) : Y à la manette, / ou Q/E au clavier. */

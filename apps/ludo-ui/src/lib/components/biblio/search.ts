@@ -75,7 +75,7 @@ export interface Match {
 
 /**
  * Le titre correspond-il à la requête ? `null` sinon. Score plus haut = meilleur résultat.
- * Requête vide : tout correspond (score 0).
+ * Requête vide (ou sans lettre ni chiffre) : tout correspond (score 0) ; l'appelant la traite comme absente.
  */
 export function match(title: string, query: string): Match | null {
   const q = words(query);
@@ -119,7 +119,7 @@ export function match(title: string, query: string): Match | null {
     // Retour aux positions du titre d'origine (la dernière lettre surlignée est incluse en entier).
     ranges.push([tw.map[a], tw.map[b - 1] + 1]);
   }
-  // Ordre des mots respecté et titre court : léger bonus (le titre « exact » remonte).
+  // Titre court : léger bonus (à mots trouvés égaux, le titre le plus « exact » remonte).
   score += Math.max(0, 20 - t.length);
   return { score, ranges: merge(ranges) };
 }
