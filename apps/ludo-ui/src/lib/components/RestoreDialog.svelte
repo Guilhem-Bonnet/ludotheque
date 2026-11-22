@@ -34,9 +34,13 @@
         const msg = String(e);
         failed = /conflit|conflict/i.test(msg)
           ? 'La sauvegarde a changé sur un autre appareil'
-          : /injoignable|connexion|connection|timed out|délai/i.test(msg)
+          : /injoignable|connexion|connection|timed out|délai|réseau|network|dns|refused|unreachable|hors ligne|offline/i.test(msg)
             ? 'Serveur injoignable'
-            : "Erreur sur l'appareil";
+            : /\b5\d\d\b|serveur|server/i.test(msg)
+              ? 'Erreur du serveur'
+              : /disque|entrée-sortie|permission|os error|espace/i.test(msg)
+                ? "Erreur sur l'appareil"
+                : 'Erreur inattendue';
         feedback('err');
         requestAnimationFrame(() => document.querySelector<HTMLElement>('.card .close')?.focus());
       });
@@ -47,6 +51,8 @@
   });
 
   const d = (ms: number) => (reducedMotion() ? 0 : ms);
+  /** App réelle : aucun avancement remonté pendant le téléchargement → barre en attente, pas figée à 0. */
+  const waiting = $derived(progress === 0 && step === 0 && !failed);
 </script>
 
 <div class="backdrop" transition:fade={{ duration: d(200) }} aria-hidden="true"></div>
@@ -67,9 +73,8 @@
       </li>
     {/each}
   </ol>
-  <div class="bar" class:failbar={failed} role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress * 100)}>
-    <!-- App réelle : la restauration ne remonte pas d'avancement ; barre en attente plutôt que figée à 0. -->
-    <span class:indet={progress === 0 && step === 0 && !failed} style:width="{progress === 0 && step === 0 && !failed ? 30 : progress * 100}%"></span>
+  <div class="bar" class:failbar={failed} role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={waiting ? undefined : Math.round(progress * 100)}>
+    <span class:indet={waiting} style:width="{waiting ? 30 : progress * 100}%"></span>
   </div>
   {#if failed}
     <p class="fail">Restauration impossible · {failed}. Aucune sauvegarde remplacée.</p>
@@ -84,7 +89,7 @@
   .card {
     /* Centrage par `translate` (propriété distincte de `transform`, que la transition `scale` occupe) :
        la carte reste centrée quelle que soit sa hauteur (message d'échec, texte long, petit écran). */
-    position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(520px, calc(100vw - 48px)); z-index: 11; box-sizing: border-box;
+    position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(520px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow-y: auto; z-index: 11; box-sizing: border-box;
     background: #161a22; border-radius: 20px; padding: 30px 32px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
     display: flex; flex-direction: column; gap: 14px;
   }

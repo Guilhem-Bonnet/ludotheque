@@ -19,16 +19,27 @@
   let loadError = $state<string | null>(null);
   let loaded = $state(false);
 
-  /** Installe la mise à jour ou le DLC (`id` = « <jeu>|<fichier> » côté app réelle). */
-  async function run(it: UpdateItem) {
-    if (progress[it.id] !== undefined && progress[it.id] !== 'fait') return;
-    if (progress[it.id] === 'fait') return;
+  /**
+   * Installations en FILE UNIQUE (un élément après l'autre, bouton par bouton ou « Tout mettre à jour ») :
+   * en parallèle, la mise à jour et le DLC d'un même jeu mélangeaient leurs barres (la progression est
+   * suivie par jeu) et les sons de fin s'empilaient. Un élément en attente affiche sa barre à 0.
+   */
+  let queue: Promise<void> = Promise.resolve();
+  let mounted = true;
+
+  /** Met l'élément en file (`id` = « <jeu>|<fichier> » côté app réelle). */
+  function run(it: UpdateItem) {
+    if (progress[it.id] !== undefined) return;
     delete failed[it.id];
     const row = (document.activeElement as HTMLElement | null)?.closest('.item');
     progress[it.id] = 0;
     // Le bouton cède la place à la barre : le focus passe au bouton voisin au lieu de se perdre
     // (sinon la croix repartirait du haut de l'écran).
     requestAnimationFrame(() => keepFocusNear(row));
+    queue = queue.then(() => install(it));
+  }
+
+  async function install(it: UpdateItem) {
     const [game, file] = it.id.split('|');
     try {
       await api.installContent(game, Number(file), (p) => (progress[it.id] = Math.round(p * 100)));
@@ -41,12 +52,15 @@
     }
   }
 
+  /** Focus perdu (bouton retiré) : il revient sur le bouton suivant, sinon le dernier, sinon le premier élément. */
   function keepFocusNear(row: Element | null | undefined) {
-    if (!row || (document.activeElement && document.activeElement !== document.body)) return;
+    if (!mounted) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && a.isConnected) return;
     const acts = [...document.querySelectorAll<HTMLElement>('.item .act')];
-    const after = acts.find((el) => row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING);
+    const after = row?.isConnected ? acts.find((el) => row.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) : undefined;
     const target = after ?? acts.at(-1);
-    if (target) target.focus({ preventScroll: false });
+    if (target) target.focus();
     else focusFirst();
   }
 
@@ -63,21 +77,10 @@
     });
   }
 
-  /**
-   * Tout installer, un élément après l'autre : en parallèle, la mise à jour et le DLC d'un même jeu
-   * mélangeaient leurs barres (la progression est suivie par jeu) et les sons de fin s'empilaient.
-   */
-  let runningAll = $state(false);
-  async function runAll() {
-    if (runningAll) return;
-    runningAll = true;
-    try {
-      for (const it of items) if (progress[it.id] === undefined) await run(it);
-    } finally {
-      runningAll = false;
-      // Le bouton disparaît quand tout est lancé : le focus ne doit pas rester sur un élément retiré.
-      if (!pending) focusFirst();
-    }
+  /** Tout mettre en file ; le bouton disparaît aussitôt, le focus est repris s'il était dessus. */
+  function runAll() {
+    for (const it of items) run(it);
+    requestAnimationFrame(() => keepFocusNear(null));
   }
   /** Reste-t-il un élément à lancer ? (Sinon le bouton « Tout mettre à jour » n'a plus de sens.) */
   const pending = $derived(items.some((it) => progress[it.id] === undefined));
@@ -85,6 +88,8 @@
     load();
     // Ouvrir l'écran relance la recherche d'une nouvelle version de l'app (sauf si déjà trouvée).
     if (appUpdate.status !== 'available' && appUpdate.status !== 'downloading' && appUpdate.status !== 'restarting') void checkAppUpdate();
+    // Les installations en file continuent après la sortie de l'écran ; seul le focus n'est plus touché.
+    return () => { mounted = false; };
   });
 
   const GROUPS: { id: UpdateItem['group']; label: string }[] = [
@@ -97,7 +102,7 @@
 <div class="screen">
   <header>
     <h1>Mises à jour</h1>
-    {#if items.length && (pending || runningAll)}<button class="all focusable" data-autofocus aria-busy={runningAll} onclick={runAll}>{runningAll ? 'Mise à jour…' : 'Tout mettre à jour'}</button>{/if}
+    {#if items.length && pending}<button class="all focusable" data-autofocus onclick={runAll}>Tout mettre à jour</button>{/if}
   </header>
 
   <main>
@@ -163,7 +168,6 @@
   .screen { height: 100%; display: flex; flex-direction: column; }
   header { padding: 36px 64px 0; display: flex; align-items: center; justify-content: space-between; }
   h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -0.01em; }
-  .all[aria-busy='true'] { opacity: 0.7; cursor: default; }
   .all { all: unset; cursor: pointer; white-space: nowrap; flex-shrink: 0; font-size: 16px; font-weight: 600; padding: 12px 22px; border-radius: 12px; background: var(--accent); color: var(--ground); }
   main { flex-grow: 1; overflow-y: auto; padding: 28px 64px 24px; display: flex; flex-direction: column; gap: 26px; }
   section { display: flex; flex-direction: column; gap: 10px; }

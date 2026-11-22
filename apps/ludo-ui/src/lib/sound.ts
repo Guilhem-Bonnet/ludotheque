@@ -105,15 +105,20 @@ const SOUNDS: Record<SoundName, () => void> = {
   updated: () => { [69, 72, 76].forEach((n, k) => tone({ n, t: k * 0.085, a: 0.015, d: k === 2 ? 0.8 : 0.4, g: 0.11, lp: 1700, wet: 0.25 })); },
 };
 
-/** Délai au-delà duquel un son attendu par un contexte audio en veille est abandonné (ms). */
-const RESUME_GRACE_MS = 150;
+/**
+ * Un son demandé par un contexte audio en veille ne part que s'il suit de près une interaction
+ * (touche, bouton, toucher) : c'est la réponse à ce geste. Mesuré entre le geste et la DEMANDE, pas la
+ * fin de la reprise, pour qu'une sortie audio lente à se réveiller (Bluetooth, PipeWire) ne l'avale pas.
+ */
+const GESTURE_WINDOW_MS = 1000;
+let lastGesture = Number.NEGATIVE_INFINITY;
 
 /**
  * Joue un son de la palette.
  * - Fenêtre cachée (une partie au premier plan) : aucun son, rien ne se superpose au jeu.
  * - Contexte audio en veille (aucune interaction encore, ou suspendu par le système) : le son n'est
  *   PAS programmé, sinon tous les sons accumulés partiraient d'un coup à la première touche ; il ne
- *   part que si la reprise arrive tout de suite (appui en cours), sinon il est abandonné.
+ *   part que s'il répond à une interaction récente (voir GESTURE_WINDOW_MS), sinon il est abandonné.
  */
 export function play(name: SoundName) {
   if (muted || document.visibilityState === 'hidden' || !setup() || !ctx) return;
@@ -122,13 +127,18 @@ export function play(name: SoundName) {
     return;
   }
   const asked = performance.now();
+  if (asked - lastGesture > GESTURE_WINDOW_MS) {
+    void ctx.resume().catch(() => {});
+    return;
+  }
   void ctx.resume().then(() => {
-    if (!muted && performance.now() - asked < RESUME_GRACE_MS) SOUNDS[name]();
+    if (!muted && document.visibilityState !== 'hidden') SOUNDS[name]();
   }).catch(() => {});
 }
 
 /** À appeler sur la première interaction (touche, bouton manette) pour débloquer l'audio. */
 export function unlock() {
+  lastGesture = performance.now();
   setup();
 }
 
