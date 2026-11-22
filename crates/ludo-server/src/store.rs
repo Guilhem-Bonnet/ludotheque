@@ -210,7 +210,7 @@ CREATE TABLE IF NOT EXISTS device_games (
 ";
 
 /// Colonnes ajoutées après la création des tables (base existante : ALTER TABLE au démarrage).
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("device_games", "stream_app", "TEXT")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("device_games", "stream_app", "TEXT"), ("device_games", "rom", "TEXT")];
 
 const COLS: &str = "rev, parent, hash, size, device, emulator, playtime_s, created_at, discarded";
 
@@ -556,8 +556,8 @@ impl Store {
             let known = tx.query_row("SELECT 1 FROM games WHERE id=?1", params![g.game], |_| Ok(())).optional()?;
             if known.is_some() && (g.installed || g.stream || g.save) {
                 tx.execute(
-                    "INSERT OR REPLACE INTO device_games (device, game, installed, stream, save, stream_app) VALUES (?1,?2,?3,?4,?5,?6)",
-                    params![device, g.game, g.installed, g.stream, g.save, g.stream_app],
+                    "INSERT OR REPLACE INTO device_games (device, game, installed, stream, save, stream_app, rom) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    params![device, g.game, g.installed, g.stream, g.save, g.stream_app, g.rom],
                 )?;
                 kept.push(g.clone());
             }
@@ -575,9 +575,9 @@ impl Store {
         let devices: Vec<(String, u64)> = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?.collect::<Result<_, _>>()?;
         let mut out = Vec::new();
         for (device, updated_at) in devices {
-            let mut st = db.prepare("SELECT game, installed, stream, save, stream_app FROM device_games WHERE device=?1 ORDER BY game")?;
+            let mut st = db.prepare("SELECT game, installed, stream, save, stream_app, rom FROM device_games WHERE device=?1 ORDER BY game")?;
             let games = st
-                .query_map(params![device], |r| Ok(DeviceGame { game: r.get(0)?, installed: r.get(1)?, stream: r.get(2)?, save: r.get(3)?, stream_app: r.get(4)? }))?
+                .query_map(params![device], |r| Ok(DeviceGame { game: r.get(0)?, installed: r.get(1)?, stream: r.get(2)?, save: r.get(3)?, stream_app: r.get(4)?, rom: r.get(5)? }))?
                 .collect::<Result<_, _>>()?;
             out.push(DeviceInventory { device, updated_at, games });
         }

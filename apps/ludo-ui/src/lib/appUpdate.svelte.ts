@@ -6,7 +6,9 @@ import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { isAndroid, isDemo } from './api';
 
-export type AppUpdateStatus = 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'restarting' | 'error';
+/** `indisponible` (Android) : rien à installer depuis l'app, pour une raison expliquée dans `info`
+ *  (aucune APK publiée faute de clé de signature, app d'essai mise à jour par le PC). */
+export type AppUpdateStatus = 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'restarting' | 'error' | 'indisponible';
 
 export const appUpdate = $state<{
   status: AppUpdateStatus;
@@ -16,8 +18,10 @@ export const appUpdate = $state<{
   /** Avancement du téléchargement, 0-100 ; `null` si la taille n'est pas connue. */
   percent: number | null;
   error: string;
+  /** Raison d'un état `indisponible`, en clair. */
+  info: string;
   checkedAt: Date | null;
-}>({ status: 'idle', version: '', notes: '', percent: null, error: '', checkedAt: null });
+}>({ status: 'idle', version: '', notes: '', percent: null, error: '', info: '', checkedAt: null });
 
 let pending: Update | null = null;
 
@@ -25,7 +29,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 // Android : APK signé publié avec chaque release (`android.json`), comparé à la version installée puis
 // confié à l'installeur d'Android (MiseAJourApk.kt). Progression reçue par l'événement `ludo-apk`.
-interface ApkVersion { installee: string; version: string; notes: string; disponible: boolean }
+interface ApkVersion { installee: string; version: string; notes: string; disponible: boolean; raison?: string }
 async function androidInvoke<T>(cmd: string): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<T>(cmd);
@@ -39,7 +43,8 @@ async function checkAndroid(): Promise<void> {
     appUpdate.checkedAt = new Date();
     appUpdate.version = v.version;
     appUpdate.notes = v.notes;
-    appUpdate.status = v.disponible ? 'available' : 'none';
+    appUpdate.info = v.raison ?? '';
+    appUpdate.status = v.disponible ? 'available' : v.raison ? 'indisponible' : 'none';
   } catch (e) {
     appUpdate.checkedAt = new Date();
     appUpdate.error = message(e);
@@ -152,7 +157,7 @@ export function startAppUpdateChecks(): void {
     listening = true;
     document.addEventListener('visibilitychange', () => {
       const recent = appUpdate.checkedAt && Date.now() - appUpdate.checkedAt.getTime() < FOCUS_MIN_GAP_MS;
-      if (document.visibilityState === 'visible' && !recent && (appUpdate.status === 'idle' || appUpdate.status === 'none' || appUpdate.status === 'error')) void checkAppUpdate();
+      if (document.visibilityState === 'visible' && !recent && (appUpdate.status === 'idle' || appUpdate.status === 'none' || appUpdate.status === 'error' || appUpdate.status === 'indisponible')) void checkAppUpdate();
     });
     return;
   }

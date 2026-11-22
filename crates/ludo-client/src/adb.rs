@@ -163,6 +163,46 @@ impl Adb {
             None => ludo_core::rom::title_id_from_meta_xml(&self.shell(&format!("cat {} 2>/dev/null", sq(&format!("{remote}/meta/meta.xml")))).ok()?),
         }
     }
+
+    /// Comme [`Adb::rom_title_id`] pour plusieurs fichiers à en-tête (pas les dossiers Wii U), en UN
+    /// seul appel `adb shell` : un bloc d'octets par fichier, séparés par une ligne `=`. Rend un
+    /// résultat par chemin, dans l'ordre ; `None` pour un fichier illisible ou sans identifiant.
+    pub fn rom_title_ids(&self, remotes: &[String]) -> Vec<Option<u64>> {
+        let readable: Vec<(usize, String)> = remotes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| rom_ext(r).filter(|e| ludo_core::rom::HEADER_EXTS.contains(&e.as_str())).map(|e| (i, e)))
+            .collect();
+        let mut out = vec![None; remotes.len()];
+        if readable.is_empty() {
+            return out;
+        }
+        let script: String = readable
+            .iter()
+            .map(|(i, _)| format!("dd if={} bs={} count=1 2>/dev/null | od -An -tx1 -v; echo =;", sq(&remotes[*i]), ludo_core::rom::HEADER_LEN))
+            .collect();
+        let Ok(text) = self.shell(&script) else { return out };
+        for ((i, ext), block) in readable.iter().zip(split_blocks(&text)) {
+            out[*i] = ludo_core::rom::title_id_from_header(ext, &parse_od(&block));
+        }
+        out
+    }
+}
+
+/// Blocs de sortie de [`Adb::rom_title_ids`] : une ligne `=` termine chaque bloc (un fichier
+/// illisible donne un bloc vide). Les fins de ligne `\r\n` d'anciens adb sont tolérées.
+fn split_blocks(text: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut cur = String::new();
+    for line in text.lines() {
+        if line.trim() == "=" {
+            blocks.push(std::mem::take(&mut cur));
+        } else {
+            cur.push_str(line);
+            cur.push(' ');
+        }
+    }
+    blocks
 }
 
 /// Correspondance miroir local → chemin distant : `<miroir>/<relatif>` ↔ `<data distant>/<relatif>`.
@@ -204,6 +244,17 @@ pub fn prepare_mirrored_rom(cfg: &Config, conf: &GameConf, profile: &str, mirror
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sortie de `rom_title_ids` : un bloc `od` par fichier, fichier illisible = bloc vide, `\r\n` toléré.
+    #[test]
+    fn blocs_de_lecture_groupee() {
+        let text = " 4e 43\n 43 48\n=\n=\r\n 01 02\r\n=\n";
+        let b = split_blocks(text);
+        assert_eq!(b.len(), 3);
+        assert_eq!(parse_od(&b[0]), vec![0x4e, 0x43, 0x43, 0x48]);
+        assert!(parse_od(&b[1]).is_empty());
+        assert_eq!(parse_od(&b[2]), vec![1, 2]);
+    }
 
     #[test]
     fn echappement_shell() {

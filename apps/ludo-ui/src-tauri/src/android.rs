@@ -519,7 +519,7 @@ mod tests {
     fn plan_local_puis_flux() {
         let conf = AndroidConf::parse("serveur = \"x\"\nappareil = \"thor\"\n[moonlight]\nhote = \"H\"\n");
         let mk8 = game("switch-mk8", "switch", "switch/Mario Kart 8 Deluxe [0100152000022000][v0].nsp");
-        let inv = DeviceGame { game: "switch-mk8".into(), installed: false, stream: true, save: true, stream_app: Some("MK8 · Ludothèque".into()) };
+        let inv = DeviceGame { game: "switch-mk8".into(), installed: false, stream: true, save: true, stream_app: Some("MK8 · Ludothèque".into()), rom: None };
         assert_eq!(plan(&mk8, &[], &conf, Some(&inv), None), Ok(Plan::Stream { host: "H".into(), app: "MK8 · Ludothèque".into(), hdr: false }));
         let roms = [rom("switch", "Mario Kart 8 Deluxe [0100152000022000][US][v0].nsp")];
         assert!(matches!(plan(&mk8, &roms, &conf, Some(&inv), None), Ok(Plan::Local { .. })));

@@ -90,6 +90,10 @@ enum Cmd {
         /// Choix en cas de conflit de sauvegarde (sinon le conflit est signalé, rien n'est écrit).
         #[arg(long, value_enum)]
         resoudre: Option<Choix>,
+        /// Calcule et affiche l'inventaire de l'appareil (ROM trouvées, par nom ou par identifiant de
+        /// titre), sans rien synchroniser ni envoyer au serveur.
+        #[arg(long)]
+        a_blanc: bool,
     },
     /// Démon : synchronise l'appareil adb à chaque événement — branchement (USB ou Wi-Fi, flux
     /// `adb track-devices`), fermeture d'un émulateur (`am_proc_died` du journal Android),
@@ -260,7 +264,7 @@ fn rom_for<'a>(g: &ludo_proto::CatalogGame, rom_paths: &'a [String]) -> Option<&
         .or_else(|| rom_paths.iter().filter(in_console).find(|p| loose.contains(&(loose_key(p), match_key(p).1))))
 }
 
-fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: Option<Choix>) -> Result<ExitCode, String> {
+fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: Option<Choix>, a_blanc: bool) -> Result<ExitCode, String> {
     use ludo_client::adb::{self, Adb};
     let conf = ctx.cfg.adb.as_ref().ok_or("section [adb] absente de la configuration")?;
     let Some(dev) = Adb::find(&conf.series) else {
@@ -283,7 +287,12 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         names.contains(&ludo_client::local::match_key(path)) || ludo_client::local::title_key(path).is_some_and(|t| rom_titles.contains(&t))
     };
     let roms: std::collections::BTreeSet<(String, String)> = rom_names.iter().map(|n| ludo_client::local::match_key(n)).collect();
-    let rom_of = |g: &ludo_proto::CatalogGame| rom_for(g, &rom_paths);
+    // ROM d'un jeu : par nom, sinon par identifiant de titre lu dans l'en-tête (même jeu, autre nom).
+    let by_title_id = title_id_matches(&ctx.client, &dev, &games, &rom_paths, |g| {
+        rom_for(g, &rom_paths).is_some() || g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms))
+    });
+    let rom_of = |g: &ludo_proto::CatalogGame| rom_for(g, &rom_paths).or_else(|| by_title_id.get(&g.id));
+    let roms_root = conf.roms.as_deref().map(|r| format!("{}/", r.trim_end_matches('/'))).unwrap_or_default();
     // Inventaire de l'appareil (envoyé au serveur à la fin) : ROM présentes, jeux jouables en flux
     // depuis ce PC (applis Sunshine), sauvegardes trouvées sur l'appareil.
     let streamable = sunshine_roms();
@@ -292,9 +301,19 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         .map(|g| {
             let installed = g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms)) || rom_of(g).is_some();
             let stream_app = streamable.app_for(g, &games).cloned();
-            (g.id.clone(), ludo_proto::DeviceGame { game: g.id.clone(), installed, stream: stream_app.is_some(), save: false, stream_app })
+            // Chemin relatif à l'arbre des ROM : l'app Android retrouve le fichier sans refaire la correspondance.
+            let rom = rom_of(g).and_then(|p| p.strip_prefix(&roms_root)).map(str::to_string);
+            (g.id.clone(), ludo_proto::DeviceGame { game: g.id.clone(), installed, stream: stream_app.is_some(), save: false, stream_app, rom })
         })
         .collect();
+    if a_blanc {
+        for g in inventory.values().filter(|g| g.installed || g.stream) {
+            println!("{}\t{}{}\t{}", g.game, if g.installed { "installé" } else { "-" }, if g.stream { " · flux" } else { "" }, g.rom.as_deref().unwrap_or(""));
+        }
+        let n = inventory.values().filter(|g| g.installed).count();
+        println!("À blanc : {n} jeux installés sur {}, rien synchronisé ni envoyé", ctx.cfg.appareil);
+        return Ok(ExitCode::SUCCESS);
+    }
     let journal_path = config::journal_path().with_file_name(format!("journal-{}.json", ctx.cfg.appareil));
     let mut journal = Journal::open(&journal_path).map_err(|e| e.to_string())?;
     let stamp = chrono_stamp();
@@ -403,6 +422,86 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         }
     }
     Ok(code)
+}
+
+/// Jeux du catalogue sans ROM reconnue par le nom (`found` faux), retrouvés sur l'appareil par
+/// l'identifiant de titre de l'en-tête (`ludo_core::rom`) : celui de la ROM de base au catalogue (premiers
+/// octets lus sur le serveur, `Range`), comparé à celui des ROM de l'appareil restées sans jeu (un seul
+/// `adb shell` pour toutes). Rien n'est lu s'il ne reste aucun jeu ou aucune ROM à rapprocher.
+///
+/// Les identifiants du catalogue sont gardés dans `title-ids.json` (à côté du journal), par fichier et
+/// par taille : un fichier remplacé est relu. Un fichier illisible y est noté 0 (pas relu à chaque passe).
+fn title_id_matches(
+    client: &Client,
+    dev: &ludo_client::adb::Adb,
+    games: &[ludo_proto::CatalogGame],
+    rom_paths: &[String],
+    found: impl Fn(&ludo_proto::CatalogGame) -> bool,
+) -> std::collections::BTreeMap<String, String> {
+    use ludo_core::rom::{HEADER_EXTS, HEADER_LEN};
+    let header_ext = |p: &str| ludo_client::local::match_key(p).1;
+    let has_header = |p: &str| HEADER_EXTS.contains(&header_ext(p).as_str());
+    // Fiches à rapprocher : ROM de base unique, d'un format à en-tête (pas un dossier Wii U).
+    let wanted: Vec<(&ludo_proto::CatalogGame, &ludo_proto::GameFile)> = games
+        .iter()
+        .filter(|g| !found(g))
+        .filter_map(|g| {
+            let mut base = g.files.iter().filter(|f| f.role == ludo_proto::FileRole::Base);
+            match (base.next(), base.next()) {
+                (Some(f), None) if has_header(&f.path) => Some((g, f)),
+                _ => None,
+            }
+        })
+        .collect();
+    // ROM de l'appareil déjà attribuées par le nom : hors jeu.
+    let claimed: std::collections::BTreeSet<&String> = games.iter().filter_map(|g| rom_for(g, rom_paths)).collect();
+    let free: Vec<String> = rom_paths.iter().filter(|p| has_header(p) && !claimed.contains(p)).cloned().collect();
+    let mut out = std::collections::BTreeMap::new();
+    if wanted.is_empty() || free.is_empty() {
+        return out;
+    }
+    let cache_path = config::journal_path().with_file_name("title-ids.json");
+    let mut cache: std::collections::BTreeMap<String, u64> =
+        std::fs::read(&cache_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let before = cache.len();
+    let mut catalog: Vec<(String, &str, u64)> = Vec::new();
+    for (g, f) in &wanted {
+        let key = format!("{}/{}/{}", g.id, f.id, f.size);
+        let tid = match cache.get(&key) {
+            Some(t) => *t,
+            None => match client.file_header(&g.id, f.id, HEADER_LEN) {
+                Ok(h) => {
+                    let t = ludo_core::rom::title_id_from_header(&header_ext(&f.path), &h).unwrap_or(0);
+                    cache.insert(key, t);
+                    t
+                }
+                // Serveur injoignable : rien à noter, on réessaiera à la prochaine passe.
+                Err(_) => 0,
+            },
+        };
+        catalog.push((g.id.clone(), g.console.as_str(), tid));
+    }
+    if cache.len() != before {
+        if let Ok(json) = serde_json::to_vec_pretty(&cache) {
+            let _ = std::fs::write(&cache_path, json);
+        }
+    }
+    let device_tids = dev.rom_title_ids(&free);
+    // Rapprochement console par console (sous-dossiers de la console seulement).
+    for console in catalog.iter().map(|(_, c, _)| *c).collect::<std::collections::BTreeSet<_>>() {
+        let dirs = rom_dirs_of(console);
+        let g: Vec<(&str, u64)> = catalog.iter().filter(|(_, c, _)| *c == console).map(|(id, _, t)| (id.as_str(), *t)).collect();
+        let r: Vec<(&str, u64)> = free
+            .iter()
+            .zip(&device_tids)
+            .filter(|(p, _)| p.rsplit('/').nth(1).is_some_and(|d| dirs.contains(&d)))
+            .filter_map(|(p, t)| t.map(|t| (p.as_str(), t)))
+            .collect();
+        for (game, rom) in ludo_client::local::pair_by_title_id(&g, &r) {
+            out.insert(game.to_string(), rom.to_string());
+        }
+    }
+    out
 }
 
 /// Applis Sunshine de ce PC (`~/.config/sunshine/apps.json`), voir [`sunshine_apps`].
@@ -688,7 +787,7 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                 Ok(ev) => ev,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     due = None;
-                    if let Err(e) = adb_sync(ctx, None, None, None) {
+                    if let Err(e) = adb_sync(ctx, None, None, None, false) {
                         println!("Synchronisation impossible : {e}");
                     }
                     continue;
@@ -878,7 +977,7 @@ fn main() -> ExitCode {
                 Ok(exit_for(&o).unwrap_or(ExitCode::SUCCESS))
             }
             Cmd::Run { jeu, rom, jouer_ici, via, lanceur } => run(&mut ctx, &jeu, &rom, jouer_ici, via.as_deref(), lanceur.as_deref()),
-            Cmd::AdbSync { profil, jeu, resoudre } => adb_sync(&ctx, profil, jeu, resoudre),
+            Cmd::AdbSync { profil, jeu, resoudre, a_blanc } => adb_sync(&ctx, profil, jeu, resoudre, a_blanc),
             Cmd::AdbWatch => adb_watch(&ctx),
             Cmd::Watch => local_watch(&mut ctx),
             Cmd::Jeux => {

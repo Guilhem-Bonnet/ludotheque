@@ -294,6 +294,12 @@ pub struct DeviceGame {
     /// identifiant, qui change avec le nom ou la jaquette. Absent des anciens inventaires.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_app: Option<String>,
+    /// ROM de ce jeu sur l'appareil, relative à l'arbre des ROM (`n3ds/<nom>.cxi`), telle que le PC
+    /// l'a trouvée : par nom, ou par identifiant de titre lu dans l'en-tête quand le nom diffère
+    /// (« Luigi's Mansion - Dark Moon » sur la Thor pour « Luigis Mansion 2 » au catalogue). L'app
+    /// Android la retrouve ainsi sans refaire la correspondance. Absent des anciens inventaires.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rom: Option<String>,
 }
 
 /// Inventaire d'un appareil : ce qu'il a, à la date de son dernier envoi.
