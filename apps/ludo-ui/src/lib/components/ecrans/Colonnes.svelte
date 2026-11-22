@@ -29,16 +29,28 @@
   const side = $derived($layout.side);
 
   let loadedFor = '';
+  let loadedProfile = '';
+  /** Génération du dernier chargement demandé : une réponse plus ancienne arrivée après est ignorée. */
+  let generation = 0;
   async function load(force = false) {
     const p = router.profile;
     if (!p) return;
     const key = `${p.id}:${screen}`;
     if (!force && key === loadedFor) return;
     loadedFor = key;
+    if (p.id !== loadedProfile) {
+      // Autre joueur : rien de l'ancien profil ne reste affiché pendant le chargement.
+      loadedProfile = p.id;
+      recent = [];
+      focusedId = null;
+    }
+    const gen = ++generation;
     // Échecs silencieux : une colonne vide vaut mieux qu'un message d'erreur en double de l'écran.
     const [r, d] = await Promise.allSettled([api.recent(p.id), api.devices()]);
+    if (gen !== generation) return;
     if (r.status === 'fulfilled') recent = r.value;
     if (d.status === 'fulfilled') remotes = d.value;
+    if (r.status === 'rejected' && d.status === 'rejected') loadedFor = ''; // nouvel essai au prochain passage
   }
 
   $effect(() => {
@@ -130,14 +142,14 @@
   </section>
 {/snippet}
 
-{#snippet activite()}
+{#snippet activite(max: number)}
   <section class="panel" aria-label="Activité récente">
     <h2>Activité récente</h2>
     {#if recent.length === 0}
       <p class="empty">Aucune partie récente</p>
     {:else}
       <ul class="games">
-        {#each recent as g (g.id)}
+        {#each recent.slice(0, max) as g (g.id)}
           {@const a = activity(g)}
           <li>
             <span class="mini" style:background={g.tile}>
@@ -180,17 +192,17 @@
   {#key screen}
     {#if side === 'right' || side === 'both'}
       {#if side === 'both'}
-        <aside class="col left" in:appear>{@render activite()}</aside>
+        <aside class="col left" in:appear>{@render activite(10)}</aside>
       {/if}
       <aside class="col right" in:appear>
         {#if screen === 'accueil' && chosen}{@render jeuChoisi(chosen)}{/if}
         {@render appareils(fiche ?? (screen === 'accueil' ? chosen : null))}
-        {#if side === 'right'}{@render activite()}{/if}
+        {#if side === 'right'}{@render activite(screen === 'accueil' ? 5 : 8)}{/if}
       </aside>
     {:else if side === 'bottom'}
       <aside class="bottom" in:appear>
         {#if screen === 'accueil' && chosen}{@render jeuChoisi(chosen)}{/if}
-        {@render activite()}
+        {@render activite(8)}
         {@render appareils(fiche ?? (screen === 'accueil' ? chosen : null))}
       </aside>
     {/if}
@@ -198,7 +210,7 @@
 </div>
 
 <style>
-  .colonnes { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+  .colonnes { position: absolute; inset: 0; z-index: 1; pointer-events: none; transition: opacity var(--t-quick) ease-out, visibility var(--t-quick); }
   .col {
     position: absolute; top: 28px; bottom: 82px; width: var(--side-w);
     display: flex; flex-direction: column; gap: 16px; overflow: hidden;

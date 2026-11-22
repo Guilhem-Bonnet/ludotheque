@@ -127,7 +127,6 @@ button { font: inherit; color: inherit; }
    ——————————————————————————————————————————————————————————————— */
 :root { --page-w: 1280px; --page-h: 800px; --side-w: 0px; --bottom-h: 0px; --stage-max: 1760px; --gutter: 48px; }
 
-.screen-layer > .screen { transition: padding var(--t-std) var(--ease-land); }
 html[data-side='right'] .screen-layer[data-colonnes] > .screen { padding-right: calc(var(--side-w) + var(--gutter)); }
 html[data-side='both'] .screen-layer[data-colonnes] > .screen { padding-inline: calc(var(--side-w) + var(--gutter)); }
 html[data-side='bottom'] .screen-layer[data-colonnes] > .screen { padding-bottom: var(--bottom-h); }

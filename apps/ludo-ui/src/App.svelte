@@ -68,25 +68,51 @@
   function relayout() {
     applyLayout(computeLayout(window.innerWidth, window.innerHeight));
   }
-  async function rescale() {
+  // Un seul recalcul à la fois : `setZoom` est asynchrone (IPC) et déclenche lui-même un `resize` ; un calcul
+  // lancé pendant l'attente lirait innerWidth au nouveau zoom × l'ancien. Les demandes arrivées pendant un
+  // calcul sont regroupées en UN recalcul à la fin (pas de relance en boucle : seulement si une demande est venue).
+  let rescaling: Promise<void> | null = null;
+  let rescaleAgain = false;
+  function rescale(): Promise<void> {
+    if (rescaling) {
+      rescaleAgain = true;
+      return rescaling;
+    }
+    rescaling = doRescale().finally(() => {
+      rescaling = null;
+      if (rescaleAgain) {
+        rescaleAgain = false;
+        void rescale();
+      }
+    });
+    return rescaling;
+  }
+  async function doRescale() {
     if (isDemo) return relayout();
     if (isAndroid) {
       // Android : la WebView n'a pas de zoom natif réglable ; la largeur logique de la page est imposée
       // par la balise viewport (vue large activée dans MainActivity) pour voir au moins 1280×800.
+      // Le gabarit est recalculé au `resize` qui suit l'application de la balise.
       const ratio = screen.width / screen.height;
       const width = Math.ceil(Math.max(1280, 800 * ratio));
       document.querySelector('meta[name="viewport"]')?.setAttribute('content', `width=${width}, user-scalable=no`);
       return relayout();
     }
-    const next = computeZoom(window.innerWidth * appliedZoom, window.innerHeight * appliedZoom);
-    if (Math.abs(next - appliedZoom) >= 0.005) {
-      // Compensation optique des icônes : trait affiné quand l'interface grandit (1 à 1×, 0,76 à 1,74×).
-      document.documentElement.style.setProperty('--icon-optique', String(Math.max(0.6, 1 / Math.sqrt(next))));
-      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
-      await getCurrentWebview().setZoom(next);
-      appliedZoom = next;
+    const previous = appliedZoom;
+    const next = computeZoom(window.innerWidth * previous, window.innerHeight * previous);
+    try {
+      if (Math.abs(next - previous) >= 0.005) {
+        appliedZoom = next;
+        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+        await getCurrentWebview().setZoom(next);
+        // Compensation optique des icônes : trait affiné quand l'interface grandit (1 à 1×, 0,76 à 1,74×).
+        document.documentElement.style.setProperty('--icon-optique', String(Math.max(0.6, 1 / Math.sqrt(next))));
+      }
+    } catch {
+      appliedZoom = previous; // zoom refusé : l'interface reste à l'échelle précédente
+    } finally {
+      relayout();
     }
-    relayout();
   }
 
   /** Démonstration seulement : `?ecran=bibliotheque|fiche|maj|passage|conflit` ouvre un écran directement. */
