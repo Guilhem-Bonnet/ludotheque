@@ -68,9 +68,8 @@ impl IntoResponse for StoreError {
         if status.is_server_error() {
             tracing::error!(erreur = %self, "erreur serveur");
             let public = match self {
-                // Erreur de `catalogue.toml` : message en français destiné à l'administrateur, gardé.
-                StoreError::Catalog(_) => self.to_string(),
-                _ if status == StatusCode::SERVICE_UNAVAILABLE => "dossier des ROM indisponible".to_string(),
+                // Catalogue et dossier des ROM : messages en français destinés à l'administrateur, gardés.
+                StoreError::Catalog(_) | StoreError::NoRoms | StoreError::RomsUnavailable(_) => self.to_string(),
                 _ => "erreur interne du serveur".to_string(),
             };
             return (status, public).into_response();

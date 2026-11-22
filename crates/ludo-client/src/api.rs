@@ -30,6 +30,10 @@ fn http_message(status: u16, body: &str) -> String {
         format!("demande refusée par le serveur : {body}")
     } else if (400..500).contains(&status) {
         format!("demande refusée par le serveur ({status})")
+    } else if !body.is_empty() && body.chars().count() <= 200 {
+        // Le serveur ne renvoie plus que des textes publics en français pour un 5xx (détail interne
+        // au journal du pod) : un texte court est montré tel quel.
+        format!("erreur du serveur : {body}")
     } else {
         format!("erreur du serveur ({status})")
     }
@@ -63,8 +67,9 @@ const LIGHT_IDLE: Duration = Duration::from_secs(10);
 /// Transferts de sauvegarde (jusqu'à 1 Go) et rebalayage : pas de délai global (la durée dépend du
 /// débit), mais un délai d'inactivité : un transfert qui n'avance plus échoue en 30 s.
 const TRANSFER_IDLE: Duration = Duration::from_secs(30);
-/// Attente de la réponse une fois la requête envoyée (le serveur hache l'archive reçue).
-const TRANSFER_RESPONSE: Duration = Duration::from_secs(60);
+/// Attente de la réponse une fois la requête envoyée (le serveur hache une archive jusqu'à 1 Go,
+/// ou balaie un gros partage de ROM).
+const TRANSFER_RESPONSE: Duration = Duration::from_secs(300);
 
 /// Taille maximale d'une sauvegarde téléchargée.
 const MAX_DOWNLOAD: u64 = 1024 * 1024 * 1024;
@@ -300,7 +305,8 @@ mod tests_messages {
     #[test]
     fn erreurs_lisibles_en_francais() {
         assert_eq!(ApiError::Offline(offline_reason(&ureq::Error::ConnectionFailed).into()).to_string(), "serveur injoignable : connexion impossible");
-        assert_eq!(ApiError::Http { status: 500, body: "database is locked".into() }.to_string(), "erreur du serveur (500)");
+        assert_eq!(ApiError::Http { status: 500, body: "erreur interne du serveur".into() }.to_string(), "erreur du serveur : erreur interne du serveur");
+        assert_eq!(ApiError::Http { status: 502, body: String::new() }.to_string(), "erreur du serveur (502)");
         assert_eq!(ApiError::Http { status: 400, body: "profil invalide : nom vide".into() }.to_string(), "demande refusée par le serveur : profil invalide : nom vide");
         assert_eq!(ApiError::Http { status: 404, body: String::new() }.to_string(), "demande refusée par le serveur (404)");
         assert_eq!(ApiError::Http { status: 206, body: "réponse de téléchargement inattendue".into() }.to_string(), "réponse inattendue du serveur (206) : réponse de téléchargement inattendue");
