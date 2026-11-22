@@ -49,7 +49,7 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
   private val handler = Handler(Looper.getMainLooper())
   private val displays = activity.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
   private var started = false
-  private var presentation: Presentation? = null
+  @Volatile private var presentation: Presentation? = null
   private var relais: Relais? = null
   private var haut: WebView? = null
   /** Place d'origine de la WebView Tauri dans l'activité (rendue à la sortie du double écran). */
@@ -59,22 +59,31 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
   private val focusListener = ViewTreeObserver.OnWindowFocusChangeListener { focus ->
     if (presentation != null) main.onWindowFocusChanged(focus)
   }
+  private var observer: ViewTreeObserver? = null
+
+  /** WebView pas encore attachée au démarrage à froid : le double écran attend son attachement. */
+  private val attach = object : View.OnAttachStateChangeListener {
+    override fun onViewAttachedToWindow(v: View) = update()
+    override fun onViewDetachedFromWindow(v: View) {}
+  }
 
   fun install() {
+    main.addOnAttachStateChangeListener(attach)
     (activity as LifecycleOwner).lifecycle.addObserver(this)
   }
 
   override fun onStart(owner: LifecycleOwner) {
     started = true
     displays.registerDisplayListener(this, handler)
-    activity.window.decorView.viewTreeObserver.addOnWindowFocusChangeListener(focusListener)
+    observer = activity.window.decorView.viewTreeObserver.also { it.addOnWindowFocusChangeListener(focusListener) }
     update()
   }
 
   override fun onStop(owner: LifecycleOwner) {
     started = false
     displays.unregisterDisplayListener(this)
-    activity.window.decorView.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener)
+    observer?.takeIf { it.isAlive }?.removeOnWindowFocusChangeListener(focusListener)
+    observer = null
     leave()
   }
 
@@ -198,6 +207,9 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
     }
     val view = WebView(activity)
     view.setBackgroundColor(Color.BLACK)
+    view.isVerticalScrollBarEnabled = false
+    view.isHorizontalScrollBarEnabled = false
+    view.overScrollMode = View.OVER_SCROLL_NEVER
     view.isFocusable = false
     view.isFocusableInTouchMode = false
     view.settings.javaScriptEnabled = true

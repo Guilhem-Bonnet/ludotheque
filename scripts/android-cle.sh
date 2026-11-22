@@ -29,9 +29,10 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${JAVA_HOME:-}" ]; then
-  JAVA_HOME="$(ls -d "$HOME"/.cache/jdk/jdk-21* 2>/dev/null | sort | tail -1)"
+  JAVA_HOME="$(ls -d "$HOME"/.cache/jdk/jdk-21* 2>/dev/null | sort | tail -1 || true)"
 fi
 keytool="${JAVA_HOME:+$JAVA_HOME/bin/}keytool"
+command -v "$keytool" >/dev/null || { echo "keytool introuvable (JDK attendu dans JAVA_HOME ou ~/.cache/jdk/jdk-21*)" >&2; exit 1; }
 
 umask 077
 mkdir -p "$dir"
@@ -57,5 +58,7 @@ if [ -n "$secrets" ]; then
   base64 -w0 "$store" | "$gh" secret set LUDO_ANDROID_KEYSTORE_B64 -R "$repo" >/dev/null
   printf '%s' "$pass" | "$gh" secret set LUDO_ANDROID_KEYSTORE_PASSWORD -R "$repo" >/dev/null
   printf '%s' "$alias" | "$gh" secret set LUDO_ANDROID_KEY_ALIAS -R "$repo" >/dev/null
-  echo "Secrets du dépôt posés : LUDO_ANDROID_KEYSTORE_B64, LUDO_ANDROID_KEYSTORE_PASSWORD, LUDO_ANDROID_KEY_ALIAS"
+  cert="$(LUDO_KS_PASS="$pass" "$keytool" -list -v -keystore "$store" -storepass:env LUDO_KS_PASS 2>/dev/null | sed -n 's/^[[:space:]]*SHA256: //p' | head -1)"
+  "$gh" variable set LUDO_ANDROID_CERT_SHA256 -R "$repo" --body "$cert" >/dev/null
+  echo "Secrets du dépôt posés : LUDO_ANDROID_KEYSTORE_B64, LUDO_ANDROID_KEYSTORE_PASSWORD, LUDO_ANDROID_KEY_ALIAS (+ variable LUDO_ANDROID_CERT_SHA256)"
 fi

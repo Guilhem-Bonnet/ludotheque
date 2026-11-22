@@ -107,7 +107,10 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
   fun installer(url: String) {
     val json = fetchJson(url)
     if (json.optLong("versionCode", 0) <= installedCode()) throw MajException("Déjà à jour")
-    val apkUrl = json.optString("apk").takeIf { it.startsWith("https://") || it.startsWith("http://") }
+    // HTTPS obligatoire ; HTTP accepté seulement si android.json vient lui-même d'une adresse HTTP
+    // (essai local réglé dans config.toml, [maj] android). L'origine réelle est garantie par Android :
+    // un APK signé par une autre clé que l'app installée est refusé.
+    val apkUrl = json.optString("apk").takeIf { it.startsWith("https://") || (it.startsWith("http://") && url.startsWith("http://")) }
       ?: throw MajException("Fichier de mise à jour absent de la release")
     val expected = json.optString("sha256").lowercase().takeIf { it.length == 64 }
       ?: throw MajException("Empreinte de la mise à jour absente")
@@ -153,37 +156,66 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
     commit(file)
   }
 
+  /** Récepteur de l'installation en cours (un seul à la fois). */
+  @Volatile private var recepteur: Statut? = null
+
+  private fun unregister(r: BroadcastReceiver) {
+    try {
+      activity.applicationContext.unregisterReceiver(r)
+    } catch (_: IllegalArgumentException) {
+      // Déjà retiré.
+    }
+    if (recepteur === r) recepteur = null
+  }
+
   /** Session PackageInstaller ; la confirmation d'Android est affichée par [Statut]. */
   private fun commit(apk: File) {
     val installer = activity.packageManager.packageInstaller
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
     params.setAppPackageName(activity.packageName)
+    params.setSize(apk.length())
     if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    recepteur?.let { unregister(it) }
     val id = installer.createSession(params)
-    installer.openSession(id).use { session ->
-      session.openWrite("ludotheque.apk", 0, apk.length()).use { out ->
-        apk.inputStream().use { it.copyTo(out) }
-        session.fsync(out)
+    val receiver = Statut(id, apk)
+    try {
+      installer.openSession(id).use { session ->
+        session.openWrite("ludotheque.apk", 0, apk.length()).use { out ->
+          apk.inputStream().use { it.copyTo(out) }
+          session.fsync(out)
+        }
+        val filter = IntentFilter(ACTION_STATUT)
+        if (Build.VERSION.SDK_INT >= 33) {
+          activity.applicationContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+          @Suppress("UnspecifiedRegisterReceiverFlag")
+          activity.applicationContext.registerReceiver(receiver, filter)
+        }
+        recepteur = receiver
+        val intent = Intent(ACTION_STATUT).setPackage(activity.packageName)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+        val pending = PendingIntent.getBroadcast(activity, id, intent, flags)
+        session.commit(pending.intentSender)
       }
-      val filter = IntentFilter(ACTION_STATUT)
-      val receiver = Statut()
-      if (Build.VERSION.SDK_INT >= 33) {
-        activity.applicationContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-      } else {
-        @Suppress("UnspecifiedRegisterReceiverFlag")
-        activity.applicationContext.registerReceiver(receiver, filter)
-      }
-      val intent = Intent(ACTION_STATUT).setPackage(activity.packageName)
-      val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-      val pending = PendingIntent.getBroadcast(activity, id, intent, flags)
-      session.commit(pending.intentSender)
+    } catch (e: Exception) {
+      unregister(receiver)
+      try { installer.abandonSession(id) } catch (_: Exception) {}
+      apk.delete()
+      throw e
     }
   }
 
   /** Réponse de l'installeur : confirmation à afficher, succès (l'app est remplacée) ou échec. */
-  private inner class Statut : BroadcastReceiver() {
+  private inner class Statut(private val session: Int, private val apk: File) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-      when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+      // Diffusion d'une autre session (tentative précédente) : ignorée.
+      if (intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1) != session) return
+      val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+      if (status != PackageInstaller.STATUS_PENDING_USER_ACTION) {
+        unregister(this)
+        apk.delete()
+      }
+      when (status) {
         PackageInstaller.STATUS_PENDING_USER_ACTION -> {
           @Suppress("DEPRECATION")
           val confirm = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT) ?: return
@@ -191,16 +223,9 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
           activity.startActivity(confirm)
           progress("confirmation", 100)
         }
-        PackageInstaller.STATUS_SUCCESS -> {
-          context.unregisterReceiver(this)
-          progress("installee", 100)
-        }
-        PackageInstaller.STATUS_FAILURE_ABORTED -> {
-          context.unregisterReceiver(this)
-          progress("annulee", null)
-        }
+        PackageInstaller.STATUS_SUCCESS -> progress("installee", 100)
+        PackageInstaller.STATUS_FAILURE_ABORTED -> progress("annulee", null)
         else -> {
-          context.unregisterReceiver(this)
           val detail = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: ""
           val etape = if (detail.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE") || detail.contains("signatures", true)) "signature" else "echec"
           progress(etape, null)

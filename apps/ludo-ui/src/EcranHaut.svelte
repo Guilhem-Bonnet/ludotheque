@@ -11,6 +11,8 @@
   // l'état du jeu choisi par `window.__ludoHaut` (DoubleEcran.kt → evaluateJavascript). Aucune
   // minuterie, aucune animation infinie : un fondu enchaîné quand le jeu change, puis plus rien ne
   // bouge (l'écran reste allumé pendant toute la navigation : CPU et OLED au repos).
+  // WebView système de la Thor = Chromium 109 (dumpsys webviewupdate, 22/11) : ni color-mix() (111)
+  // ni text-wrap (114) ; rien ici n'en dépend.
   let etat = $state<EtatHaut>({ ecran: 'accueil' });
   (window as unknown as { __ludoHaut: (e: EtatHaut) => void }).__ludoHaut = (e) => (etat = e);
 
@@ -62,7 +64,7 @@
       <section class="jeu" in:fade={{ duration: d(280) }}>
         <div class="cartouche" in:fly={{ y: 18, duration: d(420), easing: cubicOut }} style:background={jeu.tile}>
           {#if jeu.cover && failed !== jeu.cover}
-            <img src={jeu.cover} alt="Jaquette de {jeu.title}" draggable="false" onerror={() => (failed = jeu.cover ?? '')} />
+            <img src={jeu.cover} alt="Jaquette de {jeu.title}" draggable="false" onerror={(e) => (failed = (e.currentTarget as HTMLImageElement).getAttribute('src') ?? '')} />
           {:else if jeu.art}
             <CoverArt art={jeu.art} />
           {/if}
@@ -123,9 +125,9 @@
     font-size: clamp(14px, 1.6vmin + 0.7vmax, 40px);
   }
   .fond, .aplat, .voile { position: absolute; inset: 0; }
-  .aplat { background: radial-gradient(110% 90% at 28% 45%, var(--tint) 0%, color-mix(in srgb, var(--tint2) 45%, #000) 52%, #000 100%); opacity: .7; }
+  .aplat { background: radial-gradient(110% 90% at 28% 45%, var(--tint) 0%, var(--tint2) 26%, transparent 72%); opacity: .55; }
   .photo { position: absolute; inset: -4%; width: 108%; height: 108%; object-fit: cover; filter: blur(14px) saturate(1.2) brightness(.5); opacity: .75; }
-  .repos-mode .aplat { background: radial-gradient(70% 70% at 50% 45%, var(--tint) 0%, color-mix(in srgb, var(--tint2) 35%, #000) 50%, #000 100%); opacity: .55; }
+  .repos-mode .aplat { background: radial-gradient(70% 70% at 50% 45%, var(--tint) 0%, transparent 70%); opacity: .45; }
   .repos-mode .voile { background: radial-gradient(90% 90% at 50% 45%, transparent 0%, #000 100%); }
   /* OLED : bords vraiment noirs, centre lumineux. */
   .voile { background: radial-gradient(120% 95% at 34% 50%, transparent 0%, rgba(0,0,0,.35) 55%, #000 100%); }

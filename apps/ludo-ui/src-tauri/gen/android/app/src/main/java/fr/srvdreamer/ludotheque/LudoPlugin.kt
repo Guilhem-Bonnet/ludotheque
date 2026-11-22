@@ -56,7 +56,7 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
   private val prefs by lazy { activity.getSharedPreferences("ludo", Context.MODE_PRIVATE) }
 
   /** Écran du haut de la Thor (ambiance) : créé avec la WebView Tauri, piloté par le cycle de vie. */
-  private var ecrans: DoubleEcran? = null
+  @Volatile private var ecrans: DoubleEcran? = null
   private lateinit var mainWebView: android.webkit.WebView
   private val maj by lazy { MiseAJourApk(activity) { js -> mainWebView.post { mainWebView.evaluateJavascript(js, null) } } }
 

@@ -62,17 +62,24 @@ function etat(): EtatHaut {
   };
 }
 
-async function publish(force = false) {
+/** Envois en file : chaque état part après le précédent (l'écran du haut n'affiche jamais un état
+ *  plus ancien que le dernier calculé). */
+let queue: Promise<void> = Promise.resolve();
+function publish(force = false): Promise<void> {
   const e = etat();
   const json = JSON.stringify(e);
-  if (!force && json === last) return;
+  if (!force && json === last) return queue;
   last = json;
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke<boolean>('ecranHaut', { etat: e });
-  } catch {
-    // Pont absent (ancienne coque) : l'écran du haut garde son dernier état, l'app reste utilisable.
-  }
+  queue = queue.then(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke<boolean>('ecranHaut', { etat: e });
+    } catch {
+      // Pont absent (ancienne coque) : l'écran du haut garde son dernier état ; renvoi au prochain événement.
+      if (last === json) last = '';
+    }
+  });
+  return queue;
 }
 
 /** Bibliothèque et récents du profil (temps de jeu, appareil de la dernière partie, état des sauvegardes). */
@@ -83,6 +90,8 @@ async function load(profile: string) {
     recent = r;
     library = l;
     loadedFor = profile;
+    // Focus posé avant l'arrivée des listes (tuile mise en avant au démarrage) : relu maintenant.
+    focusedId = gameOf(document.activeElement) ?? focusedId;
     void publish();
   } catch {
     // Hors ligne : l'écran du haut montre ce qu'il sait (profil, jeu de la fiche).
