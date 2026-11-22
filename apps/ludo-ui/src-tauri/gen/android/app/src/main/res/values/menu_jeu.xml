@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="menu_jeu_service_nom">Ludothèque : menu en jeu</string>
+    <string name="menu_jeu_service_resume">Bouton Mode pendant une partie lancée par la Ludothèque : retour au menu, jeu en pause</string>
+    <string name="menu_jeu_service_description">Pendant une partie lancée depuis la Ludothèque, le bouton Mode de la manette ouvre le menu de la Ludothèque : reprendre le jeu, ou le fermer. HOME n\'est jamais capté. Partout ailleurs, le bouton Mode garde son rôle habituel. Aucun contenu d\'écran n\'est lu : seul le nom de l\'appli au premier plan est utilisé.</string>
+</resources>

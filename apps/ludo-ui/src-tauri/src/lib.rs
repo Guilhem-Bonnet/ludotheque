@@ -9,6 +9,7 @@
 
 pub mod android;
 pub mod energie;
+pub mod menu_jeu;
 pub mod profils;
 pub mod rumble;
 // Manette native : démarrée au bureau seulement (sur Android, MainActivity traduit les entrées).
@@ -1323,7 +1324,12 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
         android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
         android::Plan::Stream { host, app: name, hdr } => (android::stream_intent(app, host, name, *hdr), "flux", name.clone()),
     };
-    android::start(app, &intent)?;
+    // Menu en jeu : le jeu est retenu AVANT l'intent (sa fenêtre peut apparaître aussitôt).
+    menu_jeu::lance(app, game, &intent);
+    if let Err(e) = android::start(app, &intent) {
+        menu_jeu::oublier(app);
+        return Err(e);
+    }
     step(Step::Lancement, StepState::Fait, None);
     Ok(UiLaunch::Lance { via, detail })
 }
@@ -1418,7 +1424,7 @@ pub fn run() {
     #[cfg(target_os = "android")]
     let builder = builder.plugin(energie::plugin());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(android::plugin()).setup(|app| {
+    let builder = builder.plugin(android::plugin()).plugin(menu_jeu::plugin()).setup(|app| {
         android::prepare_env(app.handle());
         Ok(())
     });
@@ -1432,6 +1438,18 @@ pub fn run() {
         // Batterie du Deck ou d'un portable : suivie par UPower (rien sur un PC fixe).
         #[cfg(target_os = "linux")]
         energie::suivre(app.handle().clone());
+        // Menu en jeu : bouton Guide pendant une partie → la fenêtre revient devant (écran « En jeu » :
+        // Reprendre, Fermer le jeu). Sous Wayland, le gestionnaire de fenêtres peut refuser le focus
+        // (l'app est alors signalée dans la barre des tâches).
+        let menu = app.handle().clone();
+        pad::on_menu(move || {
+            let _ = menu.emit(menu_jeu::EVENT_MENU, ());
+            if let Some(w) = menu.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        });
         Ok(())
     });
     builder
@@ -1451,7 +1469,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer, energie::batterie_etat, energie::energie_repos])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer, energie::batterie_etat, energie::energie_repos, menu_jeu::jeu_en_cours, menu_jeu::reprendre_jeu, menu_jeu::fermer_jeu, menu_jeu::menu_jeu_reglages])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {

@@ -8,6 +8,8 @@
   import { feedback } from '../lib/feedback';
   import { reducedMotion, replay } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
+  import EnJeuActions from '../lib/components/EnJeuActions.svelte';
+  import { enCours } from '../lib/enCours.svelte';
   import { router } from '../lib/router.svelte';
   import type { LaunchEvent, LaunchResult, LaunchStep } from '../lib/api';
   import type { Preparation } from '../lib/types';
@@ -192,7 +194,10 @@
     for (const st of steps) st.state = 'fait';
     phase = 'sending';
     launching = false;
-    if (r.emulatorError) {
+    // « Fermer le jeu » (menu en jeu) termine l'émulateur par SIGTERM : sortie voulue, pas une erreur.
+    // Drapeau lu sans condition : il ne doit jamais survivre à la partie qui l'a posé.
+    const fermetureVoulue = enCours.consommerFermeture();
+    if (r.emulatorError && !fermetureVoulue) {
       // Sortie en erreur : la sauvegarde est synchronisée, mais ce n'est pas un succès à fêter.
       steps[4].label = 'Partie terminée';
       steps[5].label = 'L\u2019émulateur s\u2019est arrêté avec une erreur · sauvegarde synchronisée';
@@ -334,6 +339,8 @@
           <button class="act focusable" data-autofocus onclick={() => void runReal()}>{sendOnly ? 'Réessayer l\u2019envoi' : 'Réessayer'}</button>
           <button class="act focusable" onclick={() => router.back()}>Retour</button>
         </span>
+      {:else if phase === 'playing' && !isAndroid && !isDemo}
+        <EnJeuActions titre={preparation.game.title} />
       {:else if ended}
         <button class="act focusable" data-autofocus onclick={() => router.reset({ name: 'accueil' })}>Retour</button>
       {/if}

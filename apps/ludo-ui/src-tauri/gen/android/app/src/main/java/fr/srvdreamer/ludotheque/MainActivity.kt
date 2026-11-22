@@ -96,6 +96,14 @@ class MainActivity : TauriActivity() {
     return new
   }
 
+  // Menu en jeu : la Ludothèque revient devant alors qu'un jeu est ouvert (bouton HOME, lanceur,
+  // geste) : le jeu vient d'être quitté, ce qui fixe le délai de garde avant sa fermeture (MenuJeuPlugin).
+  override fun onResume() {
+    super.onResume()
+    EnCours.restaurer(this)
+    if (EnCours.jeu != null) EnCours.quitte()
+  }
+
   // Fenêtre qui perd le focus (jeu lancé, autre app, autre écran) : toute flèche tenue est relâchée.
   override fun onPause() {
     releaseArrows()
