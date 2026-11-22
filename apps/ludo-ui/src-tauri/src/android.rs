@@ -702,7 +702,7 @@ mod tests {
                 "art": { "motif": "lune", "from": "#000000", "to": "#ffffff" }, "catalogued": false, "files": files
             }))
             .unwrap();
-            let inv = DeviceGame { game: g.id.clone(), installed: g.installed, stream: g.stream, save: false, stream_app: g.stream_app.clone() };
+            let inv = DeviceGame { game: g.id.clone(), installed: g.installed, stream: g.stream, save: false, stream_app: g.stream_app.clone(), rom: None };
             match (g.installed, plan(&cg, &roms, &conf, Some(&inv), None)) {
                 (true, Ok(Plan::Local { emu, uri })) if uri.starts_with(&format!("content://t/{}/", emu.dir)) && emulator_for(&g.console) == Some(emu) => {}
                 (false, Ok(Plan::Stream { app, .. })) if Some(&app) == g.stream_app.as_ref() => {}

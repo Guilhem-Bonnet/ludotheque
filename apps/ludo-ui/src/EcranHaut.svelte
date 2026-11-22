@@ -3,6 +3,7 @@
   import { cubicOut } from 'svelte/easing';
   import Avatar from './lib/components/Avatar.svelte';
   import CoverArt from './lib/components/CoverArt.svelte';
+import Batterie from './lib/components/Batterie.svelte';
   import { reducedMotion } from './lib/motion';
   import type { EtatHaut, JeuHaut } from './lib/ecranHaut.svelte';
   import type { Console, Profile, SyncState } from './lib/types';
@@ -126,6 +127,7 @@
     <footer class="joueur">
       <Avatar profile={profil} size={40} />
       <span>{profil.name}</span>
+      <Batterie />
     </footer>
   {/if}
 </main>
