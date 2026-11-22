@@ -36,7 +36,7 @@ import java.security.MessageDigest
 class MiseAJourApk(private val activity: Activity, private val notify: (String) -> Unit) {
 
   companion object {
-    const val AUCUNE_APK = "Aucune version Android publiée avec la dernière version de la Ludothèque : la publication Android attend la clé de signature de l'app (à créer sur le PC)."
+    const val AUCUNE_APK = "Aucune version Android publiée avec la dernière version de la Ludothèque : elle arrivera avec la prochaine."
     /** Paquet des APK publiées par la CI (variante release). */
     const val PAQUET_RELEASE = "fr.srvdreamer.ludotheque"
     const val ESSAI = "Version d'essai installée depuis le PC : ses mises à jour passent par le PC (scripts/apk.sh), pas par l'app."
@@ -71,8 +71,9 @@ class MiseAJourApk(private val activity: Activity, private val notify: (String) 
     c.readTimeout = 30_000
     c.instanceFollowRedirects = true
     try {
-      // La CI ne publie l'APK (et android.json) qu'avec la clé de signature de l'app : sans elle, la
-      // release existe pour le PC mais pas pour Android. Constat du 22/11 (app-v0.7.0).
+      // La CI ne publie l'APK (et android.json) qu'avec la clé de signature de l'app : une release
+      // faite avant la clé existe pour le PC mais pas pour Android. Constat du 22/11 (app-v0.7.0,
+      // clé créée ensuite).
       if (c.responseCode == 404) throw MajException(AUCUNE_APK)
       if (c.responseCode !in 200..299) throw MajException("Serveur des mises à jour : réponse ${c.responseCode}")
       return JSONObject(c.inputStream.bufferedReader().readText())
