@@ -29,6 +29,18 @@ class StartArgs {
   var boolExtras: Map<String, Boolean> = emptyMap()
 }
 
+/** Adresse du fichier `android.json` des releases (réglage de l'appareil, sinon GitHub). */
+@InvokeArg
+class MajArgs {
+  lateinit var url: String
+}
+
+/** Document (dossier d'un jeu Wii U) de l'arbre des ROM. */
+@InvokeArg
+class RpxArgs {
+  lateinit var uri: String
+}
+
 /** Sous-dossiers de l'arbre des ROM à lister (« switch », « n3ds »…). */
 @InvokeArg
 class ListArgs {
@@ -43,10 +55,75 @@ class ListArgs {
 class LudoPlugin(private val activity: Activity) : Plugin(activity) {
   private val prefs by lazy { activity.getSharedPreferences("ludo", Context.MODE_PRIVATE) }
 
+  /** Écran du haut de la Thor (ambiance) : créé avec la WebView Tauri, piloté par le cycle de vie. */
+  private var ecrans: DoubleEcran? = null
+  private lateinit var mainWebView: android.webkit.WebView
+  private val maj by lazy { MiseAJourApk(activity) { js -> mainWebView.post { mainWebView.evaluateJavascript(js, null) } } }
+
   override fun load(webView: android.webkit.WebView) {
     super.load(webView)
+    mainWebView = webView
     // Crée Android/data/<paquet>/files : le PC y dépose config.toml par adb.
     activity.getExternalFilesDir(null)
+    webView.post { ecrans = DoubleEcran(activity, webView).also { it.install() } }
+  }
+
+  /** État du jeu choisi (objet JSON quelconque), affiché par l'écran du haut s'il est actif. */
+  @Command
+  fun ecranHaut(invoke: Invoke) {
+    val state = invoke.getRawArgs()
+    val e = ecrans
+    e?.push(state)
+    val out = JSObject()
+    out.put("actif", e?.active() == true)
+    invoke.resolve(out)
+  }
+
+  /** Version installée et version publiée (`android.json` des releases). */
+  @Command
+  fun apkVerifier(invoke: Invoke) {
+    val args = invoke.parseArgs(MajArgs::class.java)
+    Thread {
+      try {
+        invoke.resolve(maj.verifier(args.url))
+      } catch (e: Exception) {
+        invoke.reject(MiseAJourApk.message(e))
+      }
+    }.start()
+  }
+
+  /** Télécharge l'APK publié, vérifie son empreinte, puis le confie à l'installeur d'Android. */
+  @Command
+  fun apkInstaller(invoke: Invoke) {
+    val args = invoke.parseArgs(MajArgs::class.java)
+    if (!maj.autorise()) {
+      maj.demanderAutorisation()
+      invoke.reject(MiseAJourApk.AUTORISATION)
+      return
+    }
+    Thread {
+      try {
+        maj.installer(args.url)
+        invoke.resolve()
+      } catch (e: Exception) {
+        invoke.reject(MiseAJourApk.message(e))
+      }
+    }.start()
+  }
+
+  /** Fichier `.rpx` d'un jeu Wii U en dossier (`<jeu>/code/*.rpx`), pour Cemu. */
+  @Command
+  fun findRpx(invoke: Invoke) {
+    val args = invoke.parseArgs(RpxArgs::class.java)
+    val tree = grantedTree()
+    val out = JSObject()
+    if (tree != null) {
+      val gameId = DocumentsContract.getDocumentId(Uri.parse(args.uri))
+      val code = children(tree, gameId).firstOrNull { it.second && it.first.equals("code", ignoreCase = true) }
+      val rpx = code?.let { c -> children(tree, c.third).firstOrNull { !it.second && it.first.endsWith(".rpx", ignoreCase = true) } }
+      rpx?.let { out.put("uri", DocumentsContract.buildDocumentUriUsingTree(tree, it.third).toString()) }
+    }
+    invoke.resolve(out)
   }
 
   /** Arbre des ROM accordé et toujours valable (l'utilisateur peut retirer l'accès dans les réglages). */

@@ -1,6 +1,7 @@
 // Mise à jour de l'app elle-même (pas des jeux) : releases signées publiées par la CI sur GitHub
 // (`latest.json`), vérifiées avec la clé publique de tauri.conf.json avant toute installation.
 // Vérification au démarrage et sur demande (Réglages) ; l'installation remplace l'AppImage puis relance.
+// Android : même état, autre canal (voir checkAndroid / installAndroid).
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { isAndroid, isDemo } from './api';
@@ -22,9 +23,69 @@ let pending: Update | null = null;
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+// Android : APK signé publié avec chaque release (`android.json`), comparé à la version installée puis
+// confié à l'installeur d'Android (MiseAJourApk.kt). Progression reçue par l'événement `ludo-apk`.
+interface ApkVersion { installee: string; version: string; notes: string; disponible: boolean }
+async function androidInvoke<T>(cmd: string): Promise<T> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<T>(cmd);
+}
+
+async function checkAndroid(): Promise<void> {
+  appUpdate.status = 'checking';
+  appUpdate.error = '';
+  try {
+    const v = await androidInvoke<ApkVersion>('apkVerifier');
+    appUpdate.checkedAt = new Date();
+    appUpdate.version = v.version;
+    appUpdate.notes = v.notes;
+    appUpdate.status = v.disponible ? 'available' : 'none';
+  } catch (e) {
+    appUpdate.checkedAt = new Date();
+    appUpdate.error = message(e);
+    appUpdate.status = 'error';
+  }
+}
+
+const APK_ETAPES: Record<string, string> = {
+  annulee: 'Installation annulée',
+  signature: 'Installation refusée par Android : version signée par une autre clé (désinstaller puis réinstaller une fois)',
+  echec: 'Installation refusée par Android',
+};
+
+let apkListening = false;
+async function installAndroid(): Promise<void> {
+  if (!apkListening) {
+    apkListening = true;
+    window.addEventListener('ludo-apk', (ev) => {
+      const { etape, pourcent } = (ev as CustomEvent<{ etape: string; pourcent: number | null }>).detail;
+      if (etape === 'telechargement') {
+        appUpdate.status = 'downloading';
+        appUpdate.percent = pourcent;
+      } else if (etape === 'installation' || etape === 'confirmation' || etape === 'installee') {
+        appUpdate.percent = 100;
+        appUpdate.status = 'restarting';
+      } else if (APK_ETAPES[etape]) {
+        appUpdate.error = APK_ETAPES[etape];
+        appUpdate.status = 'error';
+      }
+    });
+  }
+  appUpdate.status = 'downloading';
+  appUpdate.percent = 0;
+  appUpdate.error = '';
+  try {
+    await androidInvoke<void>('apkInstaller');
+    if (appUpdate.status === 'downloading') appUpdate.status = 'restarting';
+  } catch (e) {
+    appUpdate.error = message(e);
+    appUpdate.status = 'error';
+  }
+}
+
 /** Cherche une version plus récente. Sans effet hors de l'app (démo dans un navigateur). */
 export async function checkAppUpdate(): Promise<void> {
-  // Android : pas de mise à jour intégrée (l'APK est installé par le PC).
+  if (isAndroid && !isDemo && appUpdate.status !== 'checking' && appUpdate.status !== 'downloading' && appUpdate.status !== 'restarting') return checkAndroid();
   if (isDemo || isAndroid || appUpdate.status === 'checking' || appUpdate.status === 'downloading' || appUpdate.status === 'restarting') return;
   appUpdate.status = 'checking';
   appUpdate.error = '';
@@ -47,6 +108,10 @@ export async function checkAppUpdate(): Promise<void> {
 
 /** Télécharge (signature vérifiée), installe, puis relance l'app. */
 export async function installAppUpdate(): Promise<void> {
+  if (isAndroid && !isDemo) {
+    if (appUpdate.status === 'available' || appUpdate.status === 'error') await installAndroid();
+    return;
+  }
   if (!pending || appUpdate.status === 'downloading' || appUpdate.status === 'restarting') return;
   appUpdate.status = 'downloading';
   appUpdate.percent = 0;
@@ -80,7 +145,17 @@ const FOCUS_MIN_GAP_MS = 10 * 60 * 1000;
 let listening = false;
 export function startAppUpdateChecks(): void {
   void checkAppUpdate();
-  if (listening || isDemo || isAndroid) return;
+  if (listening || isDemo) return;
+  if (isAndroid) {
+    // Android : retour au premier plan (autorisation « sources inconnues » accordée dans les réglages,
+    // retour d'un jeu) ; même garde de 10 min que le focus du bureau.
+    listening = true;
+    document.addEventListener('visibilitychange', () => {
+      const recent = appUpdate.checkedAt && Date.now() - appUpdate.checkedAt.getTime() < FOCUS_MIN_GAP_MS;
+      if (document.visibilityState === 'visible' && !recent && (appUpdate.status === 'idle' || appUpdate.status === 'none' || appUpdate.status === 'error')) void checkAppUpdate();
+    });
+    return;
+  }
   listening = true;
   void import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
     getCurrentWindow().onFocusChanged(({ payload: focused }) => {

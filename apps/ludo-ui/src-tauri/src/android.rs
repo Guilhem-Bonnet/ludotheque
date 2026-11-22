@@ -18,6 +18,24 @@ use std::collections::BTreeMap;
 pub struct AndroidConf {
     #[serde(default)]
     pub moonlight: MoonlightConf,
+    #[serde(default)]
+    pub maj: MajConf,
+}
+
+/// Mise à jour de l'app depuis l'app : `android.json` publié avec les releases (CI).
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct MajConf {
+    /// Adresse de `android.json` (essai sur un serveur local) ; défaut : dernière release GitHub.
+    pub android: Option<String>,
+}
+
+/// `android.json` de la dernière release de l'app (workflow android-release.yml).
+pub const MAJ_URL: &str = "https://github.com/Guilhem-Bonnet/ludotheque/releases/latest/download/android.json";
+
+impl MajConf {
+    pub fn url(&self) -> String {
+        self.android.clone().filter(|u| !u.is_empty()).unwrap_or_else(|| MAJ_URL.to_string())
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -63,17 +81,21 @@ pub struct AndroidEmu {
     pub uri_extra: Option<&'static str>,
     /// Sous-dossier de l'arbre des ROM.
     pub dir: &'static str,
+    /// Jeu rangé en dossier (Wii U : `<jeu>/code/*.rpx`) : l'émulateur reçoit le `.rpx` du dossier.
+    pub folder: bool,
 }
 
-/// Émulateurs de la Thor, relevés dans le journal du lanceur Cocoon (`launch_debug.log`).
+/// Émulateurs de la Thor, relevés dans le journal du lanceur Cocoon (`launch_debug.log`) ; Dolphin et
+/// Cemu d'après leurs activités (`dumpsys package`, 21/11) : Dolphin ouvre le fichier de l'extra
+/// `AutoStartFile` (sa MainActivity), Cemu une URI content `.rpx`/`.wud`/`.wua` (EmulationActivity).
 pub const EMULATORS: &[(&str, AndroidEmu)] = &[
     (
         "switch",
-        AndroidEmu { name: "Eden", package: "dev.eden.eden_emulator", activity: "org.yuzu.yuzu_emu.activities.EmulationActivity", action: None, uri_extra: None, dir: "switch" },
+        AndroidEmu { name: "Eden", package: "dev.eden.eden_emulator", activity: "org.yuzu.yuzu_emu.activities.EmulationActivity", action: None, uri_extra: None, dir: "switch", folder: false },
     ),
     (
         "3ds",
-        AndroidEmu { name: "Azahar", package: "org.azahar_emu.azahar", activity: "org.citra.citra_emu.activities.EmulationActivity", action: None, uri_extra: None, dir: "n3ds" },
+        AndroidEmu { name: "Azahar", package: "org.azahar_emu.azahar", activity: "org.citra.citra_emu.activities.EmulationActivity", action: None, uri_extra: None, dir: "n3ds", folder: false },
     ),
     (
         "ds",
@@ -84,7 +106,24 @@ pub const EMULATORS: &[(&str, AndroidEmu)] = &[
             action: Some("me.magnum.melondualds.LAUNCH_ROM"),
             uri_extra: Some("uri"),
             dir: "nds",
+            folder: false,
         },
+    ),
+    (
+        "gc",
+        AndroidEmu {
+            name: "Dolphin",
+            package: "org.dolphinemu.dolphinemu",
+            activity: "org.dolphinemu.dolphinemu.ui.main.MainActivity",
+            action: None,
+            uri_extra: Some("AutoStartFile"),
+            dir: "gc",
+            folder: false,
+        },
+    ),
+    (
+        "wiiu",
+        AndroidEmu { name: "Cemu", package: "info.cemu.cemu", activity: "info.cemu.cemu.emulation.EmulationActivity", action: None, uri_extra: None, dir: "wiiu", folder: true },
     ),
 ];
 
@@ -115,11 +154,12 @@ pub struct RomList {
     pub files: Vec<RomFile>,
 }
 
-/// ROM de ce jeu dans l'arbre : même nom (formats équivalents), sinon même identité Switch.
+/// ROM de ce jeu dans l'arbre : même nom (formats équivalents), sinon même identité Switch. Pour une
+/// console à jeux en dossier (Wii U), le dossier du jeu.
 pub fn find_rom<'a>(game: &CatalogGame, files: &'a [RomFile]) -> Option<&'a RomFile> {
     let emu = emulator_for(&game.console)?;
     let bases: Vec<&str> = game.files.iter().filter(|f| f.role == FileRole::Base).map(|f| f.path.as_str()).collect();
-    let in_dir = || files.iter().filter(|r| r.dir == emu.dir && !r.is_dir);
+    let in_dir = || files.iter().filter(|r| r.dir == emu.dir && r.is_dir == emu.folder);
     in_dir()
         .find(|r| bases.iter().any(|b| match_key(b) == match_key(&r.name)))
         .or_else(|| in_dir().find(|r| title_key(&r.name).is_some_and(|t| bases.iter().any(|b| title_key(b).as_ref() == Some(&t)))))
@@ -201,6 +241,56 @@ pub fn plan(game: &CatalogGame, roms: &[RomFile], conf: &AndroidConf, inv: Optio
     }
 }
 
+/// Version Android publiée (`apkVerifier` du plugin Kotlin).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApkVersion {
+    /// Version installée (`0.6.6`).
+    pub installee: String,
+    pub code: i64,
+    /// Version publiée.
+    pub version: String,
+    pub version_code: i64,
+    pub notes: String,
+    pub disponible: bool,
+}
+
+/// Écran du haut de la Thor : pousse l'état du jeu choisi ; rend `true` si les deux écrans sont actifs.
+#[tauri::command(rename = "ecranHaut")]
+pub async fn ecran_haut(app: tauri::AppHandle, etat: serde_json::Value) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    return bridge::push_haut(&app, etat);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, etat);
+        Ok(false)
+    }
+}
+
+/// Mise à jour Android : version publiée comparée à la version installée.
+#[tauri::command(rename = "apkVerifier")]
+pub async fn apk_verifier(app: tauri::AppHandle) -> Result<ApkVersion, String> {
+    #[cfg(target_os = "android")]
+    return tauri::async_runtime::spawn_blocking(move || bridge::apk_verifier(&app)).await.map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err("Mise à jour Android sur Android seulement".into())
+    }
+}
+
+/// Mise à jour Android : téléchargement vérifié puis installeur d'Android (événement `ludo-apk`).
+#[tauri::command(rename = "apkInstaller")]
+pub async fn apk_installer(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    return tauri::async_runtime::spawn_blocking(move || bridge::apk_installer(&app)).await.map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err("Mise à jour Android sur Android seulement".into())
+    }
+}
+
 #[cfg(target_os = "android")]
 pub use bridge::*;
 
@@ -257,6 +347,57 @@ mod bridge {
         }
         pick_roms_tree(app)?;
         list_roms(app)
+    }
+
+    #[derive(Serialize)]
+    struct UriArgs<'a> {
+        uri: &'a str,
+    }
+
+    #[derive(Deserialize)]
+    struct Found {
+        uri: Option<String>,
+    }
+
+    /// Intent de l'émulateur ; jeu en dossier (Wii U) : son `code/*.rpx`.
+    pub fn local_intent(app: &tauri::AppHandle, emu: &AndroidEmu, uri: &str) -> Result<StartActivity, String> {
+        if !emu.folder {
+            return Ok(emulator_intent(emu, uri));
+        }
+        let found: Found = bridge(app)?.0.run_mobile_plugin("findRpx", UriArgs { uri }).map_err(|e| e.to_string())?;
+        let rpx = found.uri.ok_or("Fichier .rpx introuvable dans le dossier du jeu (code/)")?;
+        Ok(emulator_intent(emu, &rpx))
+    }
+
+    #[derive(Deserialize)]
+    struct Actif {
+        actif: bool,
+    }
+
+    pub fn push_haut(app: &tauri::AppHandle, etat: serde_json::Value) -> Result<bool, String> {
+        let r: Actif = bridge(app)?.0.run_mobile_plugin("ecranHaut", etat).map_err(|e| e.to_string())?;
+        Ok(r.actif)
+    }
+
+    #[derive(Serialize)]
+    struct MajArgs {
+        url: String,
+    }
+
+    pub fn apk_verifier(app: &tauri::AppHandle) -> Result<ApkVersion, String> {
+        bridge(app)?.0.run_mobile_plugin("apkVerifier", MajArgs { url: conf().maj.url() }).map_err(plugin_error)
+    }
+
+    pub fn apk_installer(app: &tauri::AppHandle) -> Result<(), String> {
+        bridge(app)?.0.run_mobile_plugin::<serde_json::Value>("apkInstaller", MajArgs { url: conf().maj.url() }).map(|_| ()).map_err(plugin_error)
+    }
+
+    /// Message du plugin Kotlin (déjà en français), sans l'enveloppe technique de l'erreur.
+    fn plugin_error(e: tauri::plugin::mobile::PluginInvokeError) -> String {
+        match e {
+            tauri::plugin::mobile::PluginInvokeError::InvokeRejected(r) => r.message.unwrap_or_else(|| "Mise à jour impossible".into()),
+            other => other.to_string(),
+        }
     }
 
     pub fn start(app: &tauri::AppHandle, intent: &StartActivity) -> Result<(), String> {
@@ -346,6 +487,32 @@ mod tests {
         assert_eq!(m["activity"], "com.limelight.ShortcutTrampoline");
         assert_eq!(m["extras"]["AppName"], "Mario Kart 8 Deluxe · Ludothèque");
         assert_eq!(m["boolExtras"]["HDR"], false);
+    }
+
+    #[test]
+    fn dolphin_et_cemu() {
+        let tp = game("gc-zelda-twilight-princess", "gc", "gc/Zelda Twilight Princess (EUR) [GZ2P01].rvz");
+        let ww = game("wiiu-the-legend-of-zelda-the-wind-waker-hd", "wiiu", "wiiu/The Legend of Zelda The Wind Waker HD");
+        let roms = [
+            rom("gc", "Zelda Twilight Princess (EUR) [GZ2P01].rvz"),
+            RomFile { dir: "wiiu".into(), name: "The Legend of Zelda The Wind Waker HD".into(), is_dir: true, uri: "content://x/wiiu/ww".into() },
+            rom("wiiu", "The Legend of Zelda The Wind Waker HD"),
+        ];
+        assert_eq!(find_rom(&tp, &roms).unwrap().dir, "gc");
+        // Wii U : le DOSSIER du jeu, pas un fichier homonyme.
+        let found = find_rom(&ww, &roms).unwrap();
+        assert!(found.is_dir, "{found:?}");
+        let i = emulator_intent(emulator_for("gc").unwrap(), "content://rom");
+        assert_eq!(i.extras.get("AutoStartFile").map(String::as_str), Some("content://rom"));
+        assert_eq!(i.data.as_deref(), Some("content://rom"));
+        assert_eq!(emulator_for("wiiu").unwrap().package, "info.cemu.cemu");
+        assert!(rom_dirs().contains(&"gc".to_string()) && rom_dirs().contains(&"wiiu".to_string()));
+    }
+
+    #[test]
+    fn adresse_de_mise_a_jour() {
+        assert_eq!(AndroidConf::parse("").maj.url(), MAJ_URL);
+        assert_eq!(AndroidConf::parse("[maj]\nandroid = \"http://127.0.0.1:8765/android.json\"\n").maj.url(), "http://127.0.0.1:8765/android.json");
     }
 
     #[test]

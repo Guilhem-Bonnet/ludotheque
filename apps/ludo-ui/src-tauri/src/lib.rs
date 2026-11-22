@@ -1231,7 +1231,7 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     step(Step::Sauvegarde, StepState::Fait, Some("Synchronisée par le PC".into()));
     step(Step::Lancement, StepState::EnCours, None);
     let (intent, via, detail) = match &plan {
-        android::Plan::Local { emu, uri } => (android::emulator_intent(emu, uri), "emulateur", emu.name.to_string()),
+        android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
         android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
     };
     android::start(app, &intent)?;
@@ -1341,7 +1341,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, android::ecran_haut, android::apk_verifier, android::apk_installer])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
