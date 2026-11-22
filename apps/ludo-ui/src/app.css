@@ -75,6 +75,11 @@ button { font: inherit; color: inherit; }
   --t-quick: 120ms;
   --t-std: 240ms;
   --t-slow: 420ms;
+  /* Durées nommées (lot animations, 21/11) ; motion.ts les lit ici (source unique). */
+  --t-move: 260ms;          /* tuile choisie de la rangée, décalage des voisines */
+  --t-rush: 150ms;          /* même mouvement en défilement rapide (data-rush) : fini avant le pas suivant */
+  --t-world: 520ms;         /* fondu enchaîné du fond d'ambiance d'un jeu à l'autre */
+  --t-world-settle: 1600ms; /* le fond se pose à l'arrivée d'une image (une fois) */
 }
 
 /* L'accent du profil se fond d'une couleur à l'autre quand on change de joueur. */

@@ -6,7 +6,7 @@
   import Tile from '../lib/components/Tile.svelte';
   import { api, CANCELLED, isAndroid, isDemo, prepLabel } from '../lib/api';
   import { feedback } from '../lib/feedback';
-  import { reducedMotion } from '../lib/motion';
+  import { reducedMotion, replay } from '../lib/motion';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
   import type { LaunchEvent, LaunchResult, LaunchStep } from '../lib/api';
@@ -123,7 +123,11 @@
       case 'en_jeu':
         s.label = done ? 'Partie terminée' : 'En jeu';
         s.detail = done ? undefined : 'Partie en cours. La sauvegarde partira à la fermeture de l\u2019émulateur.';
-        if (!done) phase = 'playing';
+        // Pendant la partie, l'écran se fige dans un état calme : la tuile se repose (fin du soulèvement
+        // du lancement), plus rien ne tourne ni ne boucle (le jeu a besoin du processeur, et l'écran
+        // peut rester affiché des heures). Le retour du jeu est le prochain événement animé.
+        if (!done) { phase = 'playing'; launching = false; }
+        else replay(art, 'back-from-game', 520);
         break;
       case 'envoi':
         s.label = done ? 'Sauvegarde envoyée' : 'Envoi de la sauvegarde…';
@@ -188,6 +192,8 @@
     }
     steps[5].label = 'Sauvegarde envoyée';
     steps[5].detail = r.detail;
+    // Même image que l'accord doux : la tuile fait un petit « pop » (sauvegarde partie).
+    replay(art, 'pop', 340);
     feedback('saved');
     await wait(1200);
     router.reset({ name: 'accueil' });
@@ -288,6 +294,9 @@
             <span class="line">
               {#if step.state === 'fait'}
                 <span class="check draw" style:--len="16"><Icon name="check-circle" size={26} color="var(--ok)" /></span>
+              {:else if step.state === 'en_cours' && phase === 'playing' && i === index.en_jeu}
+                <!-- En jeu : pastille fixe, sans rotation (état qui peut durer des heures). -->
+                <span class="playing"><Icon name="play" size={18} color="var(--ground)" /></span>
               {:else if step.state === 'en_cours'}
                 <span class="spin"><Icon name="spinner" size={26} color="var(--accent)" /></span>
               {:else}
@@ -318,7 +327,9 @@
       {#if closeNote && busy}<p class="note" role="status">Partie en cours : fermer le jeu d\u2019abord</p>{/if}
     </div>
   </main>
-  <ButtonHints note="Sauvegardes conservées sur le serveur" hints={[{ key: 'B', label: 'Annuler' }]} />
+  <!-- B n'agit que pendant un téléchargement (annuler) ou hors lancement (retour) : pendant la partie et
+       l'envoi, aucune consigne plutôt qu'une consigne fausse. -->
+  <ButtonHints note="Sauvegardes conservées sur le serveur" hints={downloading ? [{ key: 'B', label: 'Annuler' }] : busy ? [] : [{ key: 'B', label: 'Retour' }]} />
 </div>
 
 <style>
@@ -359,5 +370,14 @@
   .acts { display: flex; gap: 12px; margin-left: 42px; }
   .acts .act { margin-left: 0; }
   .spin { animation: spin 900ms linear infinite; }
+  /* En jeu : pastille pleine de l'accent, posée une fois avec un léger rebond, puis immobile. */
+  .playing { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); align-items: center; justify-content: center; padding-left: 2px; box-sizing: border-box; }
+  /* Retour du jeu : la tuile se « réveille » (petit appel vers le haut, puis se pose). */
+  .art:global(.back-from-game) { animation: back-from-game 520ms var(--ease-land); }
+  @keyframes back-from-game { 0% { transform: none; } 35% { transform: translateY(-10px) scale(1.02); } 100% { transform: none; } }
+  @media (prefers-reduced-motion: no-preference) {
+    .playing { animation: check-pop 320ms var(--ease-pop) both; }
+  }
+  @media (prefers-reduced-motion: reduce) { .art:global(.back-from-game), .art:global(.pop) { animation: none; } }
   @keyframes spin { to { transform: rotate(360deg); } }
 </style>

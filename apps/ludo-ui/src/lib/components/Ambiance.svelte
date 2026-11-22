@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fade } from 'svelte/transition';
-  import { reducedMotion } from '../motion';
+  import { reducedMotion, DUR } from '../motion';
+  import { soften, SMALL_BLUR } from '../soften';
   import type { Art } from '../types';
 
   // Fond « ambiance » (direction C, validée le 15/11) : le fond prend la couleur de la jaquette du jeu
@@ -22,9 +23,36 @@
   let failed = $state('');
   const wide = $derived(!!background && failed !== background);
   const photo = $derived(wide ? background : cover && failed !== cover ? cover : undefined);
-  // Fond de petite taille (captures 3DS/DS en 400×240) : un peu plus flouté pour ne pas pixeliser.
-  let small = $state(false);
-  const d = () => (reducedMotion() ? 0 : 520);
+  const d = () => (reducedMotion() ? 0 : DUR.world);
+
+  // Flou à petite taille (soften.ts) : l'image est réduite une fois par image et par taille de fond, le flou
+  // CSS ne porte que sur cette petite surface, un `transform` l'étire. Une repeinture coûte alors autant
+  // qu'une image ordinaire. Redessiné au redimensionnement (ResizeObserver), jamais à intervalle.
+  function paint(el: HTMLCanvasElement, src: string) {
+    const scaler = el.parentElement!;
+    const frame = scaler.parentElement!;
+    const box = frame.closest('.ambiance')!;
+    const img = new Image();
+    img.decoding = 'async';
+    const draw = () => {
+      if (!img.naturalWidth) return;
+      const r = box.getBoundingClientRect();
+      // Fond de petite taille (captures 3DS/DS en 400×240) : un peu plus flouté pour ne pas pixeliser.
+      const small = img.naturalWidth < 900;
+      const [blur, sat, light] = wide ? (small ? [10, 1.15, 0.6] : [4, 1.1, 0.62]) : [18, 1.25, 0.6];
+      const g = soften(img, el, r.width, r.height, blur);
+      if (!g) return;
+      el.style.filter = `blur(${SMALL_BLUR}px) saturate(${sat}) brightness(${light})`;
+      scaler.style.transform = `translate(${g.offset}px, ${g.offset}px) scale(${g.scale})`;
+      frame.dataset.ready = '';
+    };
+    img.onload = draw;
+    img.onerror = () => (failed = src);
+    img.src = src;
+    const ro = new ResizeObserver(draw);
+    ro.observe(box);
+    return { destroy: () => ro.disconnect() };
+  }
 </script>
 
 <div class="ambiance" aria-hidden="true">
@@ -32,36 +60,35 @@
     <div class="layer" in:fade={{ duration: d() }} out:fade={{ duration: d() }}>
       {#if wash}<div class="wash" style:background={wash}></div>{/if}
       {#if photo}
-        <img class="photo" class:wide class:small src={photo} onload={(e) => (small = (e.currentTarget as HTMLImageElement).naturalWidth < 900)} alt="" draggable="false" onerror={() => (failed = photo ?? '')} />
+        <div class="photo"><div class="scaler"><canvas use:paint={photo}></canvas></div></div>
       {/if}
     </div>
   {/key}
-  <div class="veil" class:photo={!!photo} class:dim style:--x="{x}%"></div>
+  <div class="veil" class:on-photo={!!photo} class:dim style:--x="{x}%"></div>
 </div>
 
 <style>
   .ambiance { position: absolute; inset: 0; z-index: -1; background: #0b0f14; pointer-events: none; overflow: hidden; }
   .layer, .wash { position: absolute; inset: 0; }
-  .wash { transition: background 520ms var(--ease-land); }
-  /* Image du jeu : agrandie pour que le flou ne laisse pas de bord clair, saturée pour garder la couleur. */
-  .photo {
-    position: absolute; inset: -8%; width: 116%; height: 116%; object-fit: cover;
-    filter: blur(18px) saturate(1.25) brightness(0.6); transform: scale(1.05);
-  }
-  .photo.wide { inset: -3%; width: 106%; height: 106%; filter: blur(4px) saturate(1.1) brightness(0.62); transform: scale(1.02); }
-  .photo.wide.small { filter: blur(10px) saturate(1.15) brightness(0.6);
-  }
+  .wash { transition: background var(--t-world) var(--ease-land); }
+  /* Image du jeu : petite surface floutée (filtre posé par paint()), étirée par `.scaler` depuis le coin. */
+  .photo { position: absolute; inset: 0; opacity: 0; transition: opacity var(--t-std) ease-out; }
+  .photo:global([data-ready]) { opacity: 1; }
+  .scaler { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  canvas { display: block; }
+  /* Le monde se pose : à l'arrivée d'une image, léger recul de 6 % à 0 en 1,6 s, une seule fois.
+     (Avant : dérive infinie de 24 s, qui obligeait à repeindre le fond flouté à chaque image.) */
   @media (prefers-reduced-motion: no-preference) {
-    .photo { animation: drift 24s ease-in-out infinite alternate; }
-    @keyframes drift { from { transform: scale(1.04) translate(0, 0); } to { transform: scale(1.09) translate(-1%, 0.6%); } }
+    .photo:global([data-ready]) { animation: settle var(--t-world-settle) var(--ease-land) both; }
+    @keyframes settle { from { transform: scale(1.06); } to { transform: none; } }
   }
   /* Voile : un halo lumineux au-dessus de la tuile, le bas assombri pour les raccourcis et les textes. */
-  .veil { position: absolute; inset: 0; transition: background 520ms var(--ease-land); }
-  .veil.photo {
+  .veil { position: absolute; inset: 0; transition: background var(--t-world) var(--ease-land); }
+  .veil.on-photo {
     background:
       radial-gradient(70% 60% at var(--x) 30%, rgba(255, 255, 255, 0.07), transparent 70%),
       linear-gradient(to bottom, rgba(8, 10, 14, 0.25) 0%, rgba(8, 10, 14, 0.35) 45%, rgba(8, 10, 14, 0.8) 100%);
   }
-  .veil.photo.dim { background: linear-gradient(to right, rgba(8, 10, 14, 0.35) 0%, rgba(8, 10, 14, 0.6) 40%, rgba(8, 10, 14, 0.72) 100%); }
-  .veil.dim:not(.photo) { background: rgba(8, 10, 14, 0.35); }
+  .veil.on-photo.dim { background: linear-gradient(to right, rgba(8, 10, 14, 0.35) 0%, rgba(8, 10, 14, 0.6) 40%, rgba(8, 10, 14, 0.72) 100%); }
+  .veil.dim:not(.on-photo) { background: rgba(8, 10, 14, 0.35); }
 </style>
