@@ -8,6 +8,7 @@
 //! lot P1c ; d'ici là, le front utilise sa source de démonstration pour chaque commande absente.
 
 pub mod android;
+pub mod profils;
 pub mod rumble;
 
 use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike};
@@ -70,7 +71,8 @@ async fn device() -> Result<DeviceInfo, String> {
         Ok(DeviceInfo {
             name: device_name(&cfg.appareil),
             kind: device_kind(&cfg.appareil),
-            default_profile: cfg.profil_defaut.clone(),
+            // Dernier profil choisi sur l'appareil, sinon celui de la configuration (Deck : claire, Thor : guilhem).
+            default_profile: profils::remembered(&profils::remembered_path(&Config::default_path())).or_else(|| cfg.profil_defaut.clone()),
             server,
             free_space: cfg
                 .roms
@@ -232,6 +234,68 @@ async fn save_profile(profile: Profile) -> Result<Profile, String> {
         Client::new(&cfg.serveur).put_profile(&profile).map_err(|e| e.to_string())
     })
     .await
+}
+
+/// Retient le profil choisi sur cet appareil : ouvert directement au prochain démarrage.
+#[tauri::command(rename = "rememberProfile")]
+async fn remember_profile(profile: String) -> Result<(), String> {
+    blocking(move || profils::remember(&profils::remembered_path(&Config::default_path()), &profile)).await
+}
+
+/// Entrée de démarrage automatique de la session (Linux seulement).
+#[cfg(target_os = "linux")]
+fn autostart_entry() -> std::path::PathBuf {
+    profils::autostart_path(std::env::var("XDG_CONFIG_HOME").ok().as_deref(), &config::home())
+}
+
+/// Programme à inscrire : l'AppImage (`$APPIMAGE`) ou l'exécutable courant.
+#[cfg(target_os = "linux")]
+fn autostart_program() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(profils::autostart_exec(std::env::var("APPIMAGE").ok().as_deref(), &exe))
+}
+
+/// Lancement de l'app à l'ouverture de la session : état actuel (entrée périmée réécrite).
+#[tauri::command]
+async fn autostart() -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        blocking(|| {
+            let path = autostart_entry();
+            // Entrée active mais visant une AppImage déplacée ou renommée : réécrite vers le programme actuel.
+            if let Some(program) = autostart_program() {
+                if profils::autostart_stale(&path, &program) {
+                    profils::set_autostart(&path, &program, true)?;
+                }
+            }
+            Ok(profils::autostart_enabled(&path))
+        })
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err("Lancement au démarrage indisponible sur ce système".into())
+    }
+}
+
+/// Active ou coupe le lancement à l'ouverture de la session ; renvoie le nouvel état.
+#[tauri::command(rename = "setAutostart")]
+async fn set_autostart(on: bool) -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        blocking(move || {
+            let program = autostart_program().ok_or("Lancement au démarrage impossible : programme introuvable")?;
+            let path = autostart_entry();
+            profils::set_autostart(&path, &program, on)?;
+            Ok(profils::autostart_enabled(&path))
+        })
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = on;
+        Err("Lancement au démarrage indisponible sur ce système".into())
+    }
 }
 
 /// Une version de sauvegarde telle que l'interface l'affiche (`SaveRevision` de `types.ts`).
@@ -1341,7 +1405,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { AvatarKind } from '../types';
+  import type { AvatarArtKind } from '../types';
 
   // Personnages des images de profil (dessins originaux). Le fond est porté par Avatar.svelte.
-  let { kind }: { kind: AvatarKind } = $props();
+  let { kind }: { kind: AvatarArtKind } = $props();
 </script>
 
 <svg viewBox="0 0 100 100" aria-hidden="true">
@@ -50,8 +50,12 @@
 
 <style>
   svg { width: 100%; height: 100%; display: block; }
-  /* Clignement des yeux, rare et rapide : le personnage est « vivant » sans distraire. */
-  .eye { transform-box: fill-box; transform-origin: center; animation: blink 5.5s infinite; }
-  @keyframes blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.1); } }
-  @media (prefers-reduced-motion: reduce) { .eye { animation: none; } }
+  /* Clignement des yeux : UNE fois, quand l'avatar reçoit le focus ou est choisi (classe `wake` posée
+     par Avatar.svelte), jamais en boucle : rien ne bouge hors focus ni fenêtre inactive. */
+  .eye { transform-box: fill-box; transform-origin: center; }
+  @media (prefers-reduced-motion: no-preference) {
+    
+    :global(.avatar.wake) .eye, :global(.avatar.celebrate) .eye { animation: blink 520ms 160ms ease-in-out 1; }
+  }
+  @keyframes blink { 0%, 100% { transform: scaleY(1); } 45%, 55% { transform: scaleY(0.1); } }
 </style>

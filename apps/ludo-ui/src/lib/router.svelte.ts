@@ -46,6 +46,11 @@ class Router {
     this.show(next, 'forward');
   }
 
+  /** Un écran précédent existe (sinon B ne fait rien : la consigne « Retour » n'est pas affichée). */
+  get canBack() {
+    return this.stack.length > 0;
+  }
+
   /** Retour : son « retour » s'il y a un écran précédent, sinon rien (on est déjà à l'accueil). */
   back() {
     const prev = this.stack.pop();

@@ -1,6 +1,7 @@
 // Accès aux données. Dans l'app Tauri, chaque appel passe par une commande Rust (`ludo-client`).
 // Dans un navigateur (développement, démonstration), une source de démonstration répond à la place.
 
+import { setCoverBase } from './avatars';
 import type { Conflict, ConflictSide, DeviceInfo, Emulator, Game, LaunchMode, RemoteDevice, Preparation, Profile, SaveRevision, UpdateItem } from './types';
 
 /** Étapes d'un lancement réel, dans l'ordre (événement `ludo://passage`). */
@@ -63,6 +64,11 @@ export interface LudoApi {
   onCloseRefused(cb: () => void): Promise<() => void>;
   /** Prépare le lancement : renvoie un conflit à trancher, ou la préparation en cours. */
   prepare(profile: string, game: string): Promise<{ conflict: Conflict } | { preparation: Preparation }>;
+  /** Retient le profil choisi sur cet appareil (ouvert directement au prochain démarrage). */
+  rememberProfile(profile: string): Promise<void>;
+  /** Lancement au démarrage de la session (bureau seulement) : état actuel, puis changement. */
+  autostart(): Promise<boolean>;
+  setAutostart(on: boolean): Promise<boolean>;
 }
 
 /** Le serveur prépare le fichier (conversion NSZ → NSP pour Eden) : « Préparation sur le serveur… ». */
@@ -171,12 +177,20 @@ const demoCancelled = new Set<string>();
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Démo seulement : dernier profil retenu dans le navigateur (l'app le retient côté Rust). */
+function demoLast(): string | undefined {
+  try { return localStorage.getItem('ludo.demo.dernierProfil') ?? undefined; } catch { return undefined; }
+}
+let demoAutostart = false;
+
 const demoApi: LudoApi = {
   async device() {
     const params = new URLSearchParams(location.search);
     const shared = params.get('appareil') === 'pc';
+    // Démo : images des jeux servies par `?images=<adresse>` (portraits des profils), sinon disques unis.
+    setCoverBase(params.get('images') ?? undefined);
     return shared
-      ? { name: 'PC', kind: 'tv', server: 'connecte', freeSpace: '1,2 To libres' }
+      ? { name: 'PC', kind: 'tv', server: 'connecte', freeSpace: '1,2 To libres', defaultProfile: demoLast() }
       : { name: 'Steam Deck', kind: 'deck', defaultProfile: 'claire', server: params.get('serveur') === 'hors_ligne' ? 'hors_ligne' : 'connecte', freeSpace: '214 Go libres' };
   },
   async profiles() { return PROFILES; },
@@ -284,6 +298,11 @@ const demoApi: LudoApi = {
   async onCloseRefused() {
     return () => {};
   },
+  async rememberProfile(profile) {
+    try { localStorage.setItem('ludo.demo.dernierProfil', profile); } catch { /* stockage indisponible */ }
+  },
+  async autostart() { return demoAutostart; },
+  async setAutostart(on) { demoAutostart = on; return on; },
   async prepare(profile, gameId) {
     await wait(150);
     const game = GAMES.find((g) => g.id === gameId) ?? GAMES[0];
@@ -332,7 +351,11 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 const tauriApi: LudoApi = {
-  device: () => call('device'),
+  device: async () => {
+    const d = await call<DeviceInfo>('device');
+    setCoverBase(d.serverUrl);
+    return d;
+  },
   profiles: () => call('profiles'),
   recent: (profile) => call('recent', { profile }),
   library: (profile) => call('library', { profile }),
@@ -371,6 +394,9 @@ const tauriApi: LudoApi = {
   },
   // Préparation réelle : construite par play.ts (realPreparation) puis menée par launchGame.
   prepare: () => Promise.reject(new Error('Fonction indisponible dans cette version (prepare)')),
+  rememberProfile: (profile) => call('rememberProfile', { profile }),
+  autostart: () => call('autostart'),
+  setAutostart: (on) => call('setAutostart', { on }),
 };
 
 export const api: LudoApi = inTauri ? tauriApi : demoApi;
