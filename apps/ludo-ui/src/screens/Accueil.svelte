@@ -282,7 +282,8 @@
 
 <div class="screen">
   <Ambiance art={world?.art} cover={world?.cover} background={world?.background} x={lightX} key={world?.id} />
-  <header class="rise" style:--i={0}>
+  <!-- En-tête : une ligne de navigation (gauche / droite restent dedans) ; bas = retour à la tuile choisie. -->
+  <header class="rise" style:--i={0} data-nav-group="entete" data-nav-down=".slot.focused .focusable">
     <button class="who pill focusable" aria-label="Profil de {router.profile!.name}" onclick={() => router.go({ name: 'profil' })} onfocus={() => (profileFocused = true)} onblur={() => (profileFocused = false)}>
       <Avatar profile={router.profile!} size={46} />
       <div class="who-text">
@@ -406,7 +407,8 @@
   .who { display: flex; align-items: center; gap: 14px; }
   .who-text { display: flex; flex-direction: column; gap: 2px; }
   .name { font-size: 17px; font-weight: 600; }
-  .device { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+  /* 13 px minimum (lisible sur le Deck, 1280×800). */
+  .device { font-size: 13px; color: rgba(255, 255, 255, 0.72); }
   .status { display: flex; align-items: center; gap: 14px; font-size: 15px; color: var(--ink); }
 
   .row-wrap { padding: 48px 0 0 48px; }
