@@ -345,7 +345,8 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
                 continue;
             }
             Ok(LeaseOutcome::Granted { .. }) => {}
-            Err(e) => return Err(format!("serveur injoignable : {e}")),
+            // Le texte de ApiError dit déjà la cause (« serveur injoignable : … », « réponse inattendue du serveur (500) … »).
+            Err(e) => return Err(e.to_string()),
         }
         // Entrée du journal avant la synchronisation : rétablie si la sauvegarde ne peut pas être
         // reposée sur l'appareil (sinon l'ancienne version restée là passerait pour une modification).
