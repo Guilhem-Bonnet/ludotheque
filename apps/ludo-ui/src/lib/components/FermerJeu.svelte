@@ -39,6 +39,7 @@
     } catch (e) {
       erreur = e instanceof Error ? e.message : String(e);
       feedback('err');
+      focusFirst();
       return;
     }
     enCours.confirmation = null;

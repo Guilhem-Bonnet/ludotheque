@@ -36,6 +36,15 @@ class MenuJeuService : AccessibilityService() {
     /** Service lié par Android (activé dans les réglages d'accessibilité). */
     @Volatile var actif = false
       private set
+    @Volatile private var instance: MenuJeuService? = null
+
+    /**
+     * Un jeu vient d'être lancé par la Ludothèque (`MenuJeuPlugin.suivre`, AVANT l'intent) : il sera
+     * l'appli au premier plan, même si sa fenêtre est apparue avant que l'état soit connu.
+     */
+    fun jeuLance() {
+      instance?.jeuDevant = true
+    }
     /** Touche qui ouvre le menu : « Mode » de la manette (jamais HOME, BACK ni APP_SWITCH). */
     val TOUCHES = setOf(KeyEvent.KEYCODE_BUTTON_MODE)
     /** Fenêtres qui ne changent pas l'appli au premier plan (volet, clavier, bulles d'AYN). */
@@ -50,16 +59,21 @@ class MenuJeuService : AccessibilityService() {
   override fun onServiceConnected() {
     super.onServiceConnected()
     EnCours.restaurer(this)
+    retenue = -1
+    instance = this
     actif = true
   }
 
   override fun onUnbind(intent: Intent?): Boolean {
     actif = false
+    instance = null
+    retenue = -1
     return super.onUnbind(intent)
   }
 
   override fun onDestroy() {
     actif = false
+    instance = null
     super.onDestroy()
   }
 
@@ -99,20 +113,19 @@ class MenuJeuService : AccessibilityService() {
       return true
     }
     if (ev.action != KeyEvent.ACTION_DOWN || ev.repeatCount > 0) return false
-    val jeu = EnCours.jeu ?: return false
+    if (EnCours.jeu == null) return false
     if (!jeuDevant) return false
     retenue = code
     jeuDevant = false
     EnCours.quitte()
-    ouvrirMenu(jeu)
+    ouvrirMenu()
     return true
   }
 
   /** Ramène la Ludothèque devant (activité singleTask) ; le jeu passe en arrière-plan, en pause. */
-  private fun ouvrirMenu(jeu: EnCours.Jeu) {
+  private fun ouvrirMenu() {
     val intent = Intent(this, MainActivity::class.java)
       .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-      .putExtra("menuJeu", jeu.game)
     startActivity(intent)
   }
 }

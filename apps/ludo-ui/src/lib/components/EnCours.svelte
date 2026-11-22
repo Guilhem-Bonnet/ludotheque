@@ -33,10 +33,11 @@
     if (titre) enCours.titre = titre;
   });
   // Carte retirée avec le focus dedans : aucun `focusout` garanti, la barre de consignes est remise.
+  const ouvert = $derived(!!jeu);
   $effect(() => {
-    if (!jeu) enCours.carteFocalisee = false;
-    return () => (enCours.carteFocalisee = false);
+    if (!ouvert) enCours.carteFocalisee = false;
   });
+  onMount(() => () => (enCours.carteFocalisee = false));
 
   // Retour depuis le jeu, ou accueil ouvert alors qu'un jeu est ouvert : le focus va sur « Reprendre »
   // (premier appui utile = A ou X). Posé APRÈS celui de l'accueil, qui focalise sa tuile quand la
@@ -47,9 +48,11 @@
     aFocaliser = true;
   });
   $effect(() => {
-    if (!aFocaliser || !jeu || games.length === 0) return;
+    if (!aFocaliser || !ouvert || games.length === 0) return;
     aFocaliser = false;
-    void tick().then(() => requestAnimationFrame(() => requestAnimationFrame(() => reprendreEl?.focus({ preventScroll: true }))));
+    // Une boîte ouverte (options, confirmation) garde le focus.
+    const poser = () => { if (!document.querySelector('[data-modal]')) reprendreEl?.focus({ preventScroll: true }); };
+    void tick().then(() => requestAnimationFrame(() => requestAnimationFrame(poser)));
   });
 
   async function reprendre() {
@@ -104,7 +107,8 @@
     </div>
     {#if reglageManquant}
       <p class="note">
-        Bouton Mode en jeu (facultatif) : à activer une fois dans l'accessibilité d'Android.
+        Bouton Mode en jeu (facultatif) : à activer une fois dans l'accessibilité d'Android. Interrupteur
+        grisé : Infos de l'appli, menu ⋮, « Autoriser les paramètres restreints », puis revenir ici.
         <button class="lien focusable" onclick={() => void enCours.reglages()}>Activer</button>
       </p>
     {/if}

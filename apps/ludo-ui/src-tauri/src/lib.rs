@@ -1323,8 +1323,12 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
         android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
         android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
     };
-    android::start(app, &intent)?;
+    // Menu en jeu : le jeu est retenu AVANT l'intent (sa fenêtre peut apparaître aussitôt).
     menu_jeu::lance(app, game, &intent);
+    if let Err(e) = android::start(app, &intent) {
+        menu_jeu::oublier(app);
+        return Err(e);
+    }
     step(Step::Lancement, StepState::Fait, None);
     Ok(UiLaunch::Lance { via, detail })
 }

@@ -8,7 +8,6 @@
 // `fermer` servent (réduire la fenêtre, terminer l'émulateur).
 
 import { isAndroid, isDemo } from './api';
-import { router } from './router.svelte';
 
 export interface JeuEnCours {
   game: string;
@@ -67,13 +66,10 @@ class EnCoursStore {
     if (!isAndroid) return this.etat;
     try {
       this.etat = await invoke<EtatMenu>('jeuEnCours');
-      if (this.etat.jeu && retourDuJeu) {
-        // Retour depuis le jeu (bouton Mode, raccourci AYN, HOME puis Cocoon) : comme le menu d'une console, l'accueil
-        // s'ouvre avec le jeu en tête, quel que soit l'écran quitté au lancement.
-        this.retour++;
-        const ici = router.screen.name;
-        if (router.profile && ici !== 'accueil' && ici !== 'passage' && ici !== 'conflit') router.reset({ name: 'accueil' });
-      }
+      // Retour au premier plan avec un jeu ouvert : l'accueil (où l'app revient toujours après un
+      // lancement, Passage.svelte) remet le focus sur « Reprendre ». Aucun changement d'écran ici : un
+      // retour des réglages d'Android ou un déverrouillage laisse l'écran consulté tel quel.
+      if (this.etat.jeu && retourDuJeu) this.retour++;
     } catch {
       // Pont indisponible (ancienne version du plugin) : pas de menu en jeu, rien d'autre ne change.
     }

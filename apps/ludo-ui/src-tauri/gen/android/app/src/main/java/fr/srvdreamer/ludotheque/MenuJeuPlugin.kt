@@ -3,11 +3,9 @@ package fr.srvdreamer.ludotheque
 import android.app.Activity
 import android.app.ActivityManager
 import android.content.ActivityNotFoundException
-import android.content.ClipData
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
@@ -63,7 +61,10 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun suivre(invoke: Invoke) {
     val args = invoke.parseArgs(SuivreArgs::class.java)
-    EnCours.suivre(activity, EnCours.Jeu(args.game, args.intent.packageName, intentDe(args.intent), System.currentTimeMillis()))
+    val a = args.intent
+    val lancement = EnCours.Lancement(a.packageName, a.activity, a.action, a.data, a.extras, a.boolExtras)
+    EnCours.suivre(activity, EnCours.Jeu(args.game, lancement, System.currentTimeMillis()))
+    MenuJeuService.jeuLance()
     invoke.resolve()
   }
 
@@ -72,7 +73,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   fun reprendre(invoke: Invoke) {
     val j = EnCours.jeu ?: return invoke.reject("Aucun jeu en cours")
     try {
-      activity.startActivity(Intent(j.intent))
+      activity.startActivity(j.lancement.intent())
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
       invoke.reject("Application absente de l'appareil : ${j.paquet}")
@@ -93,12 +94,16 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     val j = EnCours.jeu ?: return invoke.resolve()
     val quitte = EnCours.quitteA
     Thread {
-      val reste = if (quitte == 0L) GARDE_MS else quitte + GARDE_MS - SystemClock.uptimeMillis()
-      if (reste > 0) Thread.sleep(reste)
-      val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-      am.killBackgroundProcesses(j.paquet)
-      EnCours.oublier(activity)
-      invoke.resolve()
+      try {
+        val reste = if (quitte == 0L) GARDE_MS else quitte + GARDE_MS - SystemClock.uptimeMillis()
+        if (reste > 0) Thread.sleep(reste)
+        val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        am.killBackgroundProcesses(j.paquet)
+        EnCours.oublier(activity)
+        invoke.resolve()
+      } catch (e: Exception) {
+        invoke.reject("Fermeture impossible : ${e.message ?: e.javaClass.simpleName}")
+      }
     }.start()
   }
 
@@ -123,21 +128,5 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     } catch (e: ActivityNotFoundException) {
       invoke.reject("Réglages d'accessibilité introuvables")
     }
-  }
-
-  /** Même construction que `LudoPlugin.startActivity` (gardées identiques : la reprise renvoie cet intent). */
-  private fun intentDe(args: StartArgs): Intent {
-    val intent = Intent(args.action ?: Intent.ACTION_VIEW)
-    intent.setClassName(args.packageName, args.activity)
-    args.data?.let {
-      val uri = Uri.parse(it)
-      intent.data = uri
-      intent.clipData = ClipData.newRawUri("rom", uri)
-      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    for ((k, v) in args.extras) intent.putExtra(k, v)
-    for ((k, v) in args.boolExtras) intent.putExtra(k, v)
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    return intent
   }
 }

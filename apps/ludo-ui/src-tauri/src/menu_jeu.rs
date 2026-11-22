@@ -70,12 +70,17 @@ mod pont {
         intent: &'a StartActivity,
     }
 
-    /// Retient le jeu qui vient d'être lancé (après `android::start`). Une erreur ici n'empêche pas
+    /// Retient le jeu qui va être lancé (juste avant `android::start`). Une erreur ici n'empêche pas
     /// la partie : seul le menu en jeu manquera.
     pub fn lance(app: &tauri::AppHandle, game: &str, intent: &StartActivity) {
         if let Err(e) = appel::<serde_json::Value>(app, "suivre", Suivre { game, intent }) {
             eprintln!("ludo-ui : menu en jeu indisponible pour {game} : {e}");
         }
+    }
+
+    /// Lancement refusé par Android : rien n'est ouvert.
+    pub fn oublier(app: &tauri::AppHandle) {
+        let _ = appel::<serde_json::Value>(app, "oublier", ());
     }
 
     pub fn etat(app: &tauri::AppHandle) -> Result<EtatMenu, String> {
@@ -88,7 +93,7 @@ mod pont {
 }
 
 #[cfg(target_os = "android")]
-pub use pont::{lance, plugin};
+pub use pont::{lance, oublier, plugin};
 
 /// État du menu en jeu : jeu ouvert (Android), service du bouton Mode activé.
 #[tauri::command(rename = "jeuEnCours")]

@@ -6,6 +6,7 @@
 
 import { api, isAndroid, isDemo } from './api';
 import { enCours } from './enCours.svelte';
+import { feedback } from './feedback';
 import { reducedMotion } from './motion';
 import { router } from './router.svelte';
 import type { Game, LaunchMode, Preparation } from './types';
@@ -53,10 +54,10 @@ export async function play(game: Game, from?: HTMLElement, mode?: LaunchMode) {
   const ouvert = enCours.jeu;
   if (ouvert && (isAndroid || isDemo)) {
     if (ouvert.game === game.id) {
-      await enCours.reprendre().catch(() => undefined);
+      await enCours.reprendre().catch(() => feedback('err'));
       return;
     }
-    enCours.confirmation = { titreEnsuite: game.title, ensuite: () => void play(game, from, mode) };
+    enCours.confirmation = { titreEnsuite: game.title, ensuite: () => void play(game, from?.isConnected ? from : undefined, mode) };
     return;
   }
   router.heroGame = game.id;
