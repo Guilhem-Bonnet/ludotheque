@@ -1320,7 +1320,7 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     step(Step::Lancement, StepState::EnCours, None);
     let (intent, via, detail) = match &plan {
         android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
-        android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
+        android::Plan::Stream { host, app: name, hdr } => (android::stream_intent(app, host, name, *hdr), "flux", name.clone()),
     };
     android::start(app, &intent)?;
     step(Step::Lancement, StepState::Fait, None);
