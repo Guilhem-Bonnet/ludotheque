@@ -390,10 +390,15 @@ fn sunshine_apps(text: &str) -> SunshineApps {
     for app in v.get("apps").and_then(|a| a.as_array()).into_iter().flatten() {
         let cmd = app.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
         let Some(name) = app.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()) else { continue };
-        let ludo = cmd.contains("ludo run");
+        let ludo = launch::is_ludo_run(&launch::sunshine_argv(cmd));
         // Appli `ludo run` mal citée : Sunshine lui passerait des arguments coupés (sortie immédiate).
+        // Signalée une seule fois par processus et par problème (l'inventaire revient à chaque synchro).
         if let Some(problem) = launch::sunshine_cmd_problem(cmd) {
-            eprintln!("Appli Sunshine « {name} » : {problem}");
+            static SIGNALES: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+            let line = format!("Appli Sunshine « {name} » : {problem}");
+            if SIGNALES.lock().map(|mut s| s.insert(line.clone())).unwrap_or(true) {
+                eprintln!("{line}");
+            }
         }
         // Première appli trouvée pour un jeu, sauf si une appli `ludo run` arrive ensuite.
         fn keep<K: Ord>(map: &mut std::collections::BTreeMap<K, String>, key: K, name: &str, ludo: bool) {

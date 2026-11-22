@@ -712,37 +712,56 @@ mod tests_rom_convertie {
 }
 
 /// Arguments que Sunshine (Linux) passe réellement au programme d'une appli de `apps.json` : sans
-/// shell, la commande est découpée par boost.process v1 (`build_args`) sur les espaces ; seuls les
-/// guillemets DOUBLES groupent des mots (retirés s'ils encadrent le mot). Une apostrophe reste un
-/// caractère ordinaire : `--rom '/a b.nsp'` donne `'/a` et `b.nsp'`.
+/// shell, la commande est découpée par boost.process v1 (`build_args`), reproduit ici à l'identique :
+/// coupure sur l'espace hors guillemets, chaque `"` bascule l'état « entre guillemets » (même un
+/// `\"`), la paire de `"` qui encadre tout le mot est retirée, puis `\"` devient `"`. Une apostrophe
+/// reste un caractère ordinaire : `--rom '/a b.nsp'` donne `'/a` et `b.nsp'`.
 pub fn sunshine_argv(cmd: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut quoted = false;
-    for c in cmd.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            ' ' if !quoted => {
-                if !cur.is_empty() {
-                    out.push(std::mem::take(&mut cur));
-                }
-            }
-            _ => cur.push(c),
-        }
+    fn entry(word: &str) -> String {
+        let inner = if word.len() >= 2 && word.starts_with('"') && word.ends_with('"') { &word[1..word.len() - 1] } else { word };
+        inner.replace("\\\"", "\"")
     }
-    if !cur.is_empty() {
-        out.push(cur);
+    let mut out = Vec::new();
+    let mut quoted = false;
+    let mut start = 0;
+    let mut prev = None;
+    for (i, c) in cmd.char_indices() {
+        if c == '"' {
+            quoted = !quoted;
+        }
+        if !quoted && c == ' ' {
+            if i != 0 && prev != Some(' ') {
+                out.push(entry(&cmd[start..i]));
+            }
+            start = i + 1;
+        }
+        prev = Some(c);
+    }
+    if start < cmd.len() {
+        out.push(entry(&cmd[start..]));
     }
     out
 }
 
-/// Problème d'une commande d'appli Sunshine `ludo run` : un mot qui commence par une apostrophe
-/// (chemin cité « à la shell », que Sunshine coupe aux espaces). `ludo` refuse alors ses arguments
-/// et quitte au démarrage du flux, sans lancer le jeu (18/11 : « App exited » dès la connexion).
+/// Vrai si la commande lance `ludo run` : un mot dont le nom de fichier est exactement `ludo`, suivi
+/// plus loin de la sous-commande `run` (options globales possibles entre les deux, ex. `--config`).
+pub fn is_ludo_run(argv: &[String]) -> bool {
+    argv.iter()
+        .position(|w| Path::new(w).file_name().is_some_and(|n| n == "ludo"))
+        .is_some_and(|i| argv[i + 1..].iter().any(|w| w == "run"))
+}
+
+/// Problème d'une commande d'appli Sunshine `ludo run`, vue comme Sunshine la découpe : mot qui
+/// commence par une apostrophe (chemin cité « à la shell », coupé aux espaces) ou guillemet double
+/// jamais refermé. `ludo` refuserait alors ses arguments et quitterait au démarrage du flux, sans
+/// lancer le jeu (18/11 : « App exited » dès la connexion Moonlight).
 pub fn sunshine_cmd_problem(cmd: &str) -> Option<String> {
     let argv = sunshine_argv(cmd);
-    if !argv.iter().any(|w| w.ends_with("ludo")) || !argv.iter().any(|w| w == "run") {
+    if !is_ludo_run(&argv) {
         return None;
+    }
+    if cmd.matches('"').count() % 2 == 1 {
+        return Some("guillemet double non refermé".to_string());
     }
     argv.iter()
         .find(|w| w.starts_with('\''))
@@ -762,6 +781,18 @@ mod tests_sunshine {
     }
 
     #[test]
+    fn regle_boost_guillemets_au_milieu_espaces_multiples_et_echappement() {
+        // Guillemets au milieu d'un mot : conservés (seule la paire qui encadre le mot est retirée).
+        assert_eq!(sunshine_argv(r#"a --rom="/x y" b"#), ["a", r#"--rom="/x y""#, "b"]);
+        // Espaces multiples : aucun mot vide.
+        assert_eq!(sunshine_argv("a   b "), ["a", "b"]);
+        // `\"` devient `"` après découpage…
+        assert_eq!(sunshine_argv(r#"a \"b\" c"#), ["a", r#""b""#, "c"]);
+        // …mais bascule aussi l'état (bizarrerie de boost, reproduite) : coupure inattendue.
+        assert_eq!(sunshine_argv(r#"a "x \" y" b"#), ["a", r#"x \"#, r#"y" b"#]);
+    }
+
+    #[test]
     fn apostrophes_coupent_le_chemin_et_sont_signalees() {
         // Commande réelle de l'appli « Mario Kart 8 Deluxe · Ludothèque » au 18/11.
         let cmd = "/home/u/.local/bin/ludo run --profil guilhem --jeu switch-0100152000022000 --rom '/mnt/Rom/Mario Kart 8 Deluxe [0100152000022000][v0].nsp' --lanceur \"env LSFG_MULT=2 /bin/ryu-stream\"";
@@ -772,8 +803,22 @@ mod tests_sunshine {
     }
 
     #[test]
+    fn guillemet_non_referme_signale() {
+        assert!(sunshine_cmd_problem(r#"/bin/ludo run --rom "/a b.nsp"#).is_some());
+    }
+
+    #[test]
     fn autre_appli_jamais_signalee() {
         assert_eq!(sunshine_cmd_problem("/bin/ryu-stream '/a b.nsp'"), None);
+        assert_eq!(sunshine_cmd_problem("/usr/bin/studio run '/a b'"), None);
+        assert_eq!(sunshine_cmd_problem("/usr/bin/pseudo run '/a b'"), None);
         assert_eq!(sunshine_cmd_problem(""), None);
+    }
+
+    #[test]
+    fn ludo_run_avec_options_globales() {
+        let argv = sunshine_argv("/bin/ludo --config /c.toml run --jeu x");
+        assert!(is_ludo_run(&argv));
+        assert!(!is_ludo_run(&sunshine_argv("/bin/ludo watch")));
     }
 }
