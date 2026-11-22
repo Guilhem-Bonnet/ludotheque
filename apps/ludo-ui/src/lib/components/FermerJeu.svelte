@@ -10,6 +10,7 @@
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
   import { focusFirst } from '../nav';
+  import { isAndroid } from '../api';
 
   const titre = $derived(enCours.titre);
   const demande = $derived(enCours.confirmation);
@@ -44,7 +45,9 @@
     }
     enCours.confirmation = null;
     feedback('ok');
-    d.ensuite?.();
+    // Android : la page d'Android (« Forcer l'arrêt ») s'ouvre ; le jeu suivant part au retour ici.
+    if (isAndroid && d.ensuite) enCours.apresRetour = d.ensuite;
+    else d.ensuite?.();
   }
 
   async function reprendre() {
@@ -71,6 +74,7 @@
     {#if demande.titreEnsuite}
       <h2 id="fermer-titre">{titre} est en cours</h2>
       <p id="fermer-texte">Fermer ce jeu pour lancer {demande.titreEnsuite} ? La progression non sauvegardée dans le jeu sera perdue.</p>
+      {#if isAndroid}<p class="etape">Android affiche d'abord la page de l'appli : « Forcer l'arrêt », puis retour ici pour lancer.</p>{/if}
       <div class="acts">
         <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}>{enCours.occupe ? 'Fermeture…' : 'Fermer et lancer'}</button>
         <button class="act focusable" disabled={enCours.occupe} onclick={() => void reprendre()}>Reprendre {titre}</button>
@@ -78,6 +82,7 @@
     {:else}
       <h2 id="fermer-titre">Fermer le jeu ?</h2>
       <p id="fermer-texte">{titre}. La progression non sauvegardée dans le jeu sera perdue ; la dernière sauvegarde part ensuite vers le serveur.</p>
+      {#if isAndroid}<p class="etape">Android affiche ensuite la page de l'appli : « Forcer l'arrêt » ferme le jeu.</p>{/if}
       <div class="acts">
         <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}>{enCours.occupe ? 'Fermeture…' : 'Fermer le jeu'}</button>
         <button class="act focusable" disabled={enCours.occupe} onclick={annuler}>Annuler</button>
@@ -106,4 +111,5 @@
   .act:focus-visible, .act:focus { outline: 3px solid #f5f7fa; outline-offset: 3px; }
   .act:disabled { opacity: 0.6; cursor: default; }
   .erreur { color: #ff8a94; font-size: 15px; }
+  .etape { font-size: 15px; color: #c9d0db; }
 </style>

@@ -51,6 +51,8 @@ class EnCoursStore {
   /** Le focus est dans la carte « En cours » (l'accueil adapte sa barre de consignes). */
   carteFocalisee = $state(false);
   private fermetureDemandee = false;
+  /** Android : lancement à faire au retour de la page « Infos de l'appli » (« Fermer et lancer »). */
+  apresRetour: (() => void) | null = null;
   /** Titre du jeu ouvert (fourni par l'accueil, qui connaît la bibliothèque). */
   titre = $state('Le jeu en cours');
 
@@ -107,7 +109,10 @@ class EnCoursStore {
   /** Démarre l'écoute : état relu au démarrage et chaque fois que la Ludothèque redevient visible. */
   ecouter(): () => void {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void this.relire(true);
+      if (document.visibilityState !== 'visible') return;
+      const suite = this.apresRetour;
+      this.apresRetour = null;
+      void this.relire(true).then(() => suite?.());
     };
     document.addEventListener('visibilitychange', onVisible);
     void this.relire();

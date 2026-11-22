@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
@@ -68,12 +69,22 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     invoke.resolve()
   }
 
-  /** Remet le jeu devant : même intent que le lancement, donc la tâche existante revient telle quelle. */
+  /**
+   * Remet le jeu devant comme une tuile de lanceur (Cocoon) : intent de lanceur de l'émulateur avec
+   * RESET_TASK_IF_NEEDED → la tâche existante revient telle quelle, sans nouvel intent.
+   *
+   * Mesuré sur la Thor le 22/11 (12:41) : renvoyer l'intent du LANCEMENT (VIEW + ROM) fait recevoir à
+   * Azahar (EmulationActivity) un nouveau jeu : il nettoie le jeu en cours (« Cleaning up process 11 »)
+   * et reste figé, écrans noirs, 0 % de CPU. L'intent du lancement ne sert plus qu'en repli (émulateur
+   * sans activité de lanceur, ou processus arrêté : le jeu est alors relancé).
+   */
   @Command
   fun reprendre(invoke: Invoke) {
     val j = EnCours.jeu ?: return invoke.reject("Aucun jeu en cours")
+    val lanceur = activity.packageManager.getLaunchIntentForPackage(j.paquet)
+      ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
     try {
-      activity.startActivity(j.lancement.intent())
+      activity.startActivity(lanceur ?: j.lancement.intent())
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
       invoke.reject("Application absente de l'appareil : ${j.paquet}")
@@ -83,11 +94,16 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   /**
-   * Ferme l'émulateur, alors en arrière-plan derrière la Ludothèque : `killBackgroundProcesses`
-   * (permission normale KILL_BACKGROUND_PROCESSES ; Android 13 l'accepte pour un autre paquet, Android
-   * 14 la limitera à l'app elle-même). Comme « Fermer le logiciel » d'une console : ce qui n'a pas été
-   * sauvegardé dans le jeu est perdu, ce qui l'a été est déjà sur le stockage. La fin du processus
-   * (`am_proc_died`) déclenche ensuite la synchro du PC (`ludo-thor-watch`).
+   * Fermer le jeu, après le délai de garde (écriture d'une sauvegarde en cours).
+   *
+   * 1. `killBackgroundProcesses` (permission normale KILL_BACKGROUND_PROCESSES) : marche sur un Android
+   *    13 d'origine pour un émulateur passé en arrière-plan.
+   * 2. Mesuré sur la Thor le 22/11 (12:43:14) : la ROM AYN le refuse pour un autre paquet
+   *    (« ActivityManager: Invalid packageName: org.azahar_emu.azahar », permission pourtant accordée),
+   *    comme le fera Android 14. Android ne dit pas à l'app si l'arrêt a eu lieu : la page « Infos de
+   *    l'appli » de l'émulateur est donc ouverte, où « Forcer l'arrêt » ferme le jeu à coup sûr (une
+   *    confirmation d'Android). Ce qui n'a pas été sauvegardé dans le jeu est perdu, comme « Fermer le
+   *    logiciel » d'une console ; ce qui l'a été est déjà sur le stockage et part avec la synchro du PC.
    */
   @Command
   fun fermer(invoke: Invoke) {
@@ -100,6 +116,15 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
         val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         am.killBackgroundProcesses(j.paquet)
         EnCours.oublier(activity)
+        val infos = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", j.paquet, null))
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.runOnUiThread {
+          try {
+            activity.startActivity(infos)
+          } catch (e: ActivityNotFoundException) {
+            // Réglages sans page d'appli : la carte disparaît quand même, l'émulateur se ferme depuis son menu.
+          }
+        }
         invoke.resolve()
       } catch (e: Exception) {
         invoke.reject("Fermeture impossible : ${e.message ?: e.javaClass.simpleName}")
