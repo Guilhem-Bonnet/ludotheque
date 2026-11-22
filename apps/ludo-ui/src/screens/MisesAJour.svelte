@@ -3,7 +3,7 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import ConsoleChip from '../lib/components/ConsoleChip.svelte';
   import Icon from '../lib/components/Icon.svelte';
-  import { api } from '../lib/api';
+  import { api, isAndroid } from '../lib/api';
   import { router } from '../lib/router.svelte';
   import { feedback } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
@@ -109,7 +109,12 @@
     {#if loadError}
       <StateNotice title="Mises à jour indisponibles" detail={loadError} action="Réessayer" onaction={load} />
     {:else if loaded && items.length === 0 && !appCard}
-      <StateNotice icon="check-circle" title="Tout est à jour" detail="Aucune mise à jour ni DLC à installer pour les jeux de cet appareil." autofocus={false} />
+      {#if isAndroid}
+        <!-- Android : l'app n'installe ni jeu ni DLC (contenu des émulateurs dans leur Android/data) ; tout passe par le PC. -->
+        <StateNotice icon="check-circle" title="Installation depuis le PC" detail="Les mises à jour et DLC des jeux de cet appareil s'installent depuis le PC." autofocus={false} />
+      {:else}
+        <StateNotice icon="check-circle" title="Tout est à jour" detail="Aucune mise à jour ni DLC à installer pour les jeux de cet appareil." autofocus={false} />
+      {/if}
     {/if}
     {#if appCard}
       <!-- Mise à jour de l'app elle-même : bouton, puis barre de progression, puis redémarrage. -->
