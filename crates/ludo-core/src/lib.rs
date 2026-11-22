@@ -5,5 +5,6 @@
 //! - [`fiche`] : les fiches TOML qui décrivent chaque émulateur.
 
 pub mod fiche;
+pub mod rom;
 pub mod snapshot;
 pub mod sync;

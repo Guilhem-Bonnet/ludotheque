@@ -1729,7 +1729,9 @@ mod tests {
         assert_eq!(accepted_formats(&cfg, &catalog_game("switch-mk8", "switch", vec![])), ["nsp", "xci"]);
         // Sans section [jeux] : émulateur par défaut de la console (Ryujinx pour la Switch).
         assert_eq!(accepted_formats(&cfg, &catalog_game("switch-autre", "switch", vec![])), ["nsp", "xci"]);
-        assert!(accepted_formats(&cfg, &catalog_game("3ds-x", "3ds", vec![])).is_empty());
+        // 3DS : Azahar par défaut depuis le 21/11 (fichiers .cxi du serveur acceptés tels quels).
+        assert_eq!(accepted_formats(&cfg, &catalog_game("3ds-x", "3ds", vec![])), ["cxi", "3ds", "cci", "zcci", "zcxi"]);
+        assert!(accepted_formats(&cfg, &catalog_game("ps1-x", "ps1", vec![])).is_empty(), "console sans émulateur");
     }
 
     #[test]

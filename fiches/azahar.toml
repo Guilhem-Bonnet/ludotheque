@@ -1,0 +1,30 @@
+# Azahar — émulateur 3DS (successeur de Citra). Relevé le 21/11/2026 sur la Thor (adb, lecture seule) :
+# paquet org.azahar_emu.azahar, données dans /sdcard/Documents/Azahar (pas dans Android/data), 4 jeux
+# sauvegardés sous sdmc/Nintendo 3DS/<id0>/<id1>/title/00040000/<bas>/data/00000001/ (+ .metadata),
+# id0 et id1 à zéro. Le dossier <bas> correspond à l'identifiant lu dans l'en-tête de la ROM
+# (Majora's Mask 3D : 0004000000125600 → title/00040000/00125600).
+# PC : Azahar n'est pas installé sur le PC le 21/11 ; chemins Flatpak et natif NON VÉRIFIÉS.
+id        = "azahar"
+consoles  = ["3ds"]
+formats   = ["cxi", "3ds", "cci", "zcci", "zcxi"]
+lancement = "{bin} {rom}"
+# Pas de profils : synchronisé seulement sur un appareil personnel (profil_defaut) ou à profil unique.
+profils   = "aucun"
+sauvegardes = "{data}/sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/{title_id_haut}/{title_id_bas}/data"
+exclusions  = ["*.tmp"]
+
+[appareil.thor]
+bin  = "org.azahar_emu.azahar"
+data = "/sdcard/Documents/Azahar"
+
+[[detection]]
+flatpak = "org.azahar_emu.Azahar"
+data    = ["~/.var/app/org.azahar_emu.Azahar/data/azahar-emu"]
+
+[[detection]]
+appimage = "azahar*.AppImage"
+data     = ["~/.local/share/azahar-emu"]
+
+[[detection]]
+commande = "azahar"
+data     = ["~/.local/share/azahar-emu"]

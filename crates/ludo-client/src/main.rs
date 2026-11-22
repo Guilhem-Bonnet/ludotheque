@@ -226,6 +226,40 @@ fn run(ctx: &mut Ctx, jeu: &Jeu, rom: &std::path::Path, jouer_ici: bool, via: Op
 }
 
 /// Synchronisation d'un appareil Android par adb, jeu par jeu (voir `ludo_client::adb`).
+/// Sous-dossiers de l'arbre des ROM d'un appareil adb (organisation de la Thor, relevée le 21/11).
+const ROM_DIRS: &[&str] = &["switch", "switch2", "n3ds", "3ds", "nds", "ds", "gc", "wiiu"];
+
+/// Sous-dossiers de l'arbre des ROM où chercher les jeux d'une console.
+fn rom_dirs_of(console: &str) -> &'static [&'static str] {
+    match console {
+        "3ds" => &["n3ds", "3ds"],
+        "ds" => &["nds", "ds"],
+        "switch" => &["switch"],
+        "switch2" => &["switch2"],
+        "gc" => &["gc"],
+        "wiiu" => &["wiiu"],
+        _ => &[],
+    }
+}
+
+/// ROM de l'appareil pour un jeu du catalogue, parmi les chemins `<roms>/<sous-dossier>/<nom>` :
+/// même clé de nom qu'un de ses fichiers de base, sinon clé souple (nom renuméroté, ponctuation)
+/// limitée au sous-dossier de la console et à la même extension (un `.sav` ou un `.png` voisin, ou
+/// le jeu homonyme d'une autre console, ne passe jamais pour la ROM).
+fn rom_for<'a>(g: &ludo_proto::CatalogGame, rom_paths: &'a [String]) -> Option<&'a String> {
+    use ludo_client::local::{loose_key, match_key};
+    let dirs = rom_dirs_of(&g.console);
+    let in_console = |p: &&String| p.rsplit('/').nth(1).is_some_and(|d| dirs.contains(&d));
+    let base: Vec<&ludo_proto::GameFile> = g.files.iter().filter(|f| f.role == ludo_proto::FileRole::Base).collect();
+    let keys: Vec<(String, String)> = base.iter().map(|f| match_key(&f.path)).collect();
+    let loose: Vec<(String, String)> = base.iter().map(|f| (loose_key(&f.path), match_key(&f.path).1)).collect();
+    rom_paths
+        .iter()
+        .filter(in_console)
+        .find(|p| keys.contains(&match_key(p)))
+        .or_else(|| rom_paths.iter().filter(in_console).find(|p| loose.contains(&(loose_key(p), match_key(p).1))))
+}
+
 fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: Option<Choix>) -> Result<ExitCode, String> {
     use ludo_client::adb::{self, Adb};
     let conf = ctx.cfg.adb.as_ref().ok_or("section [adb] absente de la configuration")?;
@@ -235,30 +269,29 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
     };
     let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
     let games = ctx.client.games().map_err(|e| e.to_string())?;
-    // ROM présentes sur l'appareil (par nom, formats équivalents) : jeux à suivre même sans sauvegarde.
-    let rom_names: Vec<String> = conf
+    // ROM présentes sur l'appareil (chemins complets ; par nom, formats équivalents) : jeux à suivre
+    // même sans sauvegarde.
+    let rom_paths: Vec<String> = conf
         .roms
         .as_deref()
-        .map(|r| ["switch", "switch2", "n3ds", "3ds", "nds", "ds"].iter().flat_map(|c| dev.list(&format!("{r}/{c}"))).collect())
+        .map(|r| ROM_DIRS.iter().flat_map(|c| dev.list(&format!("{r}/{c}")).into_iter().map(move |n| format!("{r}/{c}/{n}"))).collect())
         .unwrap_or_default();
+    let rom_names: Vec<String> = rom_paths.iter().map(|p| p.rsplit('/').next().unwrap_or(p).to_string()).collect();
     let rom_titles: std::collections::BTreeSet<(String, String)> = rom_names.iter().filter_map(|n| ludo_client::local::title_key(n)).collect();
     // Présence d'un fichier du catalogue parmi les ROM de l'appareil : par nom, sinon par identité Switch.
     let rom_has = |path: &str, names: &std::collections::BTreeSet<(String, String)>| {
         names.contains(&ludo_client::local::match_key(path)) || ludo_client::local::title_key(path).is_some_and(|t| rom_titles.contains(&t))
     };
-    let roms: std::collections::BTreeSet<(String, String)> = conf
-        .roms
-        .as_deref()
-        .map(|r| ["switch", "switch2", "n3ds", "3ds", "nds", "ds"].iter().flat_map(|c| dev.list(&format!("{r}/{c}"))).map(|n| ludo_client::local::match_key(&n)).collect())
-        .unwrap_or_default();
+    let roms: std::collections::BTreeSet<(String, String)> = rom_names.iter().map(|n| ludo_client::local::match_key(n)).collect();
+    let rom_of = |g: &ludo_proto::CatalogGame| rom_for(g, &rom_paths);
     // Inventaire de l'appareil (envoyé au serveur à la fin) : ROM présentes, jeux jouables en flux
     // depuis ce PC (applis Sunshine), sauvegardes trouvées sur l'appareil.
     let streamable = sunshine_roms();
     let mut inventory: std::collections::BTreeMap<String, ludo_proto::DeviceGame> = games
         .iter()
         .map(|g| {
-            let installed = g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms));
-            let stream_app = streamable.app_for(g).cloned();
+            let installed = g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms)) || rom_of(g).is_some();
+            let stream_app = streamable.app_for(g, &games).cloned();
             (g.id.clone(), ludo_proto::DeviceGame { game: g.id.clone(), installed, stream: stream_app.is_some(), save: false, stream_app })
         })
         .collect();
@@ -267,21 +300,33 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
     let stamp = chrono_stamp();
     let mut code = ExitCode::SUCCESS;
     for g in games.iter().filter(|g| only.as_deref().is_none_or(|j| j == g.id)) {
-        let Some(gc) = ctx.cfg.game_conf(&g.id, &profile, Some(g)) else { continue };
+        // 3DS, Wii U, GameCube, DS : pas d'identifiant dans le catalogue, il est lu dans l'en-tête de
+        // la ROM présente sur l'appareil (lecture de quelques centaines d'octets, rien n'est écrit).
+        let rom = rom_of(g);
+        // Lecture seulement si rien d'autre ne donne l'identifiant et si la console a un émulateur.
+        let catalog_tid = g.title_id.as_deref().is_some_and(|t| t.len() == 16 && u64::from_str_radix(t, 16).is_ok());
+        let needs_rom_tid = !catalog_tid && !ctx.cfg.jeux.contains_key(&g.id) && ctx.cfg.default_emulator(&g.console).is_some();
+        let rom_tid = if needs_rom_tid { rom.and_then(|r| dev.rom_title_id(r)) } else { None };
+        let Some(gc) = ctx.cfg.game_conf_rom(&g.id, &profile, Some(g), rom_tid) else { continue };
         let Some(package) = adb::package_of(&ctx.cfg, &gc.emulateur) else { continue };
         let mirror = tempfile::tempdir().map_err(|e| e.to_string())?;
-        let (prepared, pairs) = match adb::prepare_mirrored(&ctx.cfg, &gc, &profile, mirror.path()) {
+        let (prepared, pairs) = match adb::prepare_mirrored_rom(&ctx.cfg, &gc, &profile, mirror.path(), rom.map(std::path::Path::new)) {
             Ok(p) => p,
             Err(e) => {
                 println!("{}\t{e}", g.id);
                 continue;
             }
         };
-        let present_remote: Vec<bool> = pairs.iter().map(|(_, r)| dev.is_dir(r)).collect();
+        // Dossier partagé par plusieurs jeux (carte GCI, .sav de melonDS) : présent pour CE jeu
+        // seulement si l'un de ses fichiers y est.
+        let present_remote: Vec<bool> = pairs
+            .iter()
+            .map(|(_, r)| dev.is_dir(r) && (prepared.keep.is_empty() || dev.list(r).iter().any(|n| !ludo_core::snapshot::excluded(n, &prepared.keep))))
+            .collect();
         if let Some(e) = inventory.get_mut(&g.id) {
             e.save = present_remote.iter().any(|p| *p);
         }
-        let has_rom = g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms));
+        let has_rom = rom.is_some() || g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms));
         let key = SaveKey { profile: profile.clone(), game: g.id.clone() };
         let on_server = ctx.client.head(&key).ok().flatten().is_some();
         // À suivre : sauvegarde déjà sur l'appareil, ROM présente, ou jeu demandé explicitement.
@@ -300,7 +345,8 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
                 continue;
             }
             Ok(LeaseOutcome::Granted { .. }) => {}
-            Err(e) => return Err(format!("serveur injoignable : {e}")),
+            // Le texte de ApiError dit déjà la cause (« serveur injoignable : … », « réponse inattendue du serveur (500) … »).
+            Err(e) => return Err(e.to_string()),
         }
         // Entrée du journal avant la synchronisation : rétablie si la sauvegarde ne peut pas être
         // reposée sur l'appareil (sinon l'ancienne version restée là passerait pour une modification).
@@ -372,12 +418,56 @@ struct SunshineApps {
     by_rom: std::collections::BTreeMap<(String, String), String>,
     /// Identifiant Ludothèque (`ludo run … --jeu <id>`) → appli.
     by_game: std::collections::BTreeMap<String, String>,
+    /// Toutes les applis par nom (dernier recours : appli lancée par un script sans chemin de ROM,
+    /// comme `triforce-stream` pour Ocarina of Time).
+    names: Vec<String>,
+}
+
+/// Mots significatifs d'un nom : minuscules sans accents, ponctuation retirée, petits mots et
+/// étiquette de console entre parenthèses ignorés. Renvoie aussi la console de l'étiquette.
+fn name_words(name: &str) -> (std::collections::BTreeSet<String>, Option<&'static str>) {
+    const STOP: &[&str] = &["the", "of", "a", "de", "du", "des", "la", "le", "les", "l", "et", "and", "edition"];
+    let lower = name.to_lowercase();
+    let console = if lower.contains("(switch 2)") || lower.contains("(switch2)") { Some("switch2") } else { None };
+    let mut folded = String::new();
+    let mut depth = 0;
+    for c in lower.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = (depth - 1).max(0),
+            _ if depth > 0 => {}
+            'à' | 'â' | 'ä' => folded.push('a'),
+            'é' | 'è' | 'ê' | 'ë' => folded.push('e'),
+            'î' | 'ï' => folded.push('i'),
+            'ô' | 'ö' => folded.push('o'),
+            'ù' | 'û' | 'ü' => folded.push('u'),
+            'ç' => folded.push('c'),
+            c if c.is_alphanumeric() => folded.push(c),
+            _ => folded.push(' '),
+        }
+    }
+    (folded.split_whitespace().filter(|w| !STOP.contains(w)).map(str::to_string).collect(), console)
 }
 
 impl SunshineApps {
-    /// Appli qui lance ce jeu : par identifiant d'abord, sinon par un fichier du catalogue.
-    fn app_for(&self, game: &ludo_proto::CatalogGame) -> Option<&String> {
-        self.by_game.get(&game.id).or_else(|| game.files.iter().find_map(|f| self.by_rom.get(&ludo_client::local::match_key(&f.path))))
+    /// Appli qui lance ce jeu : par identifiant d'abord, sinon par un fichier du catalogue, sinon par
+    /// le nom (tous les mots significatifs de l'appli dans le titre du jeu, au moins deux, console de
+    /// l'étiquette « (Switch 2) » respectée, et aucun autre jeu du catalogue qui corresponde aussi).
+    fn app_for<'a>(&'a self, game: &ludo_proto::CatalogGame, catalog: &[ludo_proto::CatalogGame]) -> Option<&'a String> {
+        self.by_game
+            .get(&game.id)
+            .or_else(|| game.files.iter().find_map(|f| self.by_rom.get(&ludo_client::local::match_key(&f.path))))
+            .or_else(|| {
+                // Une appli déjà reliée à un jeu (identifiant, chemin de ROM) n'est jamais réattribuée.
+                let bound = |n: &String| self.by_game.values().chain(self.by_rom.values()).any(|b| b == n);
+                self.names.iter().find(|n| !bound(n) && Self::name_matches(n, game) && catalog.iter().filter(|g| Self::name_matches(n, g)).count() == 1)
+            })
+    }
+
+    fn name_matches(app: &str, game: &ludo_proto::CatalogGame) -> bool {
+        let (words, console) = name_words(app);
+        let (title, _) = name_words(&game.title);
+        words.len() >= 2 && console.is_none_or(|c| c == game.console) && words.is_subset(&title)
     }
 }
 
@@ -439,6 +529,7 @@ fn sunshine_apps(text: &str) -> SunshineApps {
                 parts.next();
             }
         }
+        out.names.push(name.to_string());
     }
     out
 }
@@ -530,6 +621,9 @@ fn watch_dirs(ctx: &Ctx, dev: &ludo_client::adb::Adb) -> (Vec<String>, Vec<Strin
     use ludo_client::adb;
     let mut emulators: Vec<String> = ctx.cfg.consoles.values().cloned().collect();
     emulators.extend(ctx.cfg.jeux.values().map(|g| g.emulateur.clone()));
+    // Émulateurs par défaut des consoles (Azahar, melonDS, Dolphin, Cemu…) : leur fermeture sur
+    // l'appareil déclenche aussi la synchronisation (un paquet absent de la fiche est ignoré).
+    emulators.extend(config::DEFAULT_EMULATORS.iter().filter(|(c, _)| !ctx.cfg.consoles.contains_key(*c)).map(|(_, e)| e.to_string()));
     emulators.sort();
     emulators.dedup();
     let mut roots = Vec::new();
@@ -856,6 +950,23 @@ mod tests_sunshine {
     use super::*;
 
     #[test]
+    fn rom_de_l_appareil_par_console_et_extension() {
+        let g: ludo_proto::CatalogGame = serde_json::from_value(serde_json::json!({
+            "id": "3ds-x", "console": "3ds", "title": "X", "short": "X",
+            "art": { "motif": "x", "from": "#000", "to": "#000", "ink": "#fff" }, "catalogued": true,
+            "files": [{ "id": 1, "role": "base", "path": "3ds/3DS0450 - Pokemon X (Europe)(En,Fr).cxi", "format": "cxi", "size": 1, "mtime": 0 }]
+        }))
+        .unwrap();
+        let r = "/sdcard/Documents/Roms";
+        let paths = |names: &[&str]| names.iter().map(|n| format!("{r}/{n}")).collect::<Vec<_>>();
+        // Nom renuméroté et ponctuation différente : retrouvée par la clé souple.
+        let p = paths(&["n3ds/Pokemon X (Europe) (En,Fr).cxi"]);
+        assert_eq!(rom_for(&g, &p), Some(&p[0]));
+        // .sav voisin, image, ou jeu homonyme d'une autre console : jamais pris pour la ROM.
+        assert_eq!(rom_for(&g, &paths(&["n3ds/Pokemon X (Europe) (En,Fr).sav", "nds/Pokemon X (Europe) (En,Fr).cxi"])), None);
+    }
+
+    #[test]
     fn appli_sunshine_par_jeu_ludo_run_prioritaire() {
         let json = r#"{"apps":[
             {"name":"Bureau","cmd":""},
@@ -870,6 +981,47 @@ mod tests_sunshine {
         let pokopia = ludo_client::local::match_key("Pokemon Pokopia [0400A3A01EE4C000]");
         assert_eq!(apps.by_rom.get(&pokopia).map(String::as_str), Some("Pokopia"));
         assert_eq!(sunshine_apps("pas du json"), SunshineApps::default());
+    }
+
+    fn game(id: &str, console: &str, title: &str) -> ludo_proto::CatalogGame {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "console": console, "title": title, "short": title,
+            "art": { "motif": "x", "from": "#000", "to": "#000", "ink": "#fff" },
+            "catalogued": true, "files": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn appli_sans_chemin_reconnue_par_son_nom() {
+        // Applis du PC le 21/11 : lancées par un script, aucun chemin de ROM dans la commande.
+        let apps = sunshine_apps(r#"{"apps":[
+            {"name":"Zelda Ocarina of Time (Switch 2)","cmd":"/home/g/.local/bin/triforce-stream"},
+            {"name":"Zelda Tears of the Kingdom","cmd":"/home/g/.local/bin/totk-stream"},
+            {"name":"Pokemon Epee","cmd":"/bin/ryu-stream"},
+            {"name":"Steam Big Picture","cmd":"/bin/steam"}
+        ]}"#);
+        let catalog = vec![
+            game("switch2-the-legend-of-zelda-ocarina-of-time", "switch2", "The Legend of Zelda : Ocarina of Time"),
+            game("switch-0100f2c0115b6000", "switch", "The Legend of Zelda : Tears of the Kingdom"),
+            game("switch-0100abf008968000", "switch", "Pokémon Épée"),
+            game("switch-01007ef00011e000", "switch", "The Legend of Zelda : Breath of the Wild"),
+        ];
+        let app = |i: usize| apps.app_for(&catalog[i], &catalog).map(String::as_str);
+        assert_eq!(app(0), Some("Zelda Ocarina of Time (Switch 2)"));
+        assert_eq!(app(1), Some("Zelda Tears of the Kingdom"));
+        assert_eq!(app(2), Some("Pokemon Epee"));
+        assert_eq!(app(3), None, "aucune appli pour Breath of the Wild");
+        // Étiquette de console respectée : pas d'OoT Switch 2 pour une version Switch du même nom.
+        let switch1 = vec![game("switch-oot", "switch", "The Legend of Zelda : Ocarina of Time")];
+        assert_eq!(apps.app_for(&switch1[0], &switch1), None);
+        // Appli déjà reliée par un chemin de ROM à un jeu : jamais attribuée à un autre par son nom.
+        let apps3 = sunshine_apps(r#"{"apps":[{"name":"Zelda Tears Kingdom","cmd":"/bin/x \"/r/Autre jeu.nsp\""}]}"#);
+        assert_eq!(apps3.app_for(&catalog[1], &catalog), None);
+        // Nom ambigu (deux jeux correspondent) : rien plutôt qu'un mauvais jeu.
+        let apps2 = sunshine_apps(r#"{"apps":[{"name":"Pokemon Pokopia","cmd":"/bin/x"},{"name":"Zelda Legend","cmd":"/bin/y"}]}"#);
+        let two = vec![game("a", "switch", "The Legend of Zelda : Skyward Sword HD"), game("b", "switch", "The Legend of Zelda : Breath of the Wild")];
+        assert_eq!(apps2.app_for(&two[0], &two), None);
     }
 }
 
