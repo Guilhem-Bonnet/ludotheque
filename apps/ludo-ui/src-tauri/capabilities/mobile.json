@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "mobile",
-  "description": "Android : permissions de base (pas de mise à jour intégrée, l'APK est installé par le PC)",
+  "description": "Android : permissions de base (mise à jour de l'APK par les commandes apkVerifier / apkInstaller de l'app)",
   "windows": [
     "main"
   ],

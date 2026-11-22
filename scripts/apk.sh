@@ -44,9 +44,11 @@ for v in JAVA_HOME ANDROID_HOME NDK_HOME; do
   [ -d "${!v}" ] || { echo "$v introuvable (${!v:-vide})" >&2; exit 1; }
 done
 
-# Dossiers de construction Gradle : liens vers ~/.cache (ignorés par git).
+# Dossiers de construction Gradle : liens vers ~/.cache (ignorés par git), UN cache par checkout : le
+# cache de configuration de Gradle retient le chemin absolu du projet (un cache partagé entre deux
+# worktrees relance la construction dans l'autre worktree, puis échoue).
 gen="$root/apps/ludo-ui/src-tauri/gen/android"
-cache="$HOME/.cache/gradle-build/ludotheque"
+cache="$HOME/.cache/gradle-build/ludotheque-$(basename "$root")"
 for d in app/build buildSrc/build build .gradle; do
   if [ ! -e "$gen/$d" ]; then
     mkdir -p "$cache/$d" "$(dirname "$gen/$d")"

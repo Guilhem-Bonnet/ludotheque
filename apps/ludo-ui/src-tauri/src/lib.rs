@@ -1319,7 +1319,7 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     step(Step::Sauvegarde, StepState::Fait, Some("Synchronisée par le PC".into()));
     step(Step::Lancement, StepState::EnCours, None);
     let (intent, via, detail) = match &plan {
-        android::Plan::Local { emu, uri } => (android::emulator_intent(emu, uri), "emulateur", emu.name.to_string()),
+        android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
         android::Plan::Stream { host, app: name, hdr } => (android::moonlight_intent(host, name, *hdr), "flux", name.clone()),
     };
     android::start(app, &intent)?;
@@ -1444,7 +1444,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {
@@ -1489,7 +1489,7 @@ mod tests {
             cover: None, background: None, emulator: "Ryujinx".into(), install: "non_installe", sync: "a_recuperer", playtime: None, last: None,
             size: None, sync_error: None, content: Vec::new(), stream: false,
         };
-        let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "gc")];
+        let mut lib = vec![mk("a", "switch"), mk("b", "switch"), mk("c", "n64")];
         let inv = vec![
             ludo_proto::DeviceGame { game: "a".into(), installed: true, stream: false, save: true, stream_app: None },
             ludo_proto::DeviceGame { game: "b".into(), installed: false, stream: true, save: false, stream_app: Some("B".into()) },
