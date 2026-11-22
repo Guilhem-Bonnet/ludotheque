@@ -32,7 +32,7 @@ pub enum InstallError {
     NoSpace { needed: u64, free: u64 },
     #[error("taille inattendue après téléchargement : {} reçus, {} attendus (le catalogue du serveur a peut-être changé)", human(*got), human(*expected))]
     SizeMismatch { expected: u64, got: u64 },
-    #[error("téléchargement interrompu ({0}) ; il reprendra là où il s'est arrêté")]
+    #[error("téléchargement interrompu ({0}) : reprise au même point à la prochaine tentative")]
     Interrupted(String),
     /// Conversion côté serveur (NSZ → NSP) refusée ou échouée ; le message vient du serveur.
     #[error("{0}")]
@@ -46,7 +46,26 @@ pub enum InstallError {
 }
 
 fn io(ctx: &str, e: std::io::Error) -> InstallError {
-    InstallError::Io(format!("{ctx} : {e}"))
+    InstallError::Io(format!("{ctx} : {}", io_reason(&e)))
+}
+
+/// Raison lisible d'une erreur d'entrée-sortie (jamais le texte anglais du système).
+pub fn io_reason(e: &std::io::Error) -> &'static str {
+    use std::io::ErrorKind as K;
+    match e.kind() {
+        K::NotFound => "introuvable",
+        K::PermissionDenied => "accès refusé",
+        K::AlreadyExists => "existe déjà",
+        K::StorageFull => "disque plein",
+        K::ReadOnlyFilesystem => "disque en lecture seule",
+        K::IsADirectory => "dossier à la place d'un fichier",
+        K::NotADirectory => "fichier à la place d'un dossier",
+        K::DirectoryNotEmpty => "dossier non vide",
+        K::InvalidFilename => "nom de fichier refusé",
+        K::UnexpectedEof => "fichier tronqué",
+        K::Interrupted | K::TimedOut => "opération interrompue",
+        _ => "erreur d'entrée-sortie",
+    }
 }
 
 /// Taille lisible (« 6,8 Go »).
@@ -442,7 +461,7 @@ impl<'a> Installer<'a> {
                 last = Some(sig);
                 since = Instant::now();
             } else if since.elapsed() >= self.prepare_stall {
-                return Err(InstallError::Interrupted(format!("la préparation sur le serveur n'avance plus depuis {:.0?} ; elle continue, une nouvelle tentative la retrouvera", self.prepare_stall)));
+                return Err(InstallError::Interrupted(format!("préparation sur le serveur à l'arrêt depuis {:.0?} ; toujours en cours côté serveur, reprise à la prochaine tentative", self.prepare_stall)));
             }
             // Attente demandée par le serveur (Retry-After), interrompue aussitôt par une annulation.
             if self.cancel.wait(wait) {

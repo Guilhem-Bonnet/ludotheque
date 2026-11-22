@@ -366,6 +366,9 @@ async fn restore(profile: String, game: String, rev: u64) -> Result<(), String> 
             Some(g) => Some(config::prepare(&cfg, &g.emulateur, &profile, &g.title_id).map_err(|e| e.to_string())?),
             None => None,
         };
+        let key = SaveKey { profile, game };
+        // Verrou de partie (réseau) pris AVANT le verrou du journal, tenu seulement pendant la restauration.
+        let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
         let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
         let mut engine = Engine {
@@ -375,8 +378,6 @@ async fn restore(profile: String, game: String, rev: u64) -> Result<(), String> 
             emulator: conf.map(|g| g.emulateur.clone()).unwrap_or_default(),
             playtime_s: 0,
         };
-        let key = SaveKey { profile, game };
-        let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
         engine.restore(&key, prepared.as_ref().map(|p| p.layout.as_ref()), rev).map_err(|e| e.to_string())?;
         Ok(())
     })
@@ -422,16 +423,25 @@ fn games_to_sync(cfg: &Config, client: &Client, journal: &Journal, profile: &str
 /// Synchronise chaque jeu configuré pour ce profil.
 fn sync_profile(cfg: &Config, profile: &str) -> Result<Vec<GameSync>, String> {
     let client = Client::new(&cfg.serveur);
-    let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
+    // Le verrou du journal n'est tenu que le temps de le lire, puis le temps de chaque jeu : jamais
+    // pendant le catalogue, les verrous de partie ou la tête du serveur (restauration et lancement
+    // restent possibles entre deux jeux).
+    let played = {
+        let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        Journal::open(&config::journal_path()).map_err(|e| e.to_string())?
+    };
+    let games = games_to_sync(cfg, &client, &played, profile);
+    drop(played);
     let mut out = Vec::new();
-    for (id, g) in &games_to_sync(cfg, &client, &journal, profile) {
+    for (id, g) in &games {
         let key = SaveKey { profile: profile.into(), game: id.clone() };
         let result = (|| {
             let prepared = config::prepare(cfg, &g.emulateur, profile, &g.title_id).map_err(|e| e.to_string())?;
             let _lease = UiLease::take(&client, &key, &cfg.appareil)?;
             // Aucune partie jouée ici : le temps de jeu cumulé reste celui du serveur.
             let playtime_s = client.head(&key).ok().flatten().map_or(0, |h| h.playtime_s);
+            let _guard = JOURNAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut journal = Journal::open(&config::journal_path()).map_err(|e| e.to_string())?;
             let mut engine = Engine {
                 client: &client,
                 journal: &mut journal,
