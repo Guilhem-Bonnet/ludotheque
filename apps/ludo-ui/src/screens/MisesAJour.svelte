@@ -187,12 +187,15 @@
   .act:focus { background: var(--accent); color: var(--ground); }
   .item { transition: background-color 600ms ease-out; }
   .item.success { animation: success-flash 900ms ease-out; }
-  @keyframes success-flash { 0% { background: color-mix(in srgb, var(--ok) 16%, var(--surface)); } 100% { background: var(--surface); } }
+  /* Pas de color-mix() : la WebView de la Thor (Chromium 109) l'ignore (Chrome 111+). Voile vert par ombre intérieure,
+     posé sur le fond quel qu'il soit (--ok = #5fd39a). */
+  @keyframes success-flash { 0% { box-shadow: inset 0 0 0 999px rgba(95, 211, 154, 0.16); } 100% { box-shadow: inset 0 0 0 999px rgba(95, 211, 154, 0); } }
   .done { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); animation: pop 320ms var(--ease-pop); }
   .mini { width: 120px; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; display: block; }
   .mini span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 120ms linear; }
   .fail { font-size: 13px; color: #ff9b9b; }
-  .item.app { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+  /* Teinte douce de l'accent du profil (variable déjà calculée par profil, sans color-mix). */
+  .item.app { background: var(--accent-soft); }
   .bar { display: block; margin-top: 8px; height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; }
   .bar span { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 160ms linear; }
   .bar span.indet { animation: indet 1.2s ease-in-out infinite; }
