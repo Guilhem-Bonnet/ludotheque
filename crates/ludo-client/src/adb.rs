@@ -138,10 +138,35 @@ pub fn package_of(cfg: &Config, emulator: &str) -> Option<String> {
     (!bin.contains('/') && bin.contains('.')).then_some(bin)
 }
 
+/// Octets d'une sortie `od -An -tx1` (« 4e 43 43 48 … »).
+fn parse_od(text: &str) -> Vec<u8> {
+    text.split_whitespace().filter_map(|b| u8::from_str_radix(b, 16).ok()).collect()
+}
+
+/// Extension en minuscules d'un chemin de ROM (`None` pour un dossier de jeu Wii U).
+fn rom_ext(path: &str) -> Option<String> {
+    Path::new(path).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase)
+}
+
+impl Adb {
+    /// Identifiant du jeu lu dans l'en-tête de la ROM de l'appareil (`ludo_core::rom`) : quelques
+    /// centaines d'octets lus par `dd`, rien n'est écrit. Dossier Wii U : `meta/meta.xml`.
+    pub fn rom_title_id(&self, remote: &str) -> Option<u64> {
+        match rom_ext(remote) {
+            Some(ext) => {
+                let out = self.shell(&format!("dd if={} bs={} count=1 2>/dev/null | od -An -tx1 -v", sq(remote), ludo_core::rom::HEADER_LEN)).ok()?;
+                ludo_core::rom::title_id_from_header(&ext, &parse_od(&out))
+            }
+            None => ludo_core::rom::title_id_from_meta_xml(&self.shell(&format!("cat {} 2>/dev/null", sq(&format!("{remote}/meta/meta.xml")))).ok()?),
+        }
+    }
+}
+
 /// Correspondance miroir local → chemin distant : `<miroir>/<relatif>` ↔ `<data distant>/<relatif>`.
 pub fn remote_of(dir: &Path, mirror: &Path, remote_data: &str) -> Option<String> {
     let rel = dir.strip_prefix(mirror).ok()?;
-    Some(format!("{}/{}", remote_data.trim_end_matches('/'), rel.to_string_lossy()))
+    let base = remote_data.trim_end_matches('/');
+    Some(if rel.as_os_str().is_empty() { base.to_string() } else { format!("{base}/{}", rel.to_string_lossy()) })
 }
 
 /// Dossier de données distant d'un émulateur pour cet appareil.
@@ -161,9 +186,14 @@ pub fn mirrored(cfg: &Config, emulator: &str, mirror: &Path) -> Option<Config> {
 
 /// Prépare (émulateur, profil, jeu) sur le miroir et donne les dossiers à recopier.
 pub fn prepare_mirrored(cfg: &Config, conf: &GameConf, profile: &str, mirror: &Path) -> Result<(config::Prepared, Vec<(PathBuf, String)>), String> {
+    prepare_mirrored_rom(cfg, conf, profile, mirror, None)
+}
+
+/// Comme [`prepare_mirrored`], avec le chemin de la ROM sur l'appareil (`{rom_nom}` de melonDS).
+pub fn prepare_mirrored_rom(cfg: &Config, conf: &GameConf, profile: &str, mirror: &Path, rom: Option<&Path>) -> Result<(config::Prepared, Vec<(PathBuf, String)>), String> {
     let data = remote_data(cfg, &conf.emulateur).ok_or_else(|| format!("{} : dossier de données de l'appareil inconnu", conf.emulateur))?;
     let mc = mirrored(cfg, &conf.emulateur, mirror).ok_or_else(|| format!("{} : fiche ou lanceur inconnu pour cet appareil", conf.emulateur))?;
-    let prepared = config::prepare(&mc, &conf.emulateur, profile, &conf.title_id).map_err(|e| e.to_string())?;
+    let prepared = config::prepare_rom(&mc, &conf.emulateur, profile, &conf.title_id, rom).map_err(|e| e.to_string())?;
     let pairs = prepared.dirs.iter().filter_map(|d| remote_of(d, mirror, &data).map(|r| (d.clone(), r))).collect();
     Ok((prepared, pairs))
 }
@@ -205,5 +235,52 @@ mod tests {
             ]
         );
         assert!(pairs.iter().all(|(l, _)| l.starts_with(t.path())), "le moteur travaille sur le miroir local");
+    }
+
+    /// Chemins distants de chaque nouvelle fiche sur la Thor : ceux relevés par adb le 21/11/2026.
+    #[test]
+    fn fiches_3ds_wiiu_gc_ds_vers_les_chemins_mesures_sur_la_thor() {
+        let cfg: Config = toml::from_str(
+            r#"
+            serveur = "x"
+            appareil = "thor"
+            profil_defaut = "guilhem"
+            [profils.guilhem]
+            eden_uuid = "A2D2DFD2700F51C158E87A336C77FE55"
+            eden_index = 0
+            "#,
+        )
+        .unwrap();
+        let remote = |emu: &str, tid: &str, rom: Option<&str>| {
+            let t = tempfile::tempdir().unwrap();
+            let conf = GameConf { emulateur: emu.into(), title_id: tid.into(), profils: None };
+            let (p, pairs) = prepare_mirrored_rom(&cfg, &conf, "guilhem", t.path(), rom.map(Path::new)).unwrap();
+            assert!(pairs.iter().all(|(l, _)| l.starts_with(t.path())));
+            (pairs.into_iter().map(|(_, r)| r).collect::<Vec<_>>(), p)
+        };
+        // Azahar : Majora's Mask 3D, dossier relevé `title/00040000/00125600/data`.
+        let (r, _) = remote("azahar", "0004000000125600", None);
+        assert_eq!(r, ["/sdcard/Documents/Azahar/sdmc/Nintendo 3DS/00000000000000000000000000000000/00000000000000000000000000000000/title/00040000/00125600/data"]);
+        assert_eq!(package_of(&cfg, "azahar").as_deref(), Some("org.azahar_emu.azahar"));
+        // Cemu : Wind Waker HD.
+        let (r, _) = remote("cemu", "0005000010143500", None);
+        assert_eq!(r, ["/sdcard/Android/data/info.cemu.cemu/files/mlc01/usr/save/00050000/10143500/user"]);
+        // Dolphin : Twilight Princess (GZ2P01, Europe), seuls ses fichiers GCI.
+        let (r, p) = remote("dolphin", "0000475a32503031", None);
+        assert_eq!(r, ["/sdcard/Android/data/org.dolphinemu.dolphinemu/files/GC/EUR/Card A"]);
+        assert_eq!(p.vars["code_jeu"], "GZ2P01");
+        // melonDS : fichier nommé comme la ROM dans le dossier de sauvegardes de l'appli.
+        let rom = "/sdcard/Documents/Roms/nds/Pokemon - Version Diamant (France) (Rev 5).nds";
+        let (r, _) = remote("melonds", "0000000041444146", Some(rom));
+        assert_eq!(r, ["/sdcard/Android/data/me.magnum.melondualds/files/saves"]);
+        assert_eq!(package_of(&cfg, "melonds").as_deref(), Some("me.magnum.melondualds"));
+    }
+
+    #[test]
+    fn identifiant_lu_dans_les_octets_d_od() {
+        assert_eq!(parse_od(" 4e 43 43 48 98 17\n 00 8f\n"), vec![0x4e, 0x43, 0x43, 0x48, 0x98, 0x17, 0x00, 0x8f]);
+        assert!(parse_od("").is_empty());
+        assert_eq!(rom_ext("/a/b/Jeu (Europe).CXI").as_deref(), Some("cxi"));
+        assert_eq!(rom_ext("/a/b/The Legend of Zelda The Wind Waker HD"), None);
     }
 }

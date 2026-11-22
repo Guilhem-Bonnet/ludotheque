@@ -51,14 +51,48 @@ pub fn archive_hash(archive: &[u8]) -> String {
     hex::encode(Sha256::digest(archive))
 }
 
+/// Correspondance d'un nom avec un motif où `*` vaut n'importe quelle suite et `?` un caractère
+/// (les autres caractères, crochets et parenthèses compris, sont pris tels quels).
+pub fn wildcard(pattern: &str, name: &str) -> bool {
+    let (p, n): (Vec<char>, Vec<char>) = (pattern.chars().collect(), name.chars().collect());
+    let (mut pi, mut ni, mut star, mut mark) = (0, 0, None, 0);
+    while ni < n.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni]) {
+            pi += 1;
+            ni += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            mark = ni;
+            pi += 1;
+        } else if let Some(s) = star {
+            pi = s + 1;
+            mark += 1;
+            ni = mark;
+        } else {
+            return false;
+        }
+    }
+    p[pi..].iter().all(|&c| c == '*')
+}
+
 /// Vrai si `rel` (chemin relatif, séparateurs `/`) correspond à un motif d'exclusion.
 ///
 /// Motifs : `*.ext` (tout fichier de cette extension, à tout niveau) ; `nom/` (tout dossier de
 /// ce nom, à tout niveau) ; `a/b` (chemin exact depuis la racine, fichier ou dossier) ;
 /// `nom` (tout fichier ou dossier de ce nom, à tout niveau).
+///
+/// Motifs « ne garder que » `!motif` (jokers `*` et `?`, sur un fichier à la racine) : dès qu'il y
+/// en a un, tout fichier qui ne correspond à aucun d'eux est exclu. Sert aux dossiers partagés par
+/// plusieurs jeux (carte mémoire GameCube en dossier GCI, `<rom>.sav` de melonDS) : la
+/// sauvegarde d'un jeu n'y est qu'une partie des fichiers, et la restauration conserve les autres
+/// (fichiers exclus).
 pub fn excluded(rel: &str, patterns: &[String]) -> bool {
+    let keep: Vec<&str> = patterns.iter().filter_map(|p| p.strip_prefix('!')).collect();
+    if !keep.is_empty() && !keep.iter().any(|k| !rel.contains('/') && wildcard(k, rel)) {
+        return true;
+    }
     let comps: Vec<&str> = rel.split('/').collect();
-    patterns.iter().any(|p| {
+    patterns.iter().filter(|p| !p.starts_with('!')).any(|p| {
         if let Some(ext) = p.strip_prefix("*.") {
             comps.last().is_some_and(|f| f.ends_with(&format!(".{ext}")))
         } else if let Some(dir) = p.strip_suffix('/') {
@@ -256,6 +290,38 @@ fn rotate_prev(dir: &Path) -> Result<(), SnapshotError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jokers_et_motifs_ne_garder_que() {
+        assert!(wildcard("??-GZ2P-*.gci", "01-GZ2P-gczelda2.gci"));
+        assert!(!wildcard("??-GZ2P-*.gci", "01-GALE-smash.gci"));
+        assert!(wildcard("Pokemon - Version Diamant (France) (Rev 5).sav", "Pokemon - Version Diamant (France) (Rev 5).sav"));
+        assert!(!wildcard("a.sav", "a.sav.bak"));
+        assert!(wildcard("*", ""));
+        let keep = vec!["!??-GZ2P-*.gci".to_string(), "*.tmp".to_string()];
+        assert!(!excluded("01-GZ2P-gczelda2.gci", &keep));
+        assert!(excluded("01-GALE-smash.gci", &keep), "autre jeu de la carte : exclu");
+        assert!(excluded("sous/01-GZ2P-x.gci", &keep), "seulement à la racine");
+        assert!(excluded("01-GZ2P-x.tmp", &["!01-GZ2P-*".to_string(), "*.tmp".to_string()]), "les exclusions s'appliquent en plus");
+    }
+
+    #[test]
+    fn restauration_partielle_garde_les_autres_jeux_du_dossier() {
+        let t = tempfile::tempdir().unwrap();
+        let card = t.path().join("Card A");
+        write(&card, "01-GZ2P-gczelda2.gci", b"zelda-v1");
+        write(&card, "01-GALE-smash.gci", b"smash");
+        let keep = vec!["!??-GZ2P-*.gci".to_string()];
+        let s1 = snapshot(&card, &keep).unwrap().unwrap();
+        write(&card, "01-GZ2P-gczelda2.gci", b"zelda-v2");
+        write(&card, "01-GALE-smash.gci", b"smash-v2");
+        restore(&card, &s1.archive, &keep).unwrap();
+        assert_eq!(fs::read(card.join("01-GZ2P-gczelda2.gci")).unwrap(), b"zelda-v1");
+        assert_eq!(fs::read(card.join("01-GALE-smash.gci")).unwrap(), b"smash-v2", "l'autre jeu n'est pas touché");
+        assert_eq!(snapshot(&card, &keep).unwrap().unwrap().hash, s1.hash);
+        // Aucun fichier du jeu : pas de sauvegarde, même si la carte contient d'autres jeux.
+        assert!(snapshot(&card, &["!??-GZ2E-*.gci".to_string()]).unwrap().is_none());
+    }
 
     fn write(dir: &Path, rel: &str, data: &[u8]) {
         let p = dir.join(rel);

@@ -103,7 +103,10 @@ fn oui() -> bool {
 }
 
 /// Émulateur par défaut de chaque console (décision du 14/11 : Ryujinx pour la Switch).
-pub const DEFAULT_EMULATORS: &[(&str, &str)] = &[("switch", "ryujinx"), ("switch2", "lichii")];
+/// Le 21/11 : Azahar (3DS), melonDS (DS), Dolphin (GameCube), Cemu (Wii U), seuls émulateurs
+/// installés sur la Thor pour ces consoles (`pm list packages`).
+pub const DEFAULT_EMULATORS: &[(&str, &str)] =
+    &[("switch", "ryujinx"), ("switch2", "lichii"), ("3ds", "azahar"), ("ds", "melonds"), ("gc", "dolphin"), ("wiiu", "cemu")];
 
 /// D'où vient l'emplacement retenu pour un émulateur.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +141,10 @@ pub enum ConfigError {
     UnknownProfile(String),
     #[error("identifiant manquant pour le profil {profile} : {field}")]
     MissingId { profile: String, field: &'static str },
+    /// Émulateur sans séparation des profils (Azahar, Cemu, Dolphin, melonDS) sur un appareil
+    /// partagé : synchroniser mélangerait les parties de plusieurs joueurs dans un seul dossier.
+    #[error("{emulator} ne sépare pas les profils : synchronisé seulement pour le profil par défaut d'un appareil personnel (profil_defaut) ou sur un appareil à un seul profil")]
+    SharedWithoutProfiles { emulator: String },
     #[error("identifiant de jeu invalide (16 caractères hexadécimaux attendus) : {0}")]
     BadTitleId(String),
 }
@@ -148,6 +155,10 @@ const BUILTIN: &[(&str, &str)] = &[
     ("eden", include_str!("../../../fiches/eden.toml")),
     ("lichii", include_str!("../../../fiches/lichii.toml")),
     ("triforce", include_str!("../../../fiches/triforce.toml")),
+    ("azahar", include_str!("../../../fiches/azahar.toml")),
+    ("melonds", include_str!("../../../fiches/melonds.toml")),
+    ("dolphin", include_str!("../../../fiches/dolphin.toml")),
+    ("cemu", include_str!("../../../fiches/cemu.toml")),
 ];
 
 pub fn home() -> PathBuf {
@@ -231,12 +242,22 @@ impl Config {
     /// concerne le profil), sinon l'émulateur par défaut de la console avec le title_id du catalogue.
     /// `None` : jeu non jouable ici (console sans émulateur, title_id inconnu, autre profil).
     pub fn game_conf(&self, game: &str, profile: &str, catalog: Option<&CatalogGame>) -> Option<GameConf> {
+        self.game_conf_rom(game, profile, catalog, None)
+    }
+
+    /// Comme [`Config::game_conf`], avec l'identifiant lu dans l'en-tête de la ROM de cet appareil
+    /// (`ludo_core::rom`) quand le catalogue n'en donne pas (3DS, Wii U, GameCube, DS).
+    pub fn game_conf_rom(&self, game: &str, profile: &str, catalog: Option<&CatalogGame>, rom_title_id: Option<u64>) -> Option<GameConf> {
         if let Some(g) = self.jeux.get(game) {
             return g.concerns(profile).then(|| g.clone());
         }
         let c = catalog.filter(|c| c.id == game)?;
         let emulateur = self.default_emulator(&c.console)?;
-        let title_id = c.title_id.clone().filter(|t| t.len() == 16 && u64::from_str_radix(t, 16).is_ok())?;
+        let title_id = c
+            .title_id
+            .clone()
+            .filter(|t| t.len() == 16 && u64::from_str_radix(t, 16).is_ok())
+            .or_else(|| rom_title_id.map(|t| format!("{t:016x}")))?;
         Some(GameConf { emulateur, title_id: title_id.to_lowercase(), profils: None })
     }
 
@@ -278,7 +299,17 @@ fn need<T: Clone>(v: &Option<T>, profile: &str, field: &'static str) -> Result<T
 
 /// Construit l'adaptateur et les variables de gabarit pour (émulateur, profil, jeu).
 pub fn prepare(cfg: &Config, emulator: &str, profile: &str, title_id: &str) -> Result<Prepared, ConfigError> {
+    prepare_rom(cfg, emulator, profile, title_id, None)
+}
+
+/// Comme [`prepare`], en connaissant le fichier de la ROM : nécessaire aux fiches qui rangent la
+/// sauvegarde sous le nom de la ROM (`{rom_nom}`, melonDS).
+pub fn prepare_rom(cfg: &Config, emulator: &str, profile: &str, title_id: &str, rom: Option<&Path>) -> Result<Prepared, ConfigError> {
     let fiche = cfg.fiche(emulator)?;
+    // Un seul dossier de sauvegarde pour tous les joueurs : jamais sur un appareil partagé.
+    if fiche.profils == ProfileMode::Aucun && cfg.profil_defaut.as_deref() != Some(profile) && cfg.profils.len() > 1 {
+        return Err(ConfigError::SharedWithoutProfiles { emulator: fiche.id.clone() });
+    }
     let loc = cfg.locate(&fiche, &Host::current())?;
     let ids = cfg.profile(profile)?;
     let tid = u64::from_str_radix(title_id, 16).map_err(|_| ConfigError::BadTitleId(title_id.into()))?;
@@ -293,6 +324,19 @@ pub fn prepare(cfg: &Config, emulator: &str, profile: &str, title_id: &str) -> R
     vars.insert("profil", profile.into());
     vars.insert("title_id", format!("{tid:016x}"));
     vars.insert("title_id_maj", format!("{tid:016X}"));
+    vars.insert("title_id_haut", format!("{:08x}", tid >> 32));
+    vars.insert("title_id_bas", format!("{:08x}", tid & 0xffff_ffff));
+    // Identifiant ASCII (GameCube, DS) : code complet, 4 premiers caractères, région Dolphin.
+    if let Some(code) = ludo_core::rom::ascii_code(tid) {
+        vars.insert("code_jeu_court", code.chars().take(4).collect());
+        if let Some(region) = ludo_core::rom::gc_region(&code) {
+            vars.insert("region_gc", region.to_string());
+        }
+        vars.insert("code_jeu", code);
+    }
+    if let Some(stem) = rom.and_then(|r| r.file_stem()).and_then(|s| s.to_str()) {
+        vars.insert("rom_nom", stem.to_string());
+    }
 
     let mut dirs: Vec<PathBuf> = Vec::new();
     let layout: Box<dyn SaveLayout> = if fiche.id == "ryujinx" {
@@ -327,7 +371,12 @@ pub fn prepare(cfg: &Config, emulator: &str, profile: &str, title_id: &str) -> R
         };
         dirs.push(account.clone());
         dirs.extend(device.clone());
-        Box::new(DirLayout { account, device, exclude: fiche.exclusions.clone() })
+        // Dossier partagé par plusieurs jeux : seuls les fichiers du jeu (motifs « ! »).
+        let mut exclude = fiche.exclusions.clone();
+        for f in &fiche.fichiers {
+            exclude.push(format!("!{}", render(f, &vars)?));
+        }
+        Box::new(DirLayout { account, device, exclude })
     };
     Ok(Prepared { layout, vars, fiche, dirs })
 }
@@ -408,6 +457,13 @@ mod tests {
         assert!(cfg.game_conf("switch-c", "guilhem", Some(&catalogue("switch-c", "switch", None))).is_none());
         assert!(cfg.game_conf("switch-d", "guilhem", Some(&catalogue("switch-d", "switch", Some("pas-hexa-du-tout")))).is_none());
         assert!(cfg.game_conf("switch-b", "guilhem", Some(&catalogue("autre", "switch", Some("0100F2C0115B6000")))).is_none());
+        // Identifiant lu dans l'en-tête de la ROM quand le catalogue n'en a pas (3DS, Wii U, GC).
+        let g = cfg.game_conf_rom("3ds-x", "guilhem", Some(&catalogue("3ds-x", "3ds", None)), Some(0x0004_0000_0012_5600)).unwrap();
+        assert_eq!((g.emulateur.as_str(), g.title_id.as_str()), ("azahar", "0004000000125600"));
+        let g = cfg.game_conf_rom("gc-tp", "guilhem", Some(&catalogue("gc-tp", "gc", None)), Some(0x0000_475a_3250_3031)).unwrap();
+        assert_eq!((g.emulateur.as_str(), g.title_id.as_str()), ("dolphin", "0000475a32503031"));
+        // Le title_id du catalogue reste prioritaire sur celui de la ROM.
+        assert_eq!(cfg.game_conf_rom("switch-b", "guilhem", Some(&tloz), Some(1)).unwrap().title_id, "0100f2c0115b6000");
         // Défaut de l'appareil : remplace le défaut intégré.
         cfg.consoles.insert("switch".into(), "eden".into());
         assert_eq!(cfg.game_conf("switch-b", "guilhem", Some(&tloz)).unwrap().emulateur, "eden");
@@ -443,8 +499,40 @@ mod tests {
         std::fs::write(t.path().join("azahar.toml"), "").unwrap();
         std::fs::write(t.path().join("notes.txt"), "").unwrap();
         let mut cfg: Config = toml::from_str("serveur = \"x\"\nappareil = \"pc\"").unwrap();
-        assert_eq!(cfg.fiche_ids(), ["eden", "lichii", "ryujinx", "triforce"]);
+        std::fs::write(t.path().join("citra.toml"), "").unwrap();
+        assert_eq!(cfg.fiche_ids(), ["azahar", "cemu", "dolphin", "eden", "lichii", "melonds", "ryujinx", "triforce"]);
         cfg.fiches = Some(t.path().into());
-        assert_eq!(cfg.fiche_ids(), ["azahar", "eden", "lichii", "ryujinx", "triforce"]);
+        assert_eq!(cfg.fiche_ids(), ["azahar", "cemu", "citra", "dolphin", "eden", "lichii", "melonds", "ryujinx", "triforce"]);
+    }
+
+    #[test]
+    fn emulateur_sans_profils_refuse_sur_appareil_partage() {
+        let base = "serveur = \"x\"\nappareil = \"thor\"\n[profils.guilhem]\n[profils.claire]\n";
+        let shared: Config = toml::from_str(base).unwrap();
+        assert!(matches!(
+            prepare(&shared, "azahar", "claire", "0004000000125600"),
+            Err(ConfigError::SharedWithoutProfiles { emulator }) if emulator == "azahar"
+        ));
+        // Appareil personnel : le profil par défaut synchronise, les autres non.
+        let perso: Config = toml::from_str(&format!("profil_defaut = \"guilhem\"\n{base}")).unwrap();
+        assert!(prepare(&perso, "azahar", "guilhem", "0004000000125600").is_ok());
+        assert!(prepare(&perso, "azahar", "claire", "0004000000125600").is_err());
+        // Un seul profil sur l'appareil : pas de mélange possible.
+        let seul: Config = toml::from_str("serveur = \"x\"\nappareil = \"thor\"\n[profils.guilhem]\n").unwrap();
+        assert!(prepare(&seul, "cemu", "guilhem", "0005000010143500").is_ok());
+        // Les émulateurs à profils natifs ne sont pas concernés.
+        let eden: Config = toml::from_str(&format!("{base}eden_uuid = \"A\"\neden_index = 1\n")).unwrap();
+        assert!(prepare(&eden, "eden", "claire", "0100152000022000").is_ok());
+    }
+
+    #[test]
+    fn melonds_exige_le_nom_de_la_rom() {
+        let cfg: Config = toml::from_str("serveur = \"x\"\nappareil = \"thor\"\nprofil_defaut = \"guilhem\"\n[profils.guilhem]\n").unwrap();
+        // Sans ROM, le gabarit `{rom_nom}` ne peut pas être rendu : erreur, aucun chemin à moitié rempli.
+        assert!(matches!(prepare(&cfg, "melonds", "guilhem", "0000000041444146"), Err(ConfigError::Fiche(FicheError::UnknownVar(v))) if v == "rom_nom"));
+        let rom = Path::new("/sdcard/Documents/Roms/nds/Pokemon - Version Diamant (France) (Rev 5).nds");
+        let p = prepare_rom(&cfg, "melonds", "guilhem", "0000000041444146", Some(rom)).unwrap();
+        assert_eq!(p.vars["code_jeu"], "ADAF");
+        assert_eq!(p.vars["rom_nom"], "Pokemon - Version Diamant (France) (Rev 5)");
     }
 }
