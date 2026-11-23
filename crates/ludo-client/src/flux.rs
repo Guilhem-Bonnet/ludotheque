@@ -9,61 +9,49 @@
 //! synchro part (comme une fin de flux) ; Sunshine voit l'appli finie et clôt la session.
 //!
 //! Déclencheur EXPLICITE, jamais une simple mort de Moonlight (coupure réseau, Android qui le tue) :
-//! la Ludothèque dépose le fichier [`DEMANDE`] dans son dossier `Android/data/<paquet>/files` ;
-//! `ludo adb-watch` le reçoit par `inotifyd` (événement `w`, fichier fermé après écriture ; un
-//! renommage n'y produit pas `m`, mesuré sur la Thor le 23/11), le lit, le retire
-//! (dossier de la Ludothèque) et n'agit que sur une demande récente ([`FRAICHEUR_S`]).
+//! la Ludothèque écrit la ligne de journal `LudoFlux: fermer <jeu>` ; `ludo adb-watch` la reçoit par un
+//! flux `logcat -v uid -T 1` (événement poussé, seulement les lignes nouvelles) et n'accepte que les
+//! lignes écrites par l'uid d'une app Ludothèque (une autre app ne peut pas déclencher la fermeture).
+//!
+//! Pourquoi pas un fichier dans `Android/data/<paquet>` : mesuré sur la Thor le 23/11, l'inotifyd du
+//! shell ne voit pas les écritures qu'une app fait dans son propre dossier (montage qui contourne FUSE ;
+//! seules les écritures du shell produisent `n`/`w`, et un renommage ne produit jamais `m`).
 
 use crate::adb::LUDO_PACKAGES;
 
-/// Nom du fichier de demande déposé par la Ludothèque Android (`MenuJeuPlugin.demanderFinDuFlux`).
-pub const DEMANDE: &str = "fermer-flux";
-/// Âge maximal d'une demande (horloge de l'appareil) : une demande restée là pendant une coupure
-/// n'arrête jamais une partie lancée plus tard.
-pub const FRAICHEUR_S: i64 = 120;
+/// Étiquette de journal de la demande (`MenuJeuPlugin.demanderFinDuFlux`).
+pub const ETIQUETTE: &str = "LudoFlux";
 
-/// Dossiers de demande des apps Ludothèque (release, essai) sur l'appareil.
-pub fn dossiers() -> Vec<String> {
-    LUDO_PACKAGES.iter().map(|p| format!("/sdcard/Android/data/{p}/files")).collect()
+/// Flux des demandes : lignes nouvelles seulement, avec l'uid de l'app qui écrit.
+pub fn script_logcat() -> String {
+    format!("logcat -v uid -T 1 -s {ETIQUETTE}:I")
 }
 
-/// Classement d'une ligne d'`inotifyd -` (« <événements>\t<dossier>[\t<nom>] »).
-#[derive(Debug, PartialEq, Eq)]
-pub enum Ligne {
-    /// Demande de fin du flux déposée (écrite, ou renommée vers [`DEMANDE`]) dans ce dossier.
-    Demande(String),
-    /// Autre fichier d'un dossier de demande (config.toml…) : ignoré, ce n'est pas une sauvegarde.
-    Ignoree,
-    /// Ligne d'un autre dossier surveillé (sauvegardes).
-    Autre,
+/// Script : uid des apps Ludothèque installées (« package:<paquet> uid:<n> »).
+pub fn script_uids() -> String {
+    let apps = LUDO_PACKAGES.join(" ");
+    format!(r#"for a in {apps}; do cmd package list packages -U "$a" 2>/dev/null | grep -x "package:$a uid:[0-9]*"; done; true"#)
 }
 
-pub fn classer(ligne: &str) -> Ligne {
-    let mut parts = ligne.trim_end_matches(['\r', '\n']).split('\t');
-    let (Some(ev), Some(dir)) = (parts.next(), parts.next()) else { return Ligne::Autre };
-    if !dossiers().iter().any(|d| d == dir) {
-        return Ligne::Autre;
+/// Uid des apps Ludothèque d'après la sortie de [`script_uids`].
+pub fn lire_uids(sortie: &str) -> Vec<u32> {
+    sortie.lines().filter_map(|l| l.trim().rsplit_once(" uid:")?.1.parse().ok()).collect()
+}
+
+/// Ligne de journal candidate (filtrée par étiquette) ; l'uid est vérifié par [`demande`].
+pub fn est_demande(ligne: &str) -> bool {
+    ligne.contains(&format!(" {ETIQUETTE}: fermer"))
+}
+
+/// Jeu demandé si la ligne (`logcat -v uid` : « date heure uid pid tid niveau étiquette: message »)
+/// vient d'une app Ludothèque (`uids`).
+pub fn demande(ligne: &str, uids: &[u32]) -> Option<String> {
+    let uid: u32 = ligne.split_whitespace().nth(2)?.parse().ok()?;
+    if !uids.contains(&uid) {
+        return None;
     }
-    match parts.next() {
-        Some(DEMANDE) if ev.contains('m') || ev.contains('w') => Ligne::Demande(dir.to_string()),
-        _ => Ligne::Ignoree,
-    }
-}
-
-/// Script de l'appareil : rend « <heure de l'appareil> <contenu de la demande> » et retire la demande
-/// (elle est dans le dossier de la Ludothèque). Rien si elle a déjà été traitée.
-pub fn script_lire(dossier: &str) -> String {
-    let f = format!("{dossier}/{DEMANDE}");
-    format!("[ -f '{f}' ] || exit 0; echo \"$(date +%s) $(head -c 200 '{f}')\"; rm -f '{f}'")
-}
-
-/// Jeu demandé si la demande est récente : sortie de [`script_lire`] = « maintenant horodatage jeu ».
-pub fn demande_fraiche(sortie: &str) -> Option<String> {
-    let mut it = sortie.split_whitespace();
-    let maintenant: i64 = it.next()?.parse().ok()?;
-    let quand: i64 = it.next()?.parse().ok()?;
-    let jeu = it.next().unwrap_or("").to_string();
-    (-30..=FRAICHEUR_S).contains(&(maintenant - quand)).then_some(jeu)
+    let message = &ligne[ligne.find(&format!(" {ETIQUETTE}: fermer"))? + ETIQUETTE.len() + 3..];
+    Some(message.trim_start_matches("fermer").trim().to_string())
 }
 
 /// Processus vu dans `/proc` : (pid, ppid, groupe, nom, `SUNSHINE_CLIENT_NAME` de son environnement).
@@ -148,25 +136,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classement_des_lignes_inotifyd() {
-        let d = "/sdcard/Android/data/fr.srvdreamer.ludotheque/files";
-        assert_eq!(classer(&format!("m\t{d}\tfermer-flux")), Ligne::Demande(d.into()));
-        assert_eq!(classer("m\t/sdcard/Android/data/fr.srvdreamer.ludotheque.debug/files\tfermer-flux\r"), Ligne::Demande("/sdcard/Android/data/fr.srvdreamer.ludotheque.debug/files".into()));
-        // Fichier temporaire, config, création : ignorés (pas une sauvegarde, pas une demande).
-        assert_eq!(classer(&format!("w\t{d}\tfermer-flux.tmp")), Ligne::Ignoree);
-        assert_eq!(classer(&format!("w\t{d}\tconfig.toml")), Ligne::Ignoree);
-        assert_eq!(classer(&format!("n\t{d}\tfermer-flux")), Ligne::Ignoree);
-        // Dossier de sauvegarde : laissé au classement des sauvegardes.
-        assert_eq!(classer("w\t/sdcard/Android/data/org.azahar_emu.azahar/files/sdmc\tx"), Ligne::Autre);
+    fn demande_par_le_journal_et_uid_verifie() {
+        let l = "11-23 10:41:23.930 10157  9038 11280 I LudoFlux: fermer switch2-the-legend-of-zelda-ocarina-of-time";
+        assert!(est_demande(l));
+        assert_eq!(demande(l, &[10154, 10157]), Some("switch2-the-legend-of-zelda-ocarina-of-time".into()));
+        // Même ligne écrite par une autre app : refusée.
+        assert_eq!(demande(&l.replace("10157", "10200"), &[10154, 10157]), None);
+        assert_eq!(demande(l, &[]), None);
+        // Autre étiquette ou autre message : pas une demande.
+        assert!(!est_demande("11-23 10:41:23.930 10157 9038 11280 I LudoArret: arrêt de com.limelight"));
+        assert!(!est_demande("--------- beginning of main"));
     }
 
     #[test]
-    fn seule_une_demande_recente_compte() {
-        assert_eq!(demande_fraiche("1795440000 1795439990 mk8-flux"), Some("mk8-flux".into()));
-        assert_eq!(demande_fraiche("1795440000 1795430000 mk8-flux"), None, "demande périmée");
-        assert_eq!(demande_fraiche("1795440000 1795440500 mk8-flux"), None, "horloge incohérente");
-        assert_eq!(demande_fraiche(""), None);
-        assert_eq!(demande_fraiche("1795440000 abc"), None);
+    fn uids_des_apps_ludotheque() {
+        let s = "package:fr.srvdreamer.ludotheque uid:10154\npackage:fr.srvdreamer.ludotheque.debug uid:10157\n";
+        assert_eq!(lire_uids(s), vec![10154, 10157]);
+        assert!(lire_uids("").is_empty());
+        assert!(script_uids().contains("cmd package list packages -U"));
+        assert_eq!(script_logcat(), "logcat -v uid -T 1 -s LudoFlux:I");
     }
 
     #[test]
@@ -186,21 +174,5 @@ mod tests {
         assert_eq!(cibles(&procs, "deck"), vec![(-500, "ryu-stream".to_string())]);
         assert!(cibles(&procs, "").is_empty());
         assert!(cibles(&procs[..1], "thor").is_empty());
-    }
-
-    #[test]
-    fn script_de_lecture() {
-        let s = script_lire("/sdcard/Android/data/fr.srvdreamer.ludotheque/files");
-        assert!(s.contains("rm -f '/sdcard/Android/data/fr.srvdreamer.ludotheque/files/fermer-flux'"));
-        let dir = tempfile::tempdir().unwrap();
-        let d = dir.path().display().to_string();
-        std::fs::write(dir.path().join(DEMANDE), "1795440000 mk8\n").unwrap();
-        let out = std::process::Command::new("sh").arg("-c").arg(script_lire(&d)).output().unwrap();
-        let t = String::from_utf8_lossy(&out.stdout);
-        assert!(t.trim().ends_with("1795440000 mk8"), "{t}");
-        assert!(!dir.path().join(DEMANDE).exists(), "demande retirée");
-        // Deuxième lecture : rien.
-        let out = std::process::Command::new("sh").arg("-c").arg(script_lire(&d)).output().unwrap();
-        assert!(out.stdout.is_empty());
     }
 }

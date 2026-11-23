@@ -36,27 +36,21 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     /** Paquet de Moonlight : un jeu ouvert par lui tourne EN FLUX sur le PC (Sunshine). */
     const val MOONLIGHT = "com.limelight"
 
-    /** Demande de fin du flux lue par le PC (`crates/ludo-client/src/flux.rs`, `DEMANDE`). */
-    const val DEMANDE_FIN_FLUX = "fermer-flux"
+    /** Étiquette de journal de la demande de fin du flux, lue par le PC (`flux.rs`, `ETIQUETTE`). */
+    const val TAG_FLUX = "LudoFlux"
   }
 
   /**
    * Jeu en flux : arrêter Moonlight ne ferait que couper la connexion, le jeu continuerait sur le PC.
-   * La Ludothèque dépose une demande explicite dans son dossier (`Android/data/<paquet>/files`) :
-   * `ludo adb-watch` la reçoit (inotifyd, événement `w` : fichier fermé après écriture) et termine
-   * l'appli Sunshine comme « Quitter l'appli » (l'émulateur sauvegarde, puis la synchro part). Écrite
-   * directement, pas à côté puis renommée : mesuré sur la Thor le 23/11, un renommage dans
-   * `Android/data` ne produit pas l'événement `m` d'inotifyd (seulement `n` et `w`). Une simple mort de
-   * Moonlight (réseau, Android) ne dépose rien. Sans PC relié, la demande périme (120 s) sans effet.
+   * La Ludothèque écrit une demande explicite dans le journal (`LudoFlux: fermer <jeu>`) : `ludo
+   * adb-watch` la reçoit (flux `logcat -v uid`, uid de la Ludothèque vérifié) et termine l'appli
+   * Sunshine comme « Quitter l'appli » (l'émulateur sauvegarde, puis la synchro part). Pas de fichier
+   * dans `Android/data` : mesuré sur la Thor le 23/11, l'inotifyd du shell ne voit pas les écritures
+   * de l'app dans son propre dossier. Une simple mort de Moonlight (réseau, Android) ne demande rien ;
+   * sans PC relié, la demande reste sans effet (le journal ne garde que les lignes nouvelles pour le PC).
    */
   private fun demanderFinDuFlux(game: String) {
-    try {
-      val dossier = activity.getExternalFilesDir(null) ?: return
-      java.io.File(dossier, DEMANDE_FIN_FLUX)
-        .writeText("${System.currentTimeMillis() / 1000} ${game.replace(Regex("\\s"), "_")}\n")
-    } catch (e: Exception) {
-      android.util.Log.w("LudoArret", "demande de fin du flux non déposée : $e")
-    }
+    android.util.Log.i(TAG_FLUX, "fermer ${game.replace(Regex("\\s"), "_")}")
   }
 
   override fun load(webView: android.webkit.WebView) {
