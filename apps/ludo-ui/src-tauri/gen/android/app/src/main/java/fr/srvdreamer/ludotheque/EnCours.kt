@@ -11,8 +11,7 @@ import org.json.JSONObject
 /**
  * Jeu lancé par la Ludothèque et toujours ouvert (menu en jeu, lot menu-jeu du 22/11).
  *
- * Source de vérité côté Android, partagée par le plugin (interface) et par [MenuJeuService]
- * (bouton Mode) : les deux tournent dans le même processus. Gardée aussi dans les préférences, pour
+ * Source de vérité côté Android, tenue par [MenuJeuPlugin]. Gardée aussi dans les préférences, pour
  * survivre à l'arrêt du processus de la Ludothèque par Android pendant une longue partie ; oubliée
  * après un redémarrage de l'appareil (compteur de démarrages différent : plus aucun jeu n'est ouvert).
  *
@@ -111,7 +110,7 @@ object EnCours {
     ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
   }
 
-  /** Le jeu vient de céder la place à la Ludothèque (bouton Mode, raccourci AYN, HOME puis Cocoon). */
+  /** Le jeu vient de céder la place à la Ludothèque (raccourci AYN « Start app », HOME puis Cocoon). */
   fun quitte() {
     quitteA = SystemClock.uptimeMillis()
   }
