@@ -5,6 +5,7 @@
   import CoverArt from './lib/components/CoverArt.svelte';
 import Batterie from './lib/components/Batterie.svelte';
   import { reducedMotion } from './lib/motion';
+  import { setCoverBase } from './lib/avatars';
   import type { EtatHaut, JeuHaut } from './lib/ecranHaut.svelte';
   import type { Console, Profile, SyncState } from './lib/types';
 
@@ -18,6 +19,8 @@ import Batterie from './lib/components/Batterie.svelte';
   const w = window as unknown as { __ludoHaut: (e: EtatHaut) => void; __ludoHautRecu?: EtatHaut };
   let etat = $state<EtatHaut>(w.__ludoHautRecu ?? { ecran: 'accueil' });
   w.__ludoHaut = (e) => (etat = e);
+  // Images de profil : adresse du serveur transmise par l'écran du bas (cette WebView n'appelle pas api.device()).
+  $effect(() => setCoverBase(etat.images));
 
   // Jaquette ENTIÈRE : le cadre prend le rapport largeur/hauteur réel de l'image (3DS, DS, GameCube n'ont pas
   // celui de la Switch), lu à son chargement ; 5:7 tant qu'elle n'est pas arrivée. Aucun recadrage.

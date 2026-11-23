@@ -1,7 +1,12 @@
-// Images de profil : personnages dessinés pour la Ludothèque (dessins originaux) et portraits de
-// personnages recadrés dans les images des jeux de la collection (stockées sur le serveur, jamais redessinées).
-// Chaque image donne sa couleur d'accent à l'interface : accent, fond doux (accentSoft), encre (accentInk).
+// Images de profil : personnages dessinés pour la Ludothèque (dessins originaux) et galerie d'images reprises
+// telles quelles de bibliothèques publiques (icônes de profil Nintendo Switch Online, sprites animés PokeAPI,
+// icônes SteamGridDB), listées dans `avatars-galerie.json` (généré par `scripts/avatars.py`) et servies par le
+// serveur (`/api/v1/avatars/{slug}`, version fixe `/fixe`). Aucune image n'est découpée ni redessinée.
+//
+// Couleur d'accent : tirée de l'image (« automatique », défaut) ou choisie dans une palette ; un accent choisi
+// reste en place quand l'image change (`accentAuto: false`).
 
+import galerie from './avatars-galerie.json' with { type: 'json' };
 import type { AvatarKind, Profile } from './types';
 
 export const AVATARS: { kind: AvatarKind; label: string; accent: string; soft: string; ink: string }[] = [
@@ -13,81 +18,127 @@ export const AVATARS: { kind: AvatarKind; label: string; accent: string; soft: s
   { kind: 'poisson', label: 'Poisson', accent: '#22d3c5', soft: '#0f3533', ink: '#8fece4' },
 ];
 
-/**
- * Portrait recadré dans l'image d'un jeu (`/api/v1/games/{game}/cover`).
- * `x`, `y` : centre du personnage (fractions de la largeur et de la hauteur de l'image) ;
- * `d` : diamètre du cercle (fraction de la largeur) ; `ratio` : hauteur / largeur de l'image.
- * Recadrages choisis à l'œil sur les images du serveur ; couleurs calculées sur le disque recadré
- * (teinte vive dominante, script `accents.py` du dossier de preuve GAO-ludo-profil-001, 21/11/2026).
- */
-export interface Portrait {
+/** Image de la galerie (une entrée de `avatars-galerie.json`). */
+export interface GalleryImage {
   slug: string;
   label: string;
-  licence: string;
-  game: string;
-  x: number;
-  y: number;
-  d: number;
-  ratio: number;
+  famille: string;
+  /** GIF animé : joué seulement au focus et sur la carte du profil, version fixe ailleurs. */
+  anime: boolean;
   accent: string;
   soft: string;
   ink: string;
+  source: string;
 }
 
-export const PORTRAITS: Portrait[] = [
-  { slug: 'mario', label: 'Mario', licence: 'Mario', game: 'switch-010036b0034e4000', x: 0.6, y: 0.51, d: 0.36, ratio: 1.0, accent: '#ff9c5c', soft: '#391f0e', ink: '#ffc199' },
-  { slug: 'luigi', label: 'Luigi', licence: 'Mario', game: 'switch-0100dca0064a6000', x: 0.19, y: 0.5, d: 0.4, ratio: 1.0, accent: '#efbd6b', soft: '#39290e', ink: '#f5d6a3' },
-  { slug: 'yoshi', label: 'Yoshi', licence: 'Mario', game: '3ds-3ds0650-yoshis-new-island', x: 0.27, y: 0.46, d: 0.3, ratio: 0.8906, accent: '#f8ea62', soft: '#39350e', ink: '#fbf29d' },
-  { slug: 'toad', label: 'Toad', licence: 'Mario', game: '3ds-3ds1824-captain-toad-treasure-tracker', x: 0.56, y: 0.31, d: 0.3, ratio: 0.8848, accent: '#f0bb6b', soft: '#39280e', ink: '#f5d4a3' },
-  { slug: 'link', label: 'Link', licence: 'Zelda', game: 'switch-01007ef00011e000', x: 0.875, y: 0.4, d: 0.14, ratio: 1.0, accent: '#2e9cea', soft: '#0e2739', ink: '#a2d3f6' },
-  { slug: 'pikachu', label: 'Pikachu', licence: 'Pokémon', game: 'switch-010003f003a34000', x: 0.37, y: 0.4, d: 0.44, ratio: 1.0, accent: '#ffe75c', soft: '#39330e', ink: '#fff099' },
-  { slug: 'dracaufeu', label: 'Dracaufeu', licence: 'Pokémon', game: 'switch-01004b3023412000', x: 0.72, y: 0.52, d: 0.26, ratio: 1.0, accent: '#d48255', soft: '#391d0e', ink: '#ebc3ad' },
-  { slug: 'florizarre', label: 'Florizarre', licence: 'Pokémon', game: 'switch-010087c02342e000', x: 0.45, y: 0.72, d: 0.42, ratio: 1.0, accent: '#51c3d3', soft: '#0e3439', ink: '#ade3eb' },
-  { slug: 'solgaleo', label: 'Solgaleo', licence: 'Pokémon', game: '3ds-3ds1606-pokemon-sun', x: 0.62, y: 0.27, d: 0.3, ratio: 0.8969, accent: '#dec77c', soft: '#392f0e', ink: '#ebdcad' },
-  { slug: 'marie', label: 'Marie', licence: 'Animal Crossing', game: '3ds-3ds1626-animal-crossing-new-leaf-welcome-amiibo', x: 0.78, y: 0.8, d: 0.24, ratio: 0.8945, accent: '#d1a447', soft: '#392b0e', ink: '#ebd7ad' },
-  { slug: 'kirby', label: 'Kirby', licence: 'Autres héros', game: '3ds-3ds0930-kirby-triple-deluxe', x: 0.37, y: 0.31, d: 0.32, ratio: 0.8906, accent: '#fe5d91', soft: '#390e1c', ink: '#fe9abb' },
-  { slug: 'samus', label: 'Samus', licence: 'Autres héros', game: '3ds-3ds1752-metroid-samus-returns', x: 0.42, y: 0.45, d: 0.3, ratio: 0.8867, accent: '#ed412c', soft: '#39130e', ink: '#f7aba1' },
-  { slug: 'pikmin', label: 'Pikmin', licence: 'Autres héros', game: '3ds-3ds1740-hey-pikmin', x: 0.45, y: 0.4, d: 0.3, ratio: 0.8945, accent: '#d1474e', soft: '#390e10', ink: '#ebadb0' },
-  { slug: 'jibanyan', label: 'Jibanyan', licence: 'Autres héros', game: '3ds-3ds1487-yo-kai-watch', x: 0.14, y: 0.76, d: 0.24, ratio: 0.8906, accent: '#ec4d2c', soft: '#39160e', ink: '#f7b0a1' },
-  { slug: 'layton', label: 'Professeur Layton', licence: 'Autres héros', game: '3ds-3ds0217-professeur-layton-et-le-masque-des-miracles', x: 0.4, y: 0.52, d: 0.22, ratio: 0.8906, accent: '#e9bb71', soft: '#39290e', ink: '#f1d5a7' },
-  { slug: 'alear', label: 'Alear', licence: 'Autres héros', game: 'switch-0100a6301214e000', x: 0.33, y: 0.33, d: 0.26, ratio: 1.0, accent: '#2d79eb', soft: '#0e1f39', ink: '#a2c3f6' },
-  { slug: 'pit', label: 'Pit', licence: 'Autres héros', game: '3ds-3ds0134-kid-icarus-uprising', x: 0.5, y: 0.62, d: 0.3, ratio: 0.8789, accent: '#7c9fde', soft: '#0e1d39', ink: '#adc3eb' },
-  { slug: 'shovel', label: 'Shovel Knight', licence: 'Autres héros', game: '3ds-3ds1372-shovel-knight', x: 0.5, y: 0.55, d: 0.3, ratio: 0.8809, accent: '#3e9dda', soft: '#0e2839', ink: '#a9d3ef' },
+export const GALLERY: GalleryImage[] = galerie.images;
+
+/** Ordre des familles dans le choix d'image ; les personnages maison viennent en dernier. */
+export const FAMILLES: string[] = galerie.familles;
+
+/** Préfixe d'une image de la galerie dans `avatarKind` (« perso:pokemon-pikachu »). */
+export const GALLERY_PREFIX = 'perso:';
+
+/**
+ * Anciens portraits découpés dans les jaquettes (avant le 22/11/2026) → image équivalente de la galerie.
+ * Un profil qui en a un garde un choix lisible sans rien réécrire ; le prochain choix enregistre le nouveau nom.
+ */
+const ANCIENS: Record<string, string> = {
+  mario: 'mario-mario', luigi: 'mario-luigi', yoshi: 'mario-yoshi', toad: 'mario-toad', link: 'zelda-link',
+  pikachu: 'pokemon-pikachu', dracaufeu: 'pokemon-anime-dracaufeu', florizarre: 'pokemon-anime-florizarre',
+  solgaleo: 'pokemon-anime-solgaleo', marie: 'animal-crossing-marie', kirby: 'kirby-kirby', samus: 'metroid-samus',
+  pikmin: 'autres-heros-pikmin', jibanyan: 'autres-heros-whisper', layton: 'autres-heros-professeur-layton',
+  alear: 'autres-heros-alear', pit: 'autres-heros-pit', shovel: 'autres-heros-shovel-knight',
+};
+
+const bySlug = new Map(GALLERY.map((g) => [g.slug, g]));
+
+export function galleryOf(kind: AvatarKind | undefined): GalleryImage | undefined {
+  if (!kind?.startsWith(GALLERY_PREFIX)) return undefined;
+  const slug = kind.slice(GALLERY_PREFIX.length);
+  return bySlug.get(slug) ?? bySlug.get(ANCIENS[slug] ?? '');
+}
+
+/** Nom d'image à jour (ancien portrait → image de la galerie) ; sert à reconnaître le choix actuel. */
+export function currentKind(kind: AvatarKind | undefined): AvatarKind | undefined {
+  const g = galleryOf(kind);
+  return g ? (`${GALLERY_PREFIX}${g.slug}` as AvatarKind) : kind;
+}
+
+/** Adresse du serveur pour les images (renseignée par `api.device()` ; vide = pas d'image). */
+let imageBase = '';
+export function setCoverBase(url: string | undefined) {
+  imageBase = (url ?? '').replace(/\/+$/, '');
+}
+
+/** Adresse du serveur des images (transmise à l'écran du haut de la Thor, qui n'appelle pas `api.device()`). */
+export function coverBase(): string {
+  return imageBase;
+}
+
+/** Adresse de l'image : animée (`live`) ou fixe ; `undefined` sans serveur connu (disque à la couleur d'accent). */
+export function galleryImage(g: GalleryImage, live: boolean): string | undefined {
+  if (!imageBase) return undefined;
+  const base = `${imageBase}/api/v1/avatars/${encodeURIComponent(g.slug)}`;
+  return g.anime && !live ? `${base}/fixe` : base;
+}
+
+/** Nom affiché de l'image du profil. */
+export function avatarLabel(kind: AvatarKind | undefined): string {
+  return galleryOf(kind)?.label ?? AVATARS.find((a) => a.kind === kind)?.label ?? 'Initiale';
+}
+
+/** Couleurs propres à une image (accent automatique). */
+function imageColors(kind: AvatarKind): { kind: AvatarKind; accent: string; soft: string; ink: string } {
+  const g = galleryOf(kind);
+  if (g) return { kind: `${GALLERY_PREFIX}${g.slug}` as AvatarKind, accent: g.accent, soft: g.soft, ink: g.ink };
+  const a = AVATARS.find((x) => x.kind === kind) ?? AVATARS[0];
+  return { kind: a.kind, accent: a.accent, soft: a.soft, ink: a.ink };
+}
+
+/** Le profil avec cette image ; l'accent suit l'image sauf s'il a été choisi à la main. */
+export function withAvatar(p: Profile, kind: AvatarKind): Profile {
+  const c = imageColors(kind);
+  if (p.accentAuto === false) return { ...p, avatarKind: c.kind };
+  return { ...p, avatarKind: c.kind, accent: c.accent, accentSoft: c.soft, accentInk: c.ink, accentAuto: true };
+}
+
+/**
+ * Palette de l'accent choisi : 12 teintes vives qui tiennent le contraste sur le fond sombre de l'interface
+ * (texte sombre #0b0f14 posé sur l'accent : rapport ≥ 7:1, vérifié par `contrastRatio` dans les tests),
+ * chacune avec son fond doux et son encre claire.
+ */
+export const ACCENTS: { name: string; accent: string; soft: string; ink: string }[] = [
+  { name: 'Rouge', accent: '#ff7a7a', soft: '#3d1616', ink: '#ffb3b3' },
+  { name: 'Corail', accent: '#ff8c5a', soft: '#3d2014', ink: '#ffc4a8' },
+  { name: 'Orange', accent: '#ffab3d', soft: '#3d2a10', ink: '#ffd39a' },
+  { name: 'Jaune', accent: '#ffd83d', soft: '#3a3210', ink: '#ffeb9a' },
+  { name: 'Vert pomme', accent: '#a6e34a', soft: '#26350f', ink: '#d4f2a3' },
+  { name: 'Vert', accent: '#34e0a1', soft: '#12352c', ink: '#8ff0c8' },
+  { name: 'Turquoise', accent: '#22d3c5', soft: '#0f3533', ink: '#8fece4' },
+  { name: 'Bleu ciel', accent: '#38b6ff', soft: '#123049', ink: '#9ad8ff' },
+  { name: 'Bleu', accent: '#7a9cff', soft: '#1a2448', ink: '#bccbff' },
+  { name: 'Violet', accent: '#b08cff', soft: '#2a2048', ink: '#d8c6ff' },
+  { name: 'Rose', accent: '#ff6fae', soft: '#3d1a2c', ink: '#ffb3d3' },
+  { name: 'Mauve', accent: '#e08cff', soft: '#361f42', ink: '#f0c6ff' },
 ];
 
-/** Ordre d'affichage des familles dans le choix d'image ; les personnages maison viennent en dernier. */
-export const LICENCES = ['Mario', 'Zelda', 'Pokémon', 'Animal Crossing', 'Autres héros'];
-
-/** Préfixe d'un portrait dans `avatarKind` (« perso:pikachu »). */
-export const PORTRAIT_PREFIX = 'perso:';
-
-export function portraitOf(kind: AvatarKind | undefined): Portrait | undefined {
-  if (!kind?.startsWith(PORTRAIT_PREFIX)) return undefined;
-  const slug = kind.slice(PORTRAIT_PREFIX.length);
-  return PORTRAITS.find((p) => p.slug === slug);
+/** Le profil avec cet accent choisi à la main, ou `null` : accent automatique d'après l'image. */
+export function withAccent(p: Profile, accent: string | null): Profile {
+  if (accent === null) {
+    const c = imageColors(p.avatarKind ?? AVATARS[0].kind);
+    return { ...p, accent: c.accent, accentSoft: c.soft, accentInk: c.ink, accentAuto: true };
+  }
+  const a = ACCENTS.find((x) => x.accent === accent) ?? ACCENTS[0];
+  return { ...p, accent: a.accent, accentSoft: a.soft, accentInk: a.ink, accentAuto: false };
 }
 
-/** Adresse du serveur pour les images des jeux (renseignée par `api.device()` ; vide = pas d'image). */
-let coverBase = '';
-export function setCoverBase(url: string | undefined) {
-  coverBase = (url ?? '').replace(/\/+$/, '');
-}
-
-/** Image du jeu d'un portrait ; `undefined` sans serveur connu (le disque reste à la couleur d'accent). */
-export function portraitImage(p: Portrait): string | undefined {
-  return coverBase ? `${coverBase}/api/v1/games/${encodeURIComponent(p.game)}/cover` : undefined;
-}
-
-/** Position de l'image dans un disque carré (pourcentages du disque) pour centrer le personnage. */
-export function portraitStyle(p: Portrait): string {
-  const w = 100 / p.d;
-  return `width:${w}%;left:${50 - p.x * w}%;top:${50 - p.y * p.ratio * w}%`;
-}
-
-/** Le profil avec cette image et la couleur d'accent qui va avec. */
-export function withAvatar(p: Profile, kind: AvatarKind): Profile {
-  const portrait = portraitOf(kind);
-  if (portrait) return { ...p, avatarKind: kind, accent: portrait.accent, accentSoft: portrait.soft, accentInk: portrait.ink };
-  const a = AVATARS.find((x) => x.kind === kind) ?? AVATARS[0];
-  return { ...p, avatarKind: a.kind, accent: a.accent, accentSoft: a.soft, accentInk: a.ink };
+/** Rapport de contraste WCAG entre deux couleurs #rrggbb. */
+export function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
+  return (x + 0.05) / (y + 0.05);
 }

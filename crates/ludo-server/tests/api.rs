@@ -303,11 +303,30 @@ async fn profils_creation_mise_a_jour_et_ordre() {
         serde_json::json!({
             "id": "guilhem", "name": "Gui", "avatarKind": "poisson",
             "accent": "#38b6ff", "accentSoft": "#123049", "accentInk": "#9ad8ff",
-            "prefs": { "sons": true, "vibrations": false }
+            "prefs": { "sons": true, "vibrations": false }, "accentAuto": true
         })
     );
     assert_eq!(v[1]["id"], "claire");
     assert_eq!(v.as_array().unwrap().len(), 2);
+}
+
+/// Accent choisi à la main : enregistré et relu ; absent de la requête (ancienne app) = automatique.
+#[tokio::test]
+async fn profil_accent_auto_enregistre_et_par_defaut() {
+    let a = app();
+    let mut manuel = profile_json("claire", "Claire", "perso:mk8-peach");
+    manuel["accentAuto"] = serde_json::json!(false);
+    manuel["accent"] = serde_json::json!("#ff6fae");
+    let (s, b) = call(&a, put_profile_req("claire", manuel)).await;
+    assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
+    let (_, b) = call(&a, get("/api/v1/profiles")).await;
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!((v[0]["accentAuto"].clone(), v[0]["accent"].clone()), (serde_json::json!(false), serde_json::json!("#ff6fae")));
+    let (s, _) = call(&a, put_profile_req("guilhem", profile_json("guilhem", "Guilhem", "renard"))).await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, b) = call(&a, get("/api/v1/profiles")).await;
+    let v: serde_json::Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v[1]["accentAuto"], serde_json::json!(true));
 }
 
 #[tokio::test]

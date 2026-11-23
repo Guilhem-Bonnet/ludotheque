@@ -106,6 +106,10 @@ pub fn router_with(store: Arc<Store>, converter: Option<Arc<Converter>>) -> Rout
         .route("/api/v1/games/{id}/files/{file_id}", get(get_game_file))
         .route("/api/v1/games/{id}/cover", get(get_cover).put(put_cover).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
         .route("/api/v1/games/{id}/background", get(get_background).put(put_background).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
+        // Galerie des images de profil (envoyées par `scripts/avatars.py`) : l'image telle quelle (GIF animé
+        // possible) et sa version fixe, affichée hors focus.
+        .route("/api/v1/avatars/{slug}", get(get_avatar).put(put_avatar).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
+        .route("/api/v1/avatars/{slug}/fixe", get(get_avatar_still).put(put_avatar_still).layer(DefaultBodyLimit::max(store::MAX_COVER_BYTES)))
         .route("/api/v1/catalog/rescan", post(post_rescan))
         .route("/api/v1/devices", get(get_devices))
         // Inventaire d'un appareil : quelques centaines de jeux au plus (limite 256 Kio).
@@ -230,6 +234,22 @@ async fn get_background(State(s): State<AppState>, Path(id): Path<String>, heade
     get_image(s, ImageKind::Background, id, headers).await
 }
 
+async fn put_avatar(State(s): State<AppState>, Path(slug): Path<String>, body: Bytes) -> Result<Response, StoreError> {
+    put_image(s, ImageKind::Avatar, slug, body).await
+}
+
+async fn get_avatar(State(s): State<AppState>, Path(slug): Path<String>, headers: HeaderMap) -> Result<Response, StoreError> {
+    get_image(s, ImageKind::Avatar, slug, headers).await
+}
+
+async fn put_avatar_still(State(s): State<AppState>, Path(slug): Path<String>, body: Bytes) -> Result<Response, StoreError> {
+    put_image(s, ImageKind::AvatarStill, slug, body).await
+}
+
+async fn get_avatar_still(State(s): State<AppState>, Path(slug): Path<String>, headers: HeaderMap) -> Result<Response, StoreError> {
+    get_image(s, ImageKind::AvatarStill, slug, headers).await
+}
+
 async fn put_image(s: AppState, kind: ImageKind, id: String, body: Bytes) -> Result<Response, StoreError> {
     blocking(move || s.put_image(kind, &id, &body)).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -238,8 +258,9 @@ async fn put_image(s: AppState, kind: ImageKind, id: String, body: Bytes) -> Res
 async fn get_image(s: AppState, kind: ImageKind, id: String, headers: HeaderMap) -> Result<Response, StoreError> {
     let (path, mime, v) = blocking(move || s.image_info(kind, &id).ok_or(StoreError::NotFound)).await?;
     let etag = format!("\"{v}\"");
-    // L'URL porte déjà `?v=` : l'image ne change pas sous une même URL, le cache peut la garder longtemps.
-    let cache = "public, max-age=86400";
+    // Images des jeux : l'URL porte déjà `?v=`, l'image ne change pas sous une même URL, le cache peut la
+    // garder longtemps. Galerie des profils : URL fixe (`/api/v1/avatars/{slug}`), revalidée par l'ETag.
+    let cache = if kind.per_game() { "public, max-age=86400" } else { "no-cache" };
     if headers.get(header::IF_NONE_MATCH).and_then(|h| h.to_str().ok()).is_some_and(|h| h.split(',').any(|t| t.trim() == etag)) {
         return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, etag), (header::CACHE_CONTROL, cache.into())]).into_response());
     }
