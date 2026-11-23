@@ -42,17 +42,18 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
 
   /**
    * Jeu en flux : arrêter Moonlight ne ferait que couper la connexion, le jeu continuerait sur le PC.
-   * La Ludothèque dépose une demande explicite dans son dossier (`Android/data/<paquet>/files`), écrite
-   * à côté puis renommée : `ludo adb-watch` la reçoit (inotifyd) et termine l'appli Sunshine comme
-   * « Quitter l'appli » (l'émulateur sauvegarde, puis la synchro part). Une simple mort de Moonlight
-   * (réseau, Android) ne dépose rien. Sans PC relié, la demande périme (120 s) sans effet.
+   * La Ludothèque dépose une demande explicite dans son dossier (`Android/data/<paquet>/files`) :
+   * `ludo adb-watch` la reçoit (inotifyd, événement `w` : fichier fermé après écriture) et termine
+   * l'appli Sunshine comme « Quitter l'appli » (l'émulateur sauvegarde, puis la synchro part). Écrite
+   * directement, pas à côté puis renommée : mesuré sur la Thor le 23/11, un renommage dans
+   * `Android/data` ne produit pas l'événement `m` d'inotifyd (seulement `n` et `w`). Une simple mort de
+   * Moonlight (réseau, Android) ne dépose rien. Sans PC relié, la demande périme (120 s) sans effet.
    */
   private fun demanderFinDuFlux(game: String) {
     try {
       val dossier = activity.getExternalFilesDir(null) ?: return
-      val tmp = java.io.File(dossier, "$DEMANDE_FIN_FLUX.tmp")
-      tmp.writeText("${System.currentTimeMillis() / 1000} ${game.replace(Regex("\\s"), "_")}\n")
-      if (!tmp.renameTo(java.io.File(dossier, DEMANDE_FIN_FLUX))) tmp.delete()
+      java.io.File(dossier, DEMANDE_FIN_FLUX)
+        .writeText("${System.currentTimeMillis() / 1000} ${game.replace(Regex("\\s"), "_")}\n")
     } catch (e: Exception) {
       android.util.Log.w("LudoArret", "demande de fin du flux non déposée : $e")
     }

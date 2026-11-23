@@ -75,7 +75,9 @@
     feedback('ok');
     // La carte disparaît avec le bouton qui avait le focus : il revient à la tuile choisie de l'accueil.
     requestAnimationFrame(() => {
-      const tuile = document.querySelector<HTMLElement>('.slot.focused .tile');
+      // Créneau choisi : une tuile de jeu ou « Tous les jeux » (bouton `.all-games`, sans `.tile`) ;
+      // sinon le focus se perdait (essai Thor du 23/11 après une partie lancée de la Bibliothèque).
+      const tuile = document.querySelector<HTMLElement>('.slot.focused .focusable');
       if (tuile) tuile.focus({ preventScroll: true });
       else focusFirst();
     });

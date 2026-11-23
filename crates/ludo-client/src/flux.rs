@@ -9,8 +9,9 @@
 //! synchro part (comme une fin de flux) ; Sunshine voit l'appli finie et clôt la session.
 //!
 //! Déclencheur EXPLICITE, jamais une simple mort de Moonlight (coupure réseau, Android qui le tue) :
-//! la Ludothèque dépose le fichier [`DEMANDE`] dans son dossier `Android/data/<paquet>/files` (écrit à
-//! côté puis renommé) ; `ludo adb-watch` le reçoit par `inotifyd` (événement `m`), le lit, le retire
+//! la Ludothèque dépose le fichier [`DEMANDE`] dans son dossier `Android/data/<paquet>/files` ;
+//! `ludo adb-watch` le reçoit par `inotifyd` (événement `w`, fichier fermé après écriture ; un
+//! renommage n'y produit pas `m`, mesuré sur la Thor le 23/11), le lit, le retire
 //! (dossier de la Ludothèque) et n'agit que sur une demande récente ([`FRAICHEUR_S`]).
 
 use crate::adb::LUDO_PACKAGES;
@@ -29,7 +30,7 @@ pub fn dossiers() -> Vec<String> {
 /// Classement d'une ligne d'`inotifyd -` (« <événements>\t<dossier>[\t<nom>] »).
 #[derive(Debug, PartialEq, Eq)]
 pub enum Ligne {
-    /// Demande de fin du flux déposée (renommée vers [`DEMANDE`]) dans ce dossier.
+    /// Demande de fin du flux déposée (écrite, ou renommée vers [`DEMANDE`]) dans ce dossier.
     Demande(String),
     /// Autre fichier d'un dossier de demande (config.toml…) : ignoré, ce n'est pas une sauvegarde.
     Ignoree,
