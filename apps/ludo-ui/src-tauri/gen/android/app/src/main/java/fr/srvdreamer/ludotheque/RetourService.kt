@@ -2,8 +2,11 @@ package fr.srvdreamer.ludotheque
 
 import android.accessibilityservice.AccessibilityService
 import android.app.ActivityOptions
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.SystemClock
@@ -89,6 +92,19 @@ class RetourService : AccessibilityService() {
       arme = false
     }
 
+    /**
+     * Paquet dont « Fermer le jeu » vient d'ouvrir la page « Infos de l'appli » : quand Android annonce
+     * son arrêt forcé (`PACKAGE_RESTARTED`), la Ludothèque revient seule sur l'accueil, sans l'appui sur
+     * B qui restait nécessaire pour quitter la page des Réglages (essai Thor 0.9.0, 23/11 00:44).
+     * « Annuler » ne produit aucune annonce : rien ne se passe. Effacé dès que la Ludothèque repasse devant.
+     */
+    @Volatile var fermeture: String? = null
+      private set
+
+    fun attendreFermeture(paquet: String) {
+      fermeture = paquet
+    }
+
     /** Délai entre la demande de retour et l'arrivée de la Ludothèque (journal seulement). */
     fun arrivee() {
       val d = demandeA
@@ -111,20 +127,60 @@ class RetourService : AccessibilityService() {
   /** Dernière appli au premier plan de l'écran principal (vraie activité, hors fenêtres ignorées). */
   private var devant: String? = null
 
+  /**
+   * Arrêt forcé d'un paquet (annonce système protégée : seul Android l'envoie). Ne sert qu'à la
+   * fermeture demandée par la Ludothèque ; tout autre paquet est ignoré.
+   */
+  private val arrets = object : BroadcastReceiver() {
+    override fun onReceive(ctx: Context, intent: Intent) {
+      val pkg = intent.data?.schemeSpecificPart ?: return
+      synchronized(verrou) {
+        if (pkg != fermeture) return
+        fermeture = null
+        Log.i(TAG, "arrêt forcé de $pkg confirmé : retour à l'accueil")
+        retour(ferme = true)
+      }
+    }
+  }
+  private var arretsEcoutes = false
+
   override fun onServiceConnected() {
     super.onServiceConnected()
     EnCours.restaurer(this)
     actif = true
+    val filtre = IntentFilter(Intent.ACTION_PACKAGE_RESTARTED).apply { addDataScheme("package") }
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        registerReceiver(arrets, filtre, Context.RECEIVER_EXPORTED)
+      } else {
+        registerReceiver(arrets, filtre)
+      }
+      arretsEcoutes = true
+    } catch (e: Exception) {
+      Log.w(TAG, "annonce d'arrêt forcé non écoutée : $e")
+    }
     Log.i(TAG, "service lié (lanceur : ${lanceur() ?: "aucun lanceur par défaut : retour inactif"})")
+  }
+
+  private fun arreterEcoute() {
+    if (!arretsEcoutes) return
+    arretsEcoutes = false
+    try {
+      unregisterReceiver(arrets)
+    } catch (e: IllegalArgumentException) {
+      // Déjà retiré.
+    }
   }
 
   override fun onUnbind(intent: Intent?): Boolean {
     actif = false
+    arreterEcoute()
     return super.onUnbind(intent)
   }
 
   override fun onDestroy() {
     actif = false
+    arreterEcoute()
     super.onDestroy()
   }
 
@@ -146,6 +202,7 @@ class RetourService : AccessibilityService() {
       // La Ludothèque est devant : B ou HOME depuis ici mènent au lanceur sans redirection.
       devant = pkg
       arme = false
+      fermeture = null
       return
     }
     if (jeu != null && pkg == jeu.paquet) {
