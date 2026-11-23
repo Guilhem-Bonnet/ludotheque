@@ -190,22 +190,46 @@ impl Adb {
             .filter_map(|(i, r)| rom_ext(r).filter(|e| ludo_core::rom::HEADER_EXTS.contains(&e.as_str())).map(|e| (i, e)))
             .collect();
         let mut out = vec![None; remotes.len()];
-        if readable.is_empty() {
-            return out;
+        let heads = self.heads(remotes, &readable.iter().map(|(i, _)| *i).collect::<Vec<_>>(), ludo_core::rom::HEADER_LEN);
+        for ((i, ext), head) in readable.iter().zip(heads) {
+            out[*i] = head.and_then(|h| ludo_core::rom::title_id_from_header(ext, &h));
         }
+        out
+    }
+
+    /// Identifiant de titre des ROM Switch de l'appareil (`local::switch_title_id`) : en-tête PFS0 des
+    /// `.nsp`/`.nsz` (un seul `adb shell` pour toutes), sinon `[<titre>]` du nom (`.xci`/`.xcz`, dont
+    /// l'identifiant est chiffré). Un résultat par chemin, dans l'ordre.
+    pub fn switch_title_ids(&self, remotes: &[String]) -> Vec<Option<u64>> {
+        let pfs0: Vec<usize> = remotes
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| rom_ext(r).is_some_and(|e| ludo_core::rom::PFS0_EXTS.contains(&e.as_str())))
+            .map(|(i, _)| i)
+            .collect();
+        let mut heads: Vec<Option<Vec<u8>>> = vec![None; remotes.len()];
+        for (i, h) in pfs0.iter().zip(self.heads(remotes, &pfs0, ludo_core::rom::PFS0_HEADER_LEN)) {
+            heads[*i] = h;
+        }
+        remotes.iter().zip(&heads).map(|(r, h)| crate::local::switch_title_id(r, h.as_deref())).collect()
+    }
+
+    /// Premiers `len` octets des fichiers `remotes[i]` pour chaque `i` de `which`, par `dd` (lecture
+    /// seule), un appel `adb shell` par paquet de 100. `None` : appel en échec ; bloc vide : fichier illisible.
+    fn heads(&self, remotes: &[String], which: &[usize], len: usize) -> Vec<Option<Vec<u8>>> {
+        let mut out = Vec::with_capacity(which.len());
         // Par paquets : une commande `sh -c` trop longue serait refusée (limite d'un argument).
-        for chunk in readable.chunks(100) {
-            let script: String = chunk
-                .iter()
-                .map(|(i, _)| format!("dd if={} bs={} count=1 2>/dev/null | od -An -tx1 -v; echo =;", sq(&remotes[*i]), ludo_core::rom::HEADER_LEN))
-                .collect();
+        for chunk in which.chunks(100) {
+            let script: String = chunk.iter().map(|i| format!("dd if={} bs={len} count=1 2>/dev/null | od -An -tx1 -v; echo =;", sq(&remotes[*i]))).collect();
             match self.shell(&script) {
                 Ok(text) => {
-                    for ((i, ext), block) in chunk.iter().zip(split_blocks(&text)) {
-                        out[*i] = ludo_core::rom::title_id_from_header(ext, &parse_od(&block));
-                    }
+                    let mut blocks = split_blocks(&text).into_iter();
+                    out.extend(chunk.iter().map(|_| blocks.next().map(|b| parse_od(&b))));
                 }
-                Err(e) => eprintln!("lecture des en-têtes de ROM impossible : {e}"),
+                Err(e) => {
+                    eprintln!("lecture des en-têtes de ROM impossible : {e}");
+                    out.extend(chunk.iter().map(|_| None));
+                }
             }
         }
         out

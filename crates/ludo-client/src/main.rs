@@ -319,7 +319,11 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
     let by_title_id = title_id_matches(&ctx.client, &dev, &games, &rom_paths, |g| {
         rom_for(g, &rom_paths).is_some() || g.files.iter().any(|f| f.role == ludo_proto::FileRole::Base && rom_has(&f.path, &roms))
     });
-    let rom_of = |g: &ludo_proto::CatalogGame| rom_for(g, &rom_paths).or_else(|| by_title_id.get(&g.id));
+    // Switch : même jeu, autre nom (« Pokemon Diamant Etincelant - Brilliant Diamond […].xcz » au serveur,
+    // « Pokemon Brilliant Diamond […](nsw2u.xyz).xci » sur la Thor, 23/11) : par identifiant de titre.
+    let claimed: std::collections::BTreeSet<&String> = games.iter().filter_map(|g| rom_for(g, &rom_paths)).chain(by_title_id.values()).collect();
+    let by_switch = switch_matches(&dev, &games, &rom_paths, &claimed);
+    let rom_of = |g: &ludo_proto::CatalogGame| rom_for(g, &rom_paths).or_else(|| by_title_id.get(&g.id)).or_else(|| by_switch.get(&g.id));
     let roms_root = conf.roms.as_deref().map(|r| format!("{}/", r.trim_end_matches('/'))).unwrap_or_default();
     // Inventaire de l'appareil (envoyé au serveur à la fin) : ROM présentes, jeux jouables en flux
     // depuis ce PC (applis Sunshine), sauvegardes trouvées sur l'appareil.
@@ -542,6 +546,57 @@ fn title_id_matches(
         let r: Vec<(&str, u64)> = free
             .iter()
             .zip(&device_tids)
+            .filter(|(p, _)| p.rsplit('/').nth(1).is_some_and(|d| dirs.contains(&d)))
+            .filter_map(|(p, t)| t.map(|t| (p.as_str(), t)))
+            .collect();
+        for (game, rom) in ludo_client::local::pair_by_title_id(&g, &r) {
+            out.insert(game.to_string(), rom.to_string());
+        }
+    }
+    out
+}
+
+/// Identifiant de titre d'un jeu Switch du catalogue : `title_id` de la fiche, sinon `[<titre>]` du nom
+/// de sa ROM de base (jamais celui d'une mise à jour ou d'un contenu additionnel : fichiers de base seulement).
+fn switch_catalog_tid(g: &ludo_proto::CatalogGame) -> Option<u64> {
+    g.title_id
+        .as_deref()
+        .filter(|t| t.len() == 16)
+        .and_then(|t| u64::from_str_radix(t, 16).ok())
+        .or_else(|| g.files.iter().filter(|f| f.role == ludo_proto::FileRole::Base).find_map(|f| ludo_client::local::title_key(&f.path)).and_then(|(t, _)| u64::from_str_radix(&t, 16).ok()))
+}
+
+/// Jeux Switch du catalogue sans ROM reconnue par le nom, retrouvés sur l'appareil par l'identifiant de
+/// titre (`Adb::switch_title_ids` : en-tête PFS0 des `.nsp`/`.nsz`, sinon `[<titre>]` du nom) parmi les
+/// ROM Switch encore libres (`taken` : déjà attribuées). Rien n'est lu s'il ne reste aucun jeu à rapprocher.
+fn switch_matches(dev: &ludo_client::adb::Adb, games: &[ludo_proto::CatalogGame], rom_paths: &[String], taken: &std::collections::BTreeSet<&String>) -> std::collections::BTreeMap<String, String> {
+    let wanted: Vec<&ludo_proto::CatalogGame> =
+        games.iter().filter(|g| matches!(g.console.as_str(), "switch" | "switch2") && rom_for(g, rom_paths).is_none() && switch_catalog_tid(g).is_some()).collect();
+    if wanted.is_empty() {
+        return Default::default();
+    }
+    let free: Vec<String> = rom_paths
+        .iter()
+        .filter(|p| !taken.contains(p) && matches!(ludo_client::local::match_key(p).1.as_str(), "nsp" | "xci"))
+        .filter(|p| p.rsplit('/').nth(1).is_some_and(|d| wanted.iter().any(|g| rom_dirs_of(&g.console).contains(&d))))
+        .cloned()
+        .collect();
+    if free.is_empty() {
+        return Default::default();
+    }
+    let ids = dev.switch_title_ids(&free);
+    switch_pairs(&wanted, &free, &ids)
+}
+
+/// Partie pure de [`switch_matches`] : jeu → ROM de même identifiant, dans le sous-dossier de sa console.
+fn switch_pairs(wanted: &[&ludo_proto::CatalogGame], free: &[String], ids: &[Option<u64>]) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    for console in wanted.iter().map(|g| g.console.as_str()).collect::<std::collections::BTreeSet<_>>() {
+        let dirs = rom_dirs_of(console);
+        let g: Vec<(&str, u64)> = wanted.iter().filter(|g| g.console == console).filter_map(|g| Some((g.id.as_str(), switch_catalog_tid(g)?))).collect();
+        let r: Vec<(&str, u64)> = free
+            .iter()
+            .zip(ids)
             .filter(|(p, _)| p.rsplit('/').nth(1).is_some_and(|d| dirs.contains(&d)))
             .filter_map(|(p, t)| t.map(|t| (p.as_str(), t)))
             .collect();
@@ -1167,6 +1222,68 @@ mod tests_sunshine {
         assert_eq!(rom_for(&g, &p), Some(&p[0]));
         // .sav voisin, image, ou jeu homonyme d'une autre console : jamais pris pour la ROM.
         assert_eq!(rom_for(&g, &paths(&["n3ds/Pokemon X (Europe) (En,Fr).sav", "nds/Pokemon X (Europe) (En,Fr).cxi"])), None);
+    }
+
+    /// Les 7 ROM Switch de la Thor (noms relevés par `adb shell find` le 23/11) face aux fiches du
+    /// serveur : seule Super Mario Party avait son `rom` dans l'inventaire (même nom, `nsz`→`nsp`).
+    #[test]
+    fn roms_switch_de_la_thor_par_identifiant_de_titre() {
+        let fiche = |tid: &str, base: &str, maj: Option<&str>| -> ludo_proto::CatalogGame {
+            let mut files = vec![serde_json::json!({ "id": 1, "role": "base", "path": base, "format": "nsz", "size": 1, "mtime": 0 })];
+            if let Some(m) = maj {
+                files.push(serde_json::json!({ "id": 2, "role": "maj", "path": m, "format": "nsz", "size": 1, "mtime": 0 }));
+            }
+            serde_json::from_value(serde_json::json!({
+                "id": format!("switch-{tid}"), "console": "switch", "title": tid, "short": tid, "title_id": tid,
+                "art": { "motif": "x", "from": "#000", "to": "#000", "ink": "#fff" }, "catalogued": true, "files": files
+            }))
+            .unwrap()
+        };
+        let games = [
+            fiche("0100000011d90000", "switch/Pokemon Diamant Etincelant - Brilliant Diamond [0100000011D90000][v0].xcz", Some("switch/MAJ-DLC/Pokemon Diamant Etincelant - Brilliant Diamond [0100000011D90800][v393216] (MAJ 1.3.0).nsz")),
+            fiche("010003f003a34000", "switch/Pokemon Lets Go Pikachu [010003F003A34000][v1.0.2].xci", None),
+            fiche("010018e011d92000", "switch/Pokemon Perle Scintillante - Shining Pearl [010018E011D92000][v0].xcz", None),
+            fiche("01004b3023412000", "switch/Pokemon Rouge Feu - FireRed (FR) [01004B3023412000][v0].nsz", None),
+            fiche("010087c02342e000", "switch/Pokemon Vert Feuille - LeafGreen (FR) [010087C02342E000][v0].nsz", None),
+            fiche("010036b0034e4000", "switch/Super Mario Party [010036B0034E4000][v0].nsz", Some("switch/MAJ-DLC/Super Mario Party [010036B0034E4800][v65536] (MAJ 1.0.1).nsz")),
+            fiche("01002da013484000", "switch/The Legend of Zelda Skyward Sword HD [01002DA013484000][v0].nsz", None),
+        ];
+        let r = "/storage/emulated/0/Documents/Roms";
+        let paths: Vec<String> = [
+            "switch/Pokemon Brilliant Diamond [0100000011D90000][v0](nsw2u.xyz).xci",
+            "switch/Pokemon Lets Go Pikachu [010003F003A34000].xci",
+            "switch/Pokemon Shining Pearl [010018E011D92000][v0](nsw2u.xyz).xci",
+            "switch/Pokémon FireRed Version (French Ver.) [01004B3023412000][v0].nsp",
+            "switch/Pokémon LeafGreen Version (French Ver.) [010087C02342E000][v0].nsp",
+            "switch/Super Mario Party [010036B0034E4000][v0].nsp",
+            "switch/The Legend of Zelda Skyward Sword HD [01002DA013484000].nsp",
+        ]
+        .iter()
+        .map(|n| format!("{r}/{n}"))
+        .collect();
+        // Avant : seule Super Mario Party trouvée par le nom.
+        let by_name: Vec<&str> = games.iter().filter(|g| rom_for(g, &paths).is_some()).map(|g| g.id.as_str()).collect();
+        assert_eq!(by_name, ["switch-010036b0034e4000"]);
+        let taken: std::collections::BTreeSet<&String> = games.iter().filter_map(|g| rom_for(g, &paths)).collect();
+        let wanted: Vec<&ludo_proto::CatalogGame> = games.iter().filter(|g| rom_for(g, &paths).is_none()).collect();
+        let free: Vec<String> = paths.iter().filter(|p| !taken.contains(p)).cloned().collect();
+        let ids: Vec<Option<u64>> = free.iter().map(|p| ludo_client::local::switch_title_id(p, None)).collect();
+        let pairs = switch_pairs(&wanted, &free, &ids);
+        assert_eq!(pairs.len(), 6, "{pairs:?}");
+        for g in &wanted {
+            let tid = g.title_id.as_deref().unwrap().to_ascii_uppercase();
+            assert!(pairs[&g.id].contains(&format!("[{tid}]")), "{} → {}", g.id, pairs[&g.id]);
+        }
+        // Mise à jour ou .sav portant l'identifiant d'un jeu : jamais prise pour sa ROM de base.
+        let pieges = [format!("{r}/switch/Pokemon BD [0100000011D90800][v393216].nsp"), format!("{r}/switch/Pokemon BD [0100000011D90000].sav")];
+        let ids: Vec<Option<u64>> = pieges.iter().map(|p| ludo_client::local::switch_title_id(p, None)).collect();
+        assert!(switch_pairs(&wanted, &pieges, &ids).is_empty());
+        // Nom sans identifiant : l'en-tête PFS0 (ticket) le donne.
+        let renomme = [format!("{r}/switch/Rouge Feu.nsp")];
+        assert_eq!(switch_pairs(&wanted, &renomme, &[Some(0x0100_4b30_2341_2000)]).get("switch-01004b3023412000"), Some(&renomme[0]));
+        // Autre console : jamais.
+        let ailleurs = [format!("{r}/switch2/Pokemon Lets Go Pikachu [010003F003A34000].xci")];
+        assert!(switch_pairs(&wanted, &ailleurs, &[Some(0x0100_03f0_03a3_4000)]).is_empty());
     }
 
     #[test]

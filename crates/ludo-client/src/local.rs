@@ -64,6 +64,22 @@ pub fn title_key(name: &str) -> Option<(String, String)> {
     Some((tid?, version.filter(|v| !v.is_empty()).unwrap_or_else(|| "0".into())))
 }
 
+/// Identifiant de titre d'une ROM Switch de l'appareil (`.nsp`/`.xci` et leurs formes compressées) :
+/// celui de l'en-tête PFS0 lu (`header`, ticket `.tik`, voir `ludo_core::rom::title_id_from_pfs0`)
+/// s'il en donne un, sinon le `[<titre>]` du nom. Un `.xci` n'a pas d'identifiant lisible en clair :
+/// seul son nom compte. `None` pour tout autre fichier (`.sav`, image, `.bak` portant le même
+/// `[titre]`), qui n'est jamais pris pour la ROM.
+pub fn switch_title_id(name: &str, header: Option<&[u8]>) -> Option<u64> {
+    let ext = match_key(name).1;
+    if !matches!(ext.as_str(), "nsp" | "xci") {
+        return None;
+    }
+    header
+        .filter(|_| ext == "nsp")
+        .and_then(ludo_core::rom::title_id_from_pfs0)
+        .or_else(|| title_key(name).and_then(|(t, _)| u64::from_str_radix(&t, 16).ok()))
+}
+
 /// Index des fichiers de jeu présents sur l'appareil, par console.
 #[derive(Debug, Default, Clone)]
 pub struct LocalIndex {
@@ -318,6 +334,11 @@ mod tests {
         assert_eq!(title_key("MAJ [0100F2C0115B6800][v131072] (MAJ 1.1.0).nsz").unwrap().1, "131072");
         assert_ne!(title_key("MAJ [0100F2C0115B6800][v131072].nsp"), title_key("MAJ [0100F2C0115B6800][v65536].nsp"), "autre version de mise à jour");
         assert_eq!(title_key("3ds/Jeu (Europe).cxi"), None);
+        // Identité Switch d'un fichier de l'appareil (noms relevés sur la Thor le 23/11).
+        assert_eq!(switch_title_id("Pokemon Brilliant Diamond [0100000011D90000][v0](nsw2u.xyz).xci", None), Some(0x0100_0000_11d9_0000));
+        assert_eq!(switch_title_id("Pokemon Lets Go Pikachu [010003F003A34000].xcz", Some(b"HEAD")), Some(0x0100_03f0_03a3_4000), "xci : nom seul");
+        assert_eq!(switch_title_id("Pokemon Brilliant Diamond [0100000011D90000].sav", None), None, "pas une ROM");
+        assert_eq!(switch_title_id("Jeu sans identifiant.xci", None), None);
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("Pokemon Lets Go Pikachu [010003F003A34000].xci"), b"x").unwrap();
         let mut idx = LocalIndex::default();
