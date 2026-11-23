@@ -95,6 +95,8 @@ object EnCours {
     val lancement: Lancement,
     /** Heure du lancement (horloge murale, ms) : temps de la session. */
     val depuis: Long,
+    /** Visuel de l'écran du bas (JSON `EcranBasInfo` de menu_jeu.rs) ; absent pour un jeu à deux écrans. */
+    val ecranBas: String? = null,
   ) {
     /** Paquet Android de l'émulateur (ou de Moonlight). */
     val paquet: String get() = lancement.paquet
@@ -119,6 +121,7 @@ object EnCours {
       .putString("game", j.game)
       .putString("lancement", j.lancement.json())
       .putLong("depuis", j.depuis)
+      .putString("ecranBas", j.ecranBas)
       .putInt("demarrages", demarrages(ctx))
       .apply()
   }
@@ -145,6 +148,6 @@ object EnCours {
       return
     }
     val lancement = p.getString("lancement", null)?.let { Lancement.depuis(it) } ?: return oublier(ctx)
-    jeu = Jeu(game, lancement, p.getLong("depuis", System.currentTimeMillis()))
+    jeu = Jeu(game, lancement, p.getLong("depuis", System.currentTimeMillis()), p.getString("ecranBas", null))
   }
 }

@@ -18,6 +18,8 @@ import app.tauri.plugin.Plugin
 class SuivreArgs {
   lateinit var game: String
   lateinit var intent: StartArgs
+  /** Visuel de l'écran du bas (JSON `EcranBasInfo`), seulement pour un jeu à un écran. */
+  var ecranBas: String? = null
 }
 
 /**
@@ -79,8 +81,15 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     val args = invoke.parseArgs(SuivreArgs::class.java)
     val a = args.intent
     val lancement = EnCours.Lancement(a.packageName, a.activity, a.action, a.data, a.extras, a.boolExtras, a.grant, a.file, a.fileExtras)
-    EnCours.suivre(activity, EnCours.Jeu(args.game, lancement, System.currentTimeMillis()))
+    EcranBas.oublierRetrait()
+    val depuis = System.currentTimeMillis()
+    // Heure du lancement ajoutée au visuel (temps de session), qui la garde pour « Reprendre ».
+    val bas = args.ecranBas?.let { try { org.json.JSONObject(it).put("depuisMs", depuis).toString() } catch (e: Exception) { null } }
+    EnCours.suivre(activity, EnCours.Jeu(args.game, lancement, depuis, bas))
     RetourService.armer()
+    // Visuel lancé AVANT l'intent du jeu (LudoPlugin.startActivity) : le jeu, lancé ensuite sur l'écran
+    // principal, y prend le focus et la manette.
+    bas?.let { EcranBas.montrer(activity, it) }
     invoke.resolve()
   }
 
@@ -100,7 +109,8 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
       ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
     try {
       RetourService.armer()
-      activity.startActivity(lanceur ?: j.lancement.intent(activity))
+      j.ecranBas?.let { EcranBas.montrer(activity, it) }
+      activity.startActivity(lanceur ?: j.lancement.intent(activity), EcranBas.principal())
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
       invoke.reject("Application absente de l'appareil : ${j.paquet}")
@@ -143,6 +153,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
         if (reste > 0) Thread.sleep(reste)
         EnCours.oublier(activity)
         RetourService.desarmer()
+        EcranBas.retirer("jeu fermé")
         if (j.paquet == MOONLIGHT) demanderFinDuFlux(j.game)
         val issue = ArretDirect.arreter(j.paquet)
         if (issue.ok) {
@@ -151,6 +162,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
         }
         // L'arrêt forcé confirmé ramène la Ludothèque sur l'accueil (RetourService, PACKAGE_RESTARTED).
         RetourService.attendreFermeture(j.paquet)
+        EcranBas.oublierRetrait()
         val infos = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", j.paquet, null))
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         activity.runOnUiThread {
@@ -174,6 +186,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
    */
   @Command
   fun versLanceur(invoke: Invoke) {
+    EcranBas.oublierRetrait()
     val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
       activity.startActivity(home)
@@ -191,6 +204,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   fun oublier(invoke: Invoke) {
     EnCours.oublier(activity)
     RetourService.desarmer()
+    EcranBas.retirer("jeu oublié")
     invoke.resolve()
   }
 }

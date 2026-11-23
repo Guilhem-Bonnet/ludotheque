@@ -21,6 +21,8 @@ class MainActivity : TauriActivity() {
   override fun onWindowFocusChanged(hasFocus: Boolean) {
     super.onWindowFocusChanged(hasFocus)
     if (hasFocus) immersive() else releaseArrows()
+    // Focus perdu juste après le retrait du visuel de l'écran du bas : voir EcranBas.reprendreFocus.
+    if (!hasFocus && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) EcranBas.reprendreFocus(this)
   }
 
   /** Plein écran façon console : barres système masquées, rappelées d'un glissement. */
@@ -98,6 +100,28 @@ class MainActivity : TauriActivity() {
     if (old != 0) super.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, if (old < 0) negative else positive, 0))
     if (new != 0) super.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, if (new < 0) negative else positive, 0))
     return new
+  }
+
+  // Ludothèque de nouveau visible (retour du jeu, HOME puis tuile, « Fermer le jeu ») : elle reprend
+  // l'écran du bas (DoubleEcran) ; le visuel « En cours » n'a plus lieu d'être. onStart et non onResume :
+  // seul un vrai retour après onStop compte, pas un changement d'activité active entre les deux écrans.
+  override fun onStart() {
+    super.onStart()
+    if (EcranBas.retirer("Ludothèque devant")) EcranBas.apresRetrait()
+  }
+
+  // Android 10+ : l'activité « au sommet » passe à une autre, ici celle que le système relance sur l'écran
+  // du bas, alors que la Ludothèque reste active sur l'écran principal (plusieurs activités actives).
+  override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+    super.onTopResumedActivityChanged(isTopResumedActivity)
+    if (!isTopResumedActivity && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) EcranBas.reprendreFocus(this)
+  }
+
+  // Tout départ vers une autre activité met la Ludothèque en pause : la fenêtre de reprise du focus se
+  // referme (une perte de focus qui suit un lancement de jeu est voulue).
+  override fun onUserLeaveHint() {
+    EcranBas.oublierRetrait()
+    super.onUserLeaveHint()
   }
 
   // Menu en jeu : la Ludothèque revient devant alors qu'un jeu est ouvert (bouton HOME, lanceur,

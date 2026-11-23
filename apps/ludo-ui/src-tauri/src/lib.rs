@@ -1336,8 +1336,17 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     step(Step::Telechargement, StepState::Fait, None);
     step(Step::Sauvegarde, StepState::Fait, Some("Synchronisée par le PC".into()));
     step(Step::Lancement, StepState::EnCours, None);
-    // Menu en jeu : le jeu est retenu AVANT l'intent (sa fenêtre peut apparaître aussitôt).
-    menu_jeu::lance(app, game, &intent);
+    // Menu en jeu : le jeu est retenu AVANT l'intent (sa fenêtre peut apparaître aussitôt). Jeu à un
+    // écran : visuel « En cours » lancé sur l'écran du bas avant le jeu, qui garde ainsi le focus.
+    let bas = menu_jeu::EcranBasInfo::pour(
+        &catalog.console,
+        via == "flux",
+        &catalog.title,
+        &detail,
+        Some(catalog.art.to.as_str()),
+        catalog.cover.as_ref().map(|c| cover_url(&cfg.serveur, c)),
+    );
+    menu_jeu::lance(app, game, &intent, bas.as_ref());
     if let Err(e) = android::start(app, &intent) {
         menu_jeu::oublier(app);
         return Err(e);

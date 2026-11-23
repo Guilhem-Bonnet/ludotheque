@@ -45,9 +45,11 @@
     display: flex; align-items: center; justify-content: space-between; gap: 24px;
     padding: 0 48px; font-size: 14px; color: var(--ink-2);
   }
-  .note { color: var(--ink-4); }
-  .hints { display: flex; gap: 26px; margin-left: auto; }
-  .hint { all: unset; cursor: pointer; padding: 6px 8px; margin: -6px -8px; border-radius: 10px; display: flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out; }
+  /* La note s'abrège, jamais les consignes : une consigne sur deux lignes chevauchait sa voisine (Profil,
+     écran du bas de la Thor, 23/11). */
+  .note { color: var(--ink-4); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hints { display: flex; gap: 26px; margin-left: auto; flex-shrink: 0; }
+  .hint { all: unset; cursor: pointer; padding: 6px 8px; margin: -6px -8px; border-radius: 10px; display: flex; align-items: center; gap: 8px; transition: color var(--t-quick) ease-out; white-space: nowrap; flex-shrink: 0; }
   .key {
     width: 24px; height: 24px; border-radius: 50%; background: var(--hint); color: var(--ink);
     font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center;

@@ -191,7 +191,12 @@
   aside { width: 260px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 12px; }
   h1 { margin: 14px 0 0; font-size: 32px; font-weight: 600; }
   .device { font-size: 14px; color: rgba(255, 255, 255, 0.72); }
-  .settings { flex: 1; display: flex; flex-direction: column; gap: 26px; max-width: 640px; }
+  /* Colonne qui défile dans son cadre : sur l'écran du bas de la Thor, « Préférences » passait sous la barre
+     de consignes (constat du 23/11, release 0.9.2). Le focus manette fait défiler l'élément visé. */
+  .settings { flex: 1; display: flex; flex-direction: column; gap: 26px; max-width: 640px; min-width: min-content; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 6px 10px 24px 8px; margin: -6px -10px 0 -8px; scrollbar-width: none; }
+  /* WebView de la Thor (Chromium 109) : `scrollbar-width` ignoré, barre masquée par le pseudo-élément. Marge
+     interne : place pour le décalage et l'anneau de focus, sinon rognés par le cadre qui défile. */
+  .settings::-webkit-scrollbar { display: none; }
   .group { display: flex; flex-direction: column; gap: 10px; }
   h2 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255, 255, 255, 0.7); display: flex; align-items: center; gap: 12px; }
   .ok { display: inline-flex; align-items: center; gap: 4px; text-transform: none; letter-spacing: 0; color: var(--ok); font-weight: 500; animation: fadein 200ms ease-out; }

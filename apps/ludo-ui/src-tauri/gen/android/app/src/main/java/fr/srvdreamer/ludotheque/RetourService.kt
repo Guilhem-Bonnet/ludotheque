@@ -225,6 +225,10 @@ class RetourService : AccessibilityService() {
     // bulle, un toast ou une boîte de dialogue système).
     if (!estActivite(pkg, cls)) return
     devant = pkg
+    // Visuel de l'écran du bas (lot ecran-bas) : PAS retiré ici quand une autre appli prend la place du
+    // jeu. Son retrait peut vider l'écran du bas, où Android relance alors l'écran secondaire de Cocoon
+    // qui prend le focus d'écran (mesuré le 23/11) : l'appli que le joueur vient d'ouvrir perdrait la
+    // manette. Le visuel s'en va au retour de la Ludothèque (qui reprend le focus) ou à la fermeture.
     if (arme && jeu != null && avant == jeu.paquet && pkg == lanceur()) {
       Log.i(TAG, "lanceur $pkg devant après ${jeu.paquet} : retour à « En cours »")
       retour(ferme = false)
