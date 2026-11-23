@@ -16,6 +16,7 @@ import android.hardware.display.DisplayManager
 import android.os.BatteryManager
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import android.util.TypedValue
 import android.view.Display
@@ -80,6 +81,7 @@ object EcranBas {
    */
   fun montrer(activity: Activity, info: String) {
     // Lancement sur un écran choisi : Android 8 et plus (la Thor est en Android 13).
+    oublierRetrait()
     if (android.os.Build.VERSION.SDK_INT < 26) return
     val display = ecranDuBas(activity)
     if (display == null) {
@@ -115,14 +117,60 @@ object EcranBas {
     return ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
   }
 
-  /** Retire le visuel s'il est affiché (n'importe quel fil). */
-  fun retirer(raison: String) {
-    val a = affichee ?: return
+  /** Retire le visuel s'il est affiché (n'importe quel fil). Vrai si un visuel était affiché. */
+  fun retirer(raison: String): Boolean {
+    val a = affichee ?: return false
     a.runOnUiThread {
       if (!a.isFinishing) {
         Log.i(TAG, "visuel retiré : $raison")
         a.finishAndRemoveTask()
       }
+    }
+    return true
+  }
+
+  /**
+   * Heure (horloge monotone) du retrait fait au retour de la Ludothèque devant ; 0 hors de cette fenêtre.
+   *
+   * Mesuré sur la Thor le 23/11 (15:28:31) : après HOME pendant le jeu, Cocoon ouvre une nouvelle tâche
+   * « home » et retire celle de son écran du bas ; le visuel y reste seul. À son retrait, l'écran du bas
+   * se vide et Android y relance l'écran secondaire de Cocoon (`SECONDARY_HOME`, 60 ms après), ce qui lui
+   * donne le focus d'écran (`mTopFocusedDisplayId=4`) : la manette n'arrivait plus à la Ludothèque.
+   * Remettre la Ludothèque devant (intent livré à l'activité déjà au sommet) rend le focus à l'écran
+   * principal (mesuré aussitôt après, 15:30). [reprendreFocus] le fait UNE fois, sur l'événement de perte
+   * du focus qui suit ce retrait de près.
+   */
+  @Volatile private var retraitA = 0L
+
+  /** Délai de garde unique : au-delà, une perte de focus n'a plus de lien avec le retrait. */
+  private const val FENETRE_FOCUS_MS = 3000L
+
+  /** Retrait fait au retour de la Ludothèque devant : surveiller la perte de focus qui peut suivre. */
+  fun apresRetrait() {
+    retraitA = SystemClock.uptimeMillis()
+  }
+
+  /** La Ludothèque lance elle-même autre chose (jeu, lanceur, réglages) : la perte de focus est voulue. */
+  fun oublierRetrait() {
+    retraitA = 0L
+  }
+
+  /**
+   * La Ludothèque, toujours au premier plan de l'écran principal, vient de perdre le focus juste après le
+   * retrait du visuel : l'écran du bas relancé par le système l'a pris. Elle se remet devant, une fois.
+   */
+  fun reprendreFocus(activity: Activity) {
+    val t = retraitA
+    if (t == 0L || SystemClock.uptimeMillis() - t > FENETRE_FOCUS_MS || activity.isFinishing) return
+    retraitA = 0L
+    val intent = Intent(activity, activity.javaClass)
+      .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+    val options = if (android.os.Build.VERSION.SDK_INT >= 26) ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle() else null
+    try {
+      activity.startActivity(intent, options)
+      Log.i(TAG, "focus repris par la Ludothèque après le retrait du visuel")
+    } catch (e: Exception) {
+      Log.w(TAG, "focus non repris : $e")
     }
   }
 }
@@ -271,10 +319,13 @@ class EcranBasActivity : Activity() {
     batterie.setTextColor(if (!charge && pct <= 15) FAIBLE else TEXTE_2)
   }
 
+  /** Alignement des textes : à gauche à côté de la jaquette (paysage), centré sous elle (portrait). */
+  private var alignement = Gravity.CENTER
+
   private fun texte(taille: Float, couleur: Int, gras: Boolean = false): TextView = TextView(this).apply {
     setTextSize(TypedValue.COMPLEX_UNIT_SP, taille)
     setTextColor(couleur)
-    gravity = Gravity.CENTER
+    gravity = alignement
     if (gras) typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     includeFontPadding = false
   }
@@ -285,16 +336,25 @@ class EcranBasActivity : Activity() {
     defaut
   }
 
+  /**
+   * Mise en page selon l'écran : paysage (Thor, 1240×1080) = jaquette à gauche, informations à droite ;
+   * portrait = l'une sous l'autre. Mesuré le 23/11 (15:22) : en colonne unique sur 1240×1080, batterie et
+   * sauvegarde sortaient de l'écran.
+   */
   private fun construire(info: JSONObject): View {
     val accent = couleur(info.optString("couleur"), TEXTE_2)
+    val largeur = resources.displayMetrics.widthPixels
+    val hauteur = resources.displayMetrics.heightPixels
+    val paysage = largeur > hauteur
+    alignement = if (paysage) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.CENTER
     racine = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
+      orientation = if (paysage) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
       gravity = Gravity.CENTER
-      setPadding(dp(32), dp(32), dp(32), dp(32))
+      setPadding(dp(48), dp(40), dp(48), dp(40))
     }
 
     // Jaquette : carte neutre arrondie ; l'image arrive par un seul téléchargement (délai de garde unique).
-    val cote = (minOf(resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels) * 0.42f).toInt()
+    val cote = if (paysage) (hauteur * 0.56f).toInt() else (minOf(largeur, hauteur) * 0.42f).toInt()
     val jaquette = ImageView(this).apply {
       scaleType = ImageView.ScaleType.CENTER_CROP
       background = GradientDrawable().apply { setColor(CARTE); cornerRadius = dp(18).toFloat() }
@@ -304,46 +364,54 @@ class EcranBasActivity : Activity() {
       clipToOutline = true
     }
     racine.addView(jaquette, LinearLayout.LayoutParams(cote, cote))
-    // Filet à la couleur du jeu : seul signe coloré de l'écran.
-    racine.addView(View(this).apply {
-      background = GradientDrawable().apply { setColor(accent); cornerRadius = dp(2).toFloat() }
-    }, LinearLayout.LayoutParams(dp(56), dp(4)).apply { topMargin = dp(20) })
 
-    val titre = texte(24f, TEXTE, gras = true).apply {
+    val infos = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = alignement
+    }
+    racine.addView(
+      infos,
+      if (paysage) LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(40) }
+      else LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(20) },
+    )
+    fun ajoute(v: View, haut: Int, largeurVue: Int = -1) =
+      infos.addView(v, LinearLayout.LayoutParams(largeurVue, -2).apply { topMargin = dp(haut); gravity = alignement })
+
+    // Filet à la couleur du jeu : seul signe coloré de l'écran.
+    infos.addView(View(this).apply {
+      background = GradientDrawable().apply { setColor(accent); cornerRadius = dp(2).toFloat() }
+    }, LinearLayout.LayoutParams(dp(56), dp(4)).apply { gravity = alignement })
+
+    ajoute(texte(24f, TEXTE, gras = true).apply {
       text = info.optString("titre").ifBlank { "Jeu en cours" }
-      maxLines = 2
+      maxLines = 3
       ellipsize = android.text.TextUtils.TruncateAt.END
-    }
-    racine.addView(titre, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
-    val soustitre = texte(15f, TEXTE_2).apply {
+    }, 18)
+    ajoute(texte(15f, TEXTE_2).apply {
       text = listOf(info.optString("console"), info.optString("via")).filter { it.isNotBlank() }.joinToString(" · ")
-    }
-    racine.addView(soustitre, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+    }, 8)
 
     // Heure : TextClock suit les annonces d'heure du système (aucune minuterie ici).
-    val heure = TextClock(this).apply {
+    ajoute(TextClock(this).apply {
       format24Hour = "HH:mm"
       format12Hour = "HH:mm"
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 56f)
       setTextColor(TEXTE)
-      gravity = Gravity.CENTER
+      gravity = alignement
       typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
       includeFontPadding = false
-    }
-    racine.addView(heure, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(28) })
+    }, 28)
 
     session = texte(15f, TEXTE_2)
-    racine.addView(session, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+    ajoute(session, 10)
     batterie = texte(15f, TEXTE_2)
-    racine.addView(batterie, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+    ajoute(batterie, 6)
     val sauvegarde = texte(13f, TEXTE_2).apply {
       text = info.optString("sauvegarde")
       visibility = if (text.isNullOrBlank()) View.GONE else View.VISIBLE
     }
-    racine.addView(sauvegarde, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-    if (RetourService.actif) {
-      racine.addView(texte(13f, TEXTE_2).apply { text = "HOME : menu de la Ludothèque" }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(22) })
-    }
+    ajoute(sauvegarde, 6)
+    if (RetourService.actif) ajoute(texte(13f, TEXTE_2).apply { text = "HOME : menu de la Ludothèque" }, 22)
 
     info.optString("couverture").takeIf { it.startsWith("http") }?.let { charger(it, jaquette, cote) }
 

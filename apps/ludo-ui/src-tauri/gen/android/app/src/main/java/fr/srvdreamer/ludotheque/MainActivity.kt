@@ -21,6 +21,8 @@ class MainActivity : TauriActivity() {
   override fun onWindowFocusChanged(hasFocus: Boolean) {
     super.onWindowFocusChanged(hasFocus)
     if (hasFocus) immersive() else releaseArrows()
+    // Focus perdu juste après le retrait du visuel de l'écran du bas : voir EcranBas.reprendreFocus.
+    if (!hasFocus && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) EcranBas.reprendreFocus(this)
   }
 
   /** Plein écran façon console : barres système masquées, rappelées d'un glissement. */
@@ -105,7 +107,21 @@ class MainActivity : TauriActivity() {
   // seul un vrai retour après onStop compte, pas un changement d'activité active entre les deux écrans.
   override fun onStart() {
     super.onStart()
-    EcranBas.retirer("Ludothèque devant")
+    if (EcranBas.retirer("Ludothèque devant")) EcranBas.apresRetrait()
+  }
+
+  // Android 10+ : l'activité « au sommet » passe à une autre, ici celle que le système relance sur l'écran
+  // du bas, alors que la Ludothèque reste active sur l'écran principal (plusieurs activités actives).
+  override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+    super.onTopResumedActivityChanged(isTopResumedActivity)
+    if (!isTopResumedActivity && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) EcranBas.reprendreFocus(this)
+  }
+
+  // Tout départ vers une autre activité met la Ludothèque en pause : la fenêtre de reprise du focus se
+  // referme (une perte de focus qui suit un lancement de jeu est voulue).
+  override fun onUserLeaveHint() {
+    EcranBas.oublierRetrait()
+    super.onUserLeaveHint()
   }
 
   // Menu en jeu : la Ludothèque revient devant alors qu'un jeu est ouvert (bouton HOME, lanceur,

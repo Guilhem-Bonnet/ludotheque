@@ -81,6 +81,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     val args = invoke.parseArgs(SuivreArgs::class.java)
     val a = args.intent
     val lancement = EnCours.Lancement(a.packageName, a.activity, a.action, a.data, a.extras, a.boolExtras, a.grant, a.file, a.fileExtras)
+    EcranBas.oublierRetrait()
     val depuis = System.currentTimeMillis()
     // Heure du lancement ajoutée au visuel (temps de session), qui la garde pour « Reprendre ».
     val bas = args.ecranBas?.let { try { org.json.JSONObject(it).put("depuisMs", depuis).toString() } catch (e: Exception) { null } }
@@ -161,6 +162,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
         }
         // L'arrêt forcé confirmé ramène la Ludothèque sur l'accueil (RetourService, PACKAGE_RESTARTED).
         RetourService.attendreFermeture(j.paquet)
+        EcranBas.oublierRetrait()
         val infos = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", j.paquet, null))
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         activity.runOnUiThread {
@@ -184,6 +186,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
    */
   @Command
   fun versLanceur(invoke: Invoke) {
+    EcranBas.oublierRetrait()
     val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
       activity.startActivity(home)
