@@ -1320,9 +1320,18 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     let wants_local = mode != Some("flux") && android::emulator_for(&catalog.console).is_some();
     let roms = if wants_local && inv.and_then(|i| i.rom.as_ref()).is_none() { android::list_roms(app, &acces) } else { Vec::new() };
     let plan = android::plan(&catalog, &roms, &conf, inv, mode)?;
+    let stream = |host: &str, name: &str, hdr: bool| (android::stream_intent(app, host, name, hdr, &acces), "flux", name.to_string());
     let (intent, via, detail) = match &plan {
-        android::Plan::Local { emu, rom } => (android::local_intent(app, emu, &conf, rom, &acces)?, "emulateur", emu.name.to_string()),
-        android::Plan::Stream { host, app: name, hdr } => (android::stream_intent(app, host, name, *hdr, &acces), "flux", name.clone()),
+        android::Plan::Local { emu, rom } => match android::local_intent(app, emu, &conf, rom, &acces) {
+            Ok(i) => (i, "emulateur", emu.name.to_string()),
+            // ROM de l'inventaire disparue (ou illisible) : sans mode imposé, le flux prend le relais s'il existe.
+            Err(e) if mode.is_none() => match android::plan(&catalog, &[], &conf, inv, Some("flux")) {
+                Ok(android::Plan::Stream { host, app: name, hdr }) => stream(&host, &name, hdr),
+                _ => return Err(e),
+            },
+            Err(e) => return Err(e),
+        },
+        android::Plan::Stream { host, app: name, hdr } => stream(host, name, *hdr),
     };
     step(Step::Telechargement, StepState::Fait, None);
     step(Step::Sauvegarde, StepState::Fait, Some("Synchronisée par le PC".into()));

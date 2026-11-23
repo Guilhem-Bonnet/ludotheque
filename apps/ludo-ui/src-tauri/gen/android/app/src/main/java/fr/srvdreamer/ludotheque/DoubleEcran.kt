@@ -88,6 +88,9 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
     main.addOnAttachStateChangeListener(attach)
     main.addOnLayoutChangeListener(layoutListener)
     (activity as LifecycleOwner).lifecycle.addObserver(this)
+    // Démarrage sur un seul écran : aucune transition n'annoncerait le mode (la page retomberait sur
+    // window.outerWidth). Annonce initiale ; le double écran, s'il arrive, la remplace.
+    announce(if (presentation != null) "bas" else "seul")
   }
 
   override fun onStart(owner: LifecycleOwner) {
@@ -198,12 +201,18 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
     }
     if (info.toString() == etat.toString()) return
     etat = info
-    val js = "window.__ludoEcran=$info;document.documentElement.dataset.ecran='$mode';"
+    // `document.documentElement` peut manquer au tout début du document : attribut posé dès qu'il existe.
+    val js = "window.__ludoEcran=$info;(function(){var s=function(){var r=document.documentElement;" +
+      "if(r)r.dataset.ecran='$mode';return!!r};if(!s())document.addEventListener('readystatechange',s,{once:true})})();"
     if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
       docStart?.remove()
+      // Seule la WebView du bas reçoit ce script ; elle ne charge que l'interface de l'app.
       docStart = WebViewCompat.addDocumentStartJavaScript(main, js, setOf("*"))
     }
-    main.evaluateJavascript(js + "window.dispatchEvent(new CustomEvent('ludo-ecran',{detail:window.__ludoEcran}));", null)
+    // Sans taille (la vue vient de changer de fenêtre) : pas d'événement, le recalcul attend la vraie taille
+    // (layoutListener), sinon la page repasserait un instant par window.outerWidth.
+    val event = if (info.has("vueLargeurDp") || mode == "seul") "window.dispatchEvent(new CustomEvent('ludo-ecran',{detail:window.__ludoEcran}));" else ""
+    main.evaluateJavascript(js + event, null)
   }
 
   /** Dernier état annoncé (copie). */

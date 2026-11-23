@@ -2,7 +2,6 @@ package fr.srvdreamer.ludotheque
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
-import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -13,7 +12,6 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.DocumentsContract
 import android.view.InputDevice
-import androidx.core.content.FileProvider
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -252,29 +250,14 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
   fun startActivity(invoke: Invoke) {
     val args = invoke.parseArgs(StartArgs::class.java)
     val nom = args.nom ?: args.packageName
-    val intent = Intent(args.action ?: Intent.ACTION_VIEW)
-    intent.setClassName(args.packageName, args.activity)
-    // Fichier lu par l'app (accès « tous les fichiers ») et confié par son FileProvider, lecture accordée.
-    val fileUri = args.file?.let {
-      try {
-        FileProvider.getUriForFile(activity, activity.packageName + ".fileprovider", java.io.File(it))
-      } catch (e: IllegalArgumentException) {
-        invoke.reject("Fichier hors du stockage partagé : $it")
-        return
-      }
+    // Construction partagée avec la reprise du menu en jeu (EnCours.Lancement) : mêmes droits transmis.
+    val lancement = EnCours.Lancement(args.packageName, args.activity, args.action, args.data, args.extras, args.boolExtras, args.grant, args.file, args.fileExtras)
+    val intent = try {
+      lancement.intent(activity)
+    } catch (e: IllegalArgumentException) {
+      invoke.reject("Fichier hors du stockage partagé : ${args.file}")
+      return
     }
-    val data = fileUri ?: args.data?.let { Uri.parse(it) }
-    data?.let {
-      intent.data = it
-      if (args.grant || fileUri != null) {
-        intent.clipData = ClipData.newRawUri("rom", it)
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-      }
-    }
-    for ((k, v) in args.extras) intent.putExtra(k, v)
-    if (fileUri != null) for (k in args.fileExtras) intent.putExtra(k, fileUri.toString())
-    for ((k, v) in args.boolExtras) intent.putExtra(k, v)
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
       // Comme Cocoon (« Granting tree URI permissions ») : l'émulateur lit les fichiers voisins de la ROM.
       args.grantTree?.let {

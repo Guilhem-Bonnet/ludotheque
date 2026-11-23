@@ -106,8 +106,10 @@ pub fn init() {
 /// Motifs de l'interface (`feedback.ts`). PC et Deck : manette par gilrs. Android : moteur de vibration
 /// de l'appareil (`Vibrator`, LudoPlugin.kt) ; gilrs n'y pilote rien (la manette Odin de la Thor est
 /// intégrée, son moteur est celui de l'appareil : réglage AYN « Vibrator strength »).
+/// Commande asynchrone : une commande synchrone de Tauri tourne sur le fil principal, et l'appel au
+/// plugin Kotlin (Android) attend sa réponse.
 #[tauri::command]
-pub fn rumble(app: tauri::AppHandle, pulses: Vec<Pulse>) {
+pub async fn rumble(app: tauri::AppHandle, pulses: Vec<Pulse>) {
     #[cfg(target_os = "android")]
     {
         crate::android::vibrer(&app, &vibration_pattern(&pulses));
