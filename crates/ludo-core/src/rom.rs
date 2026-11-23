@@ -72,9 +72,10 @@ pub fn title_id_from_header(ext: &str, header: &[u8]) -> Option<u64> {
 /// nom `[<titre>]` le donne.
 pub const PFS0_EXTS: &[&str] = &["nsp", "nsz"];
 
-/// Octets à lire pour [`title_id_from_pfs0`] : en-tête, entrées et table des noms d'un paquet de
-/// quelques fichiers (relevé : 6 à 7 fichiers, table finie avant 0x1A0).
-pub const PFS0_HEADER_LEN: usize = 0x400;
+/// Octets à lire pour [`title_id_from_pfs0`] : en-tête, entrées et table des noms (relevé : 6 à 7
+/// fichiers, table finie avant 0x1A0 ; 4 Kio couvrent une cinquantaine de fichiers, paquets « jeu +
+/// MAJ + DLC » compris). Table plus longue : repli sur le nom du fichier.
+pub const PFS0_HEADER_LEN: usize = 0x1000;
 
 fn u32_le(b: &[u8], at: usize) -> Option<usize> {
     Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?) as usize)
@@ -94,14 +95,19 @@ pub fn title_id_from_pfs0(header: &[u8]) -> Option<u64> {
     let count = u32_le(header, 4)?;
     let table = 0x10usize.checked_add(count.checked_mul(0x18)?)?;
     let names = header.get(table..table.checked_add(u32_le(header, 8)?)?.min(header.len()))?;
-    (0..count).find_map(|i| {
-        let name_at = u32_le(header, 0x10 + i * 0x18 + 0x10)?;
-        let rest = names.get(name_at..)?;
-        // Nom terminé par un zéro DANS la lecture : un nom coupé n'est jamais une preuve.
-        let name = std::str::from_utf8(&rest[..rest.iter().position(|&b| b == 0)?]).ok()?;
-        let rights = name.strip_suffix(".tik")?;
-        (rights.len() == 32 && rights.chars().all(|c| c.is_ascii_hexdigit())).then(|| u64::from_str_radix(&rights[..16], 16).ok())?
-    })
+    let tickets: Vec<u64> = (0..count)
+        .filter_map(|i| {
+            let name_at = u32_le(header, 0x10 + i * 0x18 + 0x10)?;
+            let rest = names.get(name_at..)?;
+            // Nom terminé par un zéro DANS la lecture : un nom coupé n'est jamais une preuve.
+            let name = std::str::from_utf8(&rest[..rest.iter().position(|&b| b == 0)?]).ok()?;
+            let rights = name.strip_suffix(".tik")?;
+            (rights.len() == 32 && rights.chars().all(|c| c.is_ascii_hexdigit())).then(|| u64::from_str_radix(&rights[..16], 16).ok())?
+        })
+        .collect();
+    // Paquet à plusieurs titres (jeu + MAJ + DLC) : celui du jeu de base (12 bits bas à zéro ; une
+    // MAJ finit par 800, un DLC par son numéro), sinon le premier (paquet de MAJ ou de DLC seul).
+    tickets.iter().copied().find(|t| t & 0xFFF == 0).or_else(|| tickets.first().copied())
 }
 
 /// Identifiant d'un jeu Wii U d'après le texte de son `meta/meta.xml`.
@@ -173,6 +179,9 @@ mod tests {
         let maj = pfs0(&["0100f2c0115b68000000000000000010.tik", "a.nca"]);
         assert_eq!(title_id_from_pfs0(&maj), Some(0x0100_f2c0_115b_6800));
         assert!(rouge_feu.len() <= PFS0_HEADER_LEN);
+        // Paquet jeu + MAJ + DLC, tickets de la MAJ et du DLC d'abord : l'identifiant du jeu de base.
+        let pack = pfs0(&["0100000011d908000000000000000010.tik", "0100000011d910010000000000000010.tik", "0100000011d900000000000000000010.tik"]);
+        assert_eq!(title_id_from_pfs0(&pack), Some(0x0100_0000_11d9_0000));
     }
 
     #[test]
