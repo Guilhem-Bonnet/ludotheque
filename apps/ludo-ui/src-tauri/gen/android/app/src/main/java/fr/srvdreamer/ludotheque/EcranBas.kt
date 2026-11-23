@@ -81,7 +81,11 @@ object EcranBas {
   fun montrer(activity: Activity, info: String) {
     // Lancement sur un écran choisi : Android 8 et plus (la Thor est en Android 13).
     if (android.os.Build.VERSION.SDK_INT < 26) return
-    val display = ecranDuBas(activity) ?: return Log.i(TAG, "pas d'écran du bas allumé : rien à afficher")
+    val display = ecranDuBas(activity)
+    if (display == null) {
+      Log.i(TAG, "pas d'écran du bas allumé : rien à afficher")
+      return
+    }
     // CLEAR_TASK : toujours une instance neuve (« Fermer et lancer » enchaîne pendant que l'ancienne se
     // retire ; une instance réutilisée garderait le titre et l'heure du jeu précédent, revue I2).
     val intent = Intent(activity, EcranBasActivity::class.java)
