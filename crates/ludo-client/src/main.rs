@@ -273,6 +273,16 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         println!("{} non connecté (adb) : rien à faire", ctx.cfg.appareil);
         return Ok(ExitCode::SUCCESS);
     };
+    // App Ludothèque de l'appareil : accès aux fichiers accordé à chaque synchronisation (lancement des
+    // jeux sans sélecteur de dossier ; une réinstallation ou une mise à jour depuis l'app le garde, une
+    // désinstallation le perd).
+    if !a_blanc {
+        match dev.grant_ludo_files() {
+            Ok(p) if !p.is_empty() => println!("Accès aux fichiers accordé : {}", p.join(", ")),
+            Ok(_) => {}
+            Err(e) => println!("Accès aux fichiers non accordé : {e}"),
+        }
+    }
     let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
     let games = ctx.client.games().map_err(|e| e.to_string())?;
     // ROM présentes sur l'appareil (chemins complets ; par nom, formats équivalents) : jeux à suivre

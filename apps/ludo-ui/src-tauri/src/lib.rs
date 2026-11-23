@@ -1313,17 +1313,29 @@ fn android_launch(app: &tauri::AppHandle, game: &str, mode: Option<&str>) -> Res
     let conf = android::conf();
     let inventory = client.inventories().ok().and_then(|all| all.into_iter().find(|i| i.device == cfg.appareil));
     let inv = inventory.as_ref().and_then(|i| i.games.iter().find(|g| g.game == game));
-    // L'arbre des ROM n'est demandé que si un lancement local est possible pour cette console.
+    // Aucun accès n'est jamais DEMANDÉ ici (ni sélecteur de dossier, ni réglage) : chemin de l'inventaire,
+    // arbre que l'émulateur détient, accès « tous les fichiers » accordé par le PC (android.rs).
+    let acces = android::acces(app);
+    step(Step::Telechargement, StepState::EnCours, None);
     let wants_local = mode != Some("flux") && android::emulator_for(&catalog.console).is_some();
-    let roms = if wants_local { android::list_roms_or_ask(app).map(|l| l.files).unwrap_or_default() } else { Vec::new() };
+    let roms = if wants_local && inv.and_then(|i| i.rom.as_ref()).is_none() { android::list_roms(app, &acces) } else { Vec::new() };
     let plan = android::plan(&catalog, &roms, &conf, inv, mode)?;
+    let stream = |host: &str, name: &str, hdr: bool| (android::stream_intent(app, host, name, hdr, &acces), "flux", name.to_string());
+    let (intent, via, detail) = match &plan {
+        android::Plan::Local { emu, rom } => match android::local_intent(app, emu, &conf, rom, &acces) {
+            Ok(i) => (i, "emulateur", emu.name.to_string()),
+            // ROM de l'inventaire disparue (ou illisible) : sans mode imposé, le flux prend le relais s'il existe.
+            Err(e) if mode.is_none() => match android::plan(&catalog, &[], &conf, inv, Some("flux")) {
+                Ok(android::Plan::Stream { host, app: name, hdr }) => stream(&host, &name, hdr),
+                _ => return Err(e),
+            },
+            Err(e) => return Err(e),
+        },
+        android::Plan::Stream { host, app: name, hdr } => stream(host, name, *hdr),
+    };
     step(Step::Telechargement, StepState::Fait, None);
     step(Step::Sauvegarde, StepState::Fait, Some("Synchronisée par le PC".into()));
     step(Step::Lancement, StepState::EnCours, None);
-    let (intent, via, detail) = match &plan {
-        android::Plan::Local { emu, uri } => (android::local_intent(app, emu, uri)?, "emulateur", emu.name.to_string()),
-        android::Plan::Stream { host, app: name, hdr } => (android::stream_intent(app, host, name, *hdr), "flux", name.clone()),
-    };
     // Menu en jeu : le jeu est retenu AVANT l'intent (sa fenêtre peut apparaître aussitôt).
     menu_jeu::lance(app, game, &intent);
     if let Err(e) = android::start(app, &intent) {
@@ -1469,7 +1481,7 @@ pub fn run() {
                 }
             }
         })
-        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer, energie::batterie_etat, energie::energie_repos, menu_jeu::jeu_en_cours, menu_jeu::reprendre_jeu, menu_jeu::fermer_jeu, menu_jeu::menu_jeu_reglages])
+        .invoke_handler(tauri::generate_handler![device, ping, updates, rumble::rumble, profiles, save_profile, history, restore, sync, library, recent, install_game, install_content, uninstall_game, cancel_install, launch_game, retry_send, resolve_conflict, emulators, devices, remember_profile, autostart, set_autostart, android::ecran_haut, android::apk_verifier, android::apk_installer, energie::batterie_etat, energie::energie_repos, menu_jeu::jeu_en_cours, menu_jeu::reprendre_jeu, menu_jeu::fermer_jeu, menu_jeu::menu_jeu_reglages, android::ecran_etat])
         .build(tauri::generate_context!())
         .expect("échec du démarrage de l'interface")
         .run(|app, event| match event {

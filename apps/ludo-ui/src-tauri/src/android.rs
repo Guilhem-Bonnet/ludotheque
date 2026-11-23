@@ -1,5 +1,13 @@
-//! Appareil Android (Ayn Thor) : configuration, ROM accessibles par l'arbre SAF accordé, lancement
-//! d'un émulateur Android ou de Moonlight par intent explicite.
+//! Appareil Android (Ayn Thor) : configuration, lancement d'un émulateur Android ou de Moonlight par
+//! intent explicite, SANS jamais demander l'accès à un dossier (retour de Guilhem du 22/11 : « il ouvre
+//! à la place le système de fichier ») :
+//! - la ROM est désignée par l'inventaire publié par le PC (champ `rom`, relatif à `Documents/Roms`) ;
+//! - l'émulateur la reçoit dans l'arbre SAF qu'IL détient déjà (relevé `dumpsys activity permissions`,
+//!   22/11 : Azahar et Eden → `Documents/Roms`, melonDS → `Roms/nds`, Cemu → `Roms/wiiu`) : aucune
+//!   permission à lui transmettre, essai adb du 22/11 (Azahar charge Ocarina of Time 3D) ;
+//! - sinon (Dolphin : aucun arbre), par le FileProvider de l'app, qui lit le fichier grâce à l'accès
+//!   « tous les fichiers » (`MANAGE_EXTERNAL_STORAGE`, accordé par le PC par adb : `appops set`) ;
+//! - l'arbre SAF de l'app, s'il a été accordé autrefois, ne sert plus qu'en repli silencieux.
 //!
 //! Sur Android, l'app ne synchronise aucune sauvegarde : les émulateurs les gardent dans
 //! `Android/data`, illisible pour une app. Le PC s'en charge par adb (`ludo adb-watch`), et publie
@@ -20,7 +28,24 @@ pub struct AndroidConf {
     pub moonlight: MoonlightConf,
     #[serde(default)]
     pub maj: MajConf,
+    /// Arbre SAF détenu par un émulateur (paquet → dossier relatif au stockage, `Documents/Roms`),
+    /// s'il diffère du relevé de `EMULATORS` (dossier de jeux changé dans l'émulateur).
+    #[serde(default)]
+    pub arbres: BTreeMap<String, String>,
 }
+
+/// Stockage partagé principal, tel que les apps le voient.
+pub const STORAGE: &str = "/storage/emulated/0";
+/// Dossier des ROM, relatif au stockage ; les chemins `rom` de l'inventaire lui sont relatifs.
+pub const ROMS: &str = "Documents/Roms";
+/// Fournisseur de documents du stockage partagé (arbres SAF).
+const EXTERNAL_DOCS: &str = "com.android.externalstorage.documents";
+
+/// Jeu Wii U sans accès aux fichiers : le `.rpx` du dossier `code/` ne peut pas être trouvé.
+pub const NO_ACCESS_WIIU: &str = "Jeu Wii U : l'accès à tous les fichiers est nécessaire pour trouver son fichier .rpx. Brancher l'appareil au PC (ludo l'accorde), ou Réglages Android › Applications › Ludothèque › Accès à tous les fichiers";
+
+/// Message commun : l'app n'a ni accès aux fichiers ni arbre utilisable pour ce jeu.
+pub const NO_ACCESS: &str = "Accès aux fichiers non accordé : brancher l'appareil au PC (ludo l'accorde), ou Réglages Android › Applications › Ludothèque › Accès à tous les fichiers";
 
 /// Mise à jour de l'app depuis l'app : `android.json` publié avec les releases (CI).
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -85,6 +110,9 @@ pub struct AndroidEmu {
     /// au format de SA bibliothèque (voir `folder_game_uri`) et avec l'arbre des ROM accordé, sinon il
     /// ne voit pas les dossiers `meta/` et `content/` voisins.
     pub folder: bool,
+    /// Arbre SAF que l'émulateur détient déjà (dossier relatif au stockage), relevé sur la Thor le 22/11
+    /// (`dumpsys activity permissions`) ; `None` : aucun (fichier passé par le FileProvider de l'app).
+    pub tree: Option<&'static str>,
 }
 
 /// Émulateurs de la Thor, relevés dans le journal du lanceur Cocoon (`launch_debug.log`) ; Dolphin et
@@ -93,11 +121,29 @@ pub struct AndroidEmu {
 pub const EMULATORS: &[(&str, AndroidEmu)] = &[
     (
         "switch",
-        AndroidEmu { name: "Eden", package: "dev.eden.eden_emulator", activity: "org.yuzu.yuzu_emu.activities.EmulationActivity", action: None, uri_extra: None, dir: "switch", folder: false },
+        AndroidEmu {
+            name: "Eden",
+            package: "dev.eden.eden_emulator",
+            activity: "org.yuzu.yuzu_emu.activities.EmulationActivity",
+            action: None,
+            uri_extra: None,
+            dir: "switch",
+            folder: false,
+            tree: Some("Documents/Roms"),
+        },
     ),
     (
         "3ds",
-        AndroidEmu { name: "Azahar", package: "org.azahar_emu.azahar", activity: "org.citra.citra_emu.activities.EmulationActivity", action: None, uri_extra: None, dir: "n3ds", folder: false },
+        AndroidEmu {
+            name: "Azahar",
+            package: "org.azahar_emu.azahar",
+            activity: "org.citra.citra_emu.activities.EmulationActivity",
+            action: None,
+            uri_extra: None,
+            dir: "n3ds",
+            folder: false,
+            tree: Some("Documents/Roms"),
+        },
     ),
     (
         "ds",
@@ -109,6 +155,7 @@ pub const EMULATORS: &[(&str, AndroidEmu)] = &[
             uri_extra: Some("uri"),
             dir: "nds",
             folder: false,
+            tree: Some("Documents/Roms/nds"),
         },
     ),
     (
@@ -121,11 +168,21 @@ pub const EMULATORS: &[(&str, AndroidEmu)] = &[
             uri_extra: Some("AutoStartFile"),
             dir: "gc",
             folder: false,
+            tree: None,
         },
     ),
     (
         "wiiu",
-        AndroidEmu { name: "Cemu", package: "info.cemu.cemu", activity: "info.cemu.cemu.emulation.EmulationActivity", action: None, uri_extra: None, dir: "wiiu", folder: true },
+        AndroidEmu {
+            name: "Cemu",
+            package: "info.cemu.cemu",
+            activity: "info.cemu.cemu.emulation.EmulationActivity",
+            action: None,
+            uri_extra: None,
+            dir: "wiiu",
+            folder: true,
+            tree: Some("Documents/Roms/wiiu"),
+        },
     ),
 ];
 
@@ -146,6 +203,8 @@ pub struct RomFile {
     pub name: String,
     #[serde(default)]
     pub is_dir: bool,
+    /// URI de l'arbre SAF (liste de repli) ; vide pour une liste lue par chemin.
+    #[serde(default)]
     pub uri: String,
 }
 
@@ -193,10 +252,22 @@ pub fn find_rom<'a>(game: &CatalogGame, files: &'a [RomFile]) -> Option<&'a RomF
 pub struct StartActivity {
     pub package_name: String,
     pub activity: String,
+    /// Nom affiché dans les erreurs (« Azahar absent de l'appareil »).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nom: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Lecture de `data` accordée à l'app lancée. `false` quand l'URI est dans un arbre que l'app lancée
+    /// détient déjà : la Ludothèque ne détient pas cette URI, l'accorder serait refusé par Android.
+    pub grant: bool,
+    /// Fichier (chemin absolu) à transmettre par le FileProvider de l'app : son URI devient `data` et la
+    /// valeur des extras de `file_extras`, lecture accordée.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub file_extras: Vec<String>,
     pub extras: BTreeMap<String, String>,
     pub bool_extras: BTreeMap<String, bool>,
     /// Arbre des ROM accordé à l'app lancée (lecture, préfixe) : fichiers voisins de la ROM lisibles.
@@ -204,7 +275,7 @@ pub struct StartActivity {
     pub grant_tree: Option<String>,
 }
 
-/// Ouvre la ROM dans l'émulateur (URI content de l'arbre, lecture accordée à l'émulateur).
+/// Ouvre la ROM dans l'émulateur (URI content d'un arbre accordé à la Ludothèque, lecture transmise).
 pub fn emulator_intent(emu: &AndroidEmu, rom_uri: &str) -> StartActivity {
     let mut extras = BTreeMap::new();
     if let Some(k) = emu.uri_extra {
@@ -213,12 +284,95 @@ pub fn emulator_intent(emu: &AndroidEmu, rom_uri: &str) -> StartActivity {
     StartActivity {
         package_name: emu.package.into(),
         activity: emu.activity.into(),
+        nom: Some(emu.name.into()),
         action: emu.action.map(str::to_string),
         data: Some(rom_uri.to_string()),
+        grant: true,
         extras,
-        bool_extras: BTreeMap::new(),
-        grant_tree: None,
+        ..Default::default()
     }
+}
+
+/// Chemin relatif sûr (champ `rom` de l'inventaire) : ni absolu, ni `..`, ni vide.
+pub fn safe_rel(rom: &str) -> Option<&str> {
+    let rom = rom.trim_matches('/');
+    (!rom.is_empty() && !rom.split('/').any(|c| c.is_empty() || c == "." || c == "..")).then_some(rom)
+}
+
+/// URI d'un document dans un arbre SAF : `tree` et `path` relatifs au stockage principal
+/// (`Documents/Roms`, `Documents/Roms/n3ds/x.cxi`). `literal_slash` : identifiant de document avec des
+/// `/` littéraux (format de la bibliothèque de Cemu). `None` si `path` n'est pas dans l'arbre.
+pub fn tree_document_uri(tree: &str, path: &str, literal_slash: bool) -> Option<String> {
+    let tree = tree.trim_matches('/');
+    let path = path.trim_matches('/');
+    if tree.is_empty() || !path.starts_with(&format!("{tree}/")) {
+        return None;
+    }
+    Some(format!(
+        "content://{EXTERNAL_DOCS}/tree/{}/document/{}",
+        uri_encode(&format!("primary:{tree}"), false),
+        uri_encode(&format!("primary:{path}"), literal_slash)
+    ))
+}
+
+/// Dossier (relatif au stockage) d'une URI d'arbre SAF du stockage principal
+/// (`content://…externalstorage.documents/tree/primary%3ADocuments%2FRoms` → `Documents/Roms`).
+pub fn tree_dir(tree_uri: &str) -> Option<String> {
+    let enc = tree_uri.strip_prefix(&format!("content://{EXTERNAL_DOCS}/tree/"))?;
+    let enc = enc.split('/').next()?;
+    percent_decode(enc)?.strip_prefix("primary:").map(|d| d.trim_matches('/').to_string())
+}
+
+/// Accès de l'app aux ROM (`accesFichiers` du plugin Kotlin).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct Acces {
+    /// Accès « tous les fichiers » (`MANAGE_EXTERNAL_STORAGE`) accordé.
+    #[serde(default)]
+    pub fichiers: bool,
+    /// Arbre SAF accordé à l'app autrefois (repli silencieux), jamais demandé.
+    #[serde(default)]
+    pub arbre: Option<String>,
+}
+
+impl AndroidConf {
+    /// Arbre SAF détenu par l'émulateur : réglage de l'appareil, sinon relevé du 22/11.
+    pub fn tree_of(&self, emu: &AndroidEmu) -> Option<String> {
+        self.arbres.get(emu.package).cloned().or_else(|| emu.tree.map(str::to_string))
+    }
+}
+
+/// Intent de l'émulateur pour un fichier `path` (relatif au stockage : `Documents/Roms/n3ds/x.cxi`, ou le
+/// `.rpx` d'un jeu Wii U), sans aucune demande d'accès, dans cet ordre :
+/// 1. arbre que l'émulateur détient déjà → URI dans cet arbre, rien à accorder ;
+/// 2. accès « tous les fichiers » de l'app → fichier transmis par le FileProvider de l'app ;
+/// 3. arbre SAF accordé à l'app autrefois → URI de cet arbre, lecture transmise ;
+/// 4. sinon : erreur claire (`NO_ACCESS`).
+pub fn rom_intent(emu: &AndroidEmu, conf: &AndroidConf, path: &str, acces: &Acces) -> Result<StartActivity, String> {
+    if let Some(uri) = conf.tree_of(emu).and_then(|t| tree_document_uri(&t, path, emu.folder)) {
+        let mut intent = emulator_intent(emu, &uri);
+        intent.grant = false;
+        return Ok(intent);
+    }
+    if acces.fichiers {
+        let mut intent = emulator_intent(emu, "");
+        intent.data = None;
+        intent.extras.clear();
+        intent.file = Some(format!("{STORAGE}/{}", path.trim_matches('/')));
+        intent.file_extras = emu.uri_extra.map(str::to_string).into_iter().collect();
+        return Ok(intent);
+    }
+    let own = acces.arbre.as_deref().and_then(|t| Some((t, tree_dir(t)?)));
+    if let Some(uri) = own.and_then(|(_, dir)| tree_document_uri(&dir, path, false)) {
+        return if emu.folder { folder_game_intent(emu, &uri).ok_or_else(|| format!("Adresse du jeu inattendue : {uri}")) } else { Ok(emulator_intent(emu, &uri)) };
+    }
+    Err(NO_ACCESS.to_string())
+}
+
+/// `.rpx` du dossier `code/` d'un jeu Wii U (premier par ordre alphabétique, casse ignorée).
+pub fn pick_rpx(names: &[String]) -> Option<&String> {
+    let mut rpx: Vec<&String> = names.iter().filter(|n| n.to_ascii_lowercase().ends_with(".rpx")).collect();
+    rpx.sort();
+    rpx.into_iter().next()
 }
 
 /// Jeu en dossier (Wii U) : URI du `.rpx` telle que Cemu l'écrit dans sa bibliothèque
@@ -279,11 +433,11 @@ pub fn moonlight_intent(host_uuid: &str, app_name: &str, hdr: bool) -> StartActi
     StartActivity {
         package_name: "com.limelight".into(),
         activity: "com.limelight.ShortcutTrampoline".into(),
+        nom: Some("Moonlight".into()),
         action: Some("android.intent.action.VIEW".into()),
-        data: None,
         extras: BTreeMap::from([("UUID".to_string(), host_uuid.to_string()), ("AppName".to_string(), app_name.to_string())]),
         bool_extras: BTreeMap::from([("HDR".to_string(), hdr)]),
-        grant_tree: None,
+        ..Default::default()
     }
 }
 
@@ -313,33 +467,43 @@ pub fn stream_app(conf: &AndroidConf, inv: Option<&DeviceGame>, game: &str) -> O
 /// Comment lancer un jeu sur l'appareil.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plan {
-    /// ROM présente : émulateur Android.
-    Local { emu: &'static AndroidEmu, uri: String },
+    /// ROM présente : émulateur Android ; `rom` relatif à `Documents/Roms` (`n3ds/x.cxi`, dossier Wii U).
+    Local { emu: &'static AndroidEmu, rom: String },
     /// Flux depuis le PC (Moonlight → Sunshine).
     Stream { host: String, app: String, hdr: bool },
 }
 
-/// Choix du lancement : `mode` « local » ou « flux » imposé, sinon la ROM locale d'abord.
+/// ROM absente de l'inventaire comme du dossier lisible.
+pub const ROM_INCONNUE: &str = "ROM introuvable sur l'appareil : brancher l'appareil au PC pour mettre à jour son inventaire";
+/// Hôte Moonlight absent de la configuration.
+pub const SANS_HOTE: &str = "Hôte Moonlight non configuré : brancher l'appareil au PC pour déposer la configuration (scripts/apk.sh --config)";
+
+/// Choix du lancement : `mode` « local » ou « flux » imposé, sinon la ROM locale d'abord. `roms` : liste
+/// lue sur l'appareil (par chemin, ou arbre de repli), vide si l'app n'a aucun accès ; l'inventaire du PC
+/// suffit alors (son chemin `rom` fait foi).
 pub fn plan(game: &CatalogGame, roms: &[RomFile], conf: &AndroidConf, inv: Option<&DeviceGame>, mode: Option<&str>) -> Result<Plan, String> {
     let local = || -> Result<Plan, String> {
-        let emu = emulator_for(&game.console).ok_or("Aucun émulateur Android pris en charge pour cette console")?;
+        let emu = emulator_for(&game.console).ok_or("Aucun émulateur Android pour cette console")?;
         // ROM désignée par l'inventaire du PC (trouvée par nom ou par identifiant de titre), sinon par nom.
         let rom = inv
             .and_then(|i| i.rom.as_deref())
-            .and_then(|r| roms.iter().find(|f| f.is_dir == emu.folder && format!("{}/{}", f.dir, f.name) == r))
-            .or_else(|| find_rom(game, roms))
-            .ok_or_else(|| format!("Jeu absent du dossier des ROM ({})", emu.dir))?;
-        Ok(Plan::Local { emu, uri: rom.uri.clone() })
+            .and_then(safe_rel)
+            .filter(|r| r.starts_with(&format!("{}/", emu.dir)))
+            .map(str::to_string)
+            .or_else(|| find_rom(game, roms).map(|f| format!("{}/{}", f.dir, f.name)))
+            .ok_or(ROM_INCONNUE)?;
+        Ok(Plan::Local { emu, rom })
     };
     let stream = || -> Result<Plan, String> {
-        let app = stream_app(conf, inv, &game.id).ok_or("Jeu non jouable en flux (aucune appli Sunshine)")?;
-        let host = conf.moonlight.hote.clone().filter(|h| !h.is_empty()).ok_or("Hôte Moonlight non configuré ([moonlight] hote)")?;
+        let app = stream_app(conf, inv, &game.id).ok_or("Jeu non jouable en flux : aucune appli Sunshine pour ce jeu sur le PC")?;
+        let host = conf.moonlight.hote.clone().filter(|h| !h.is_empty()).ok_or(SANS_HOTE)?;
         Ok(Plan::Stream { host, app, hdr: conf.moonlight.hdr })
     };
     match mode {
         Some("local") => local(),
         Some("flux") => stream(),
-        _ => local().or_else(|local_err| stream().map_err(|_| local_err)),
+        // Ni l'un ni l'autre : l'erreur qui concerne ce jeu (flux annoncé par l'inventaire → celle du flux).
+        _ => local().or_else(|local_err| stream().map_err(|stream_err| if stream_app(conf, inv, &game.id).is_some() { stream_err } else { local_err })),
     }
 }
 
@@ -366,6 +530,19 @@ pub async fn ecran_haut(app: tauri::AppHandle, etat: serde_json::Value) -> Resul
     {
         let _ = (app, etat);
         Ok(false)
+    }
+}
+
+/// Mode d'affichage courant (`{"mode":"bas","largeur":…,"hauteur":…}` en dp, ou `{}`), lu par l'interface à
+/// son démarrage : l'annonce de DoubleEcran.kt a pu partir avant que la page n'écoute.
+#[tauri::command(rename = "ecranEtat")]
+pub async fn ecran_etat(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "android")]
+    return bridge::ecran_etat(&app);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(serde_json::json!({}))
     }
 }
 
@@ -399,6 +576,7 @@ pub use bridge::*;
 #[cfg(target_os = "android")]
 mod bridge {
     use super::*;
+    use crate::rumble::VibrationPattern;
     use std::path::PathBuf;
     use tauri::plugin::{Builder, PluginHandle, TauriPlugin};
     use tauri::{Manager, Wry};
@@ -425,30 +603,33 @@ mod bridge {
         dirs: Vec<String>,
     }
 
-    /// ROM des dossiers lus par l'app ; `granted = false` tant que l'arbre n'est pas accordé.
-    pub fn list_roms(app: &tauri::AppHandle) -> Result<RomList, String> {
-        bridge(app)?.0.run_mobile_plugin("listRoms", ListArgs { dirs: rom_dirs() }).map_err(|e| e.to_string())
+    /// Accès de l'app aux ROM : « tous les fichiers » accordé ? arbre SAF accordé autrefois ? Ne demande rien.
+    pub fn acces(app: &tauri::AppHandle) -> Acces {
+        bridge(app).ok().and_then(|b| b.0.run_mobile_plugin::<Acces>("accesFichiers", ()).ok()).unwrap_or_default()
     }
 
-    #[derive(Deserialize)]
-    struct Picked {
-        #[allow(dead_code)]
-        uri: String,
-    }
-
-    /// Demande l'accès au dossier des ROM (sélecteur Android, une seule fois).
-    pub fn pick_roms_tree(app: &tauri::AppHandle) -> Result<(), String> {
-        bridge(app)?.0.run_mobile_plugin::<Picked>("pickRomsTree", ()).map(|_| ()).map_err(|e| e.to_string())
-    }
-
-    /// ROM lisibles ; l'accès est demandé d'abord s'il manque.
-    pub fn list_roms_or_ask(app: &tauri::AppHandle) -> Result<RomList, String> {
-        let list = list_roms(app)?;
-        if list.granted {
-            return Ok(list);
+    /// Fichiers des dossiers de console lus par chemin (accès « tous les fichiers »), sinon par l'arbre SAF
+    /// accordé autrefois ; liste vide si l'app n'a aucun accès. Jamais de sélecteur.
+    pub fn list_roms(app: &tauri::AppHandle, acces: &Acces) -> Vec<RomFile> {
+        if acces.fichiers {
+            let mut out = Vec::new();
+            for dir in rom_dirs() {
+                let Ok(rd) = std::fs::read_dir(format!("{STORAGE}/{ROMS}/{dir}")) else { continue };
+                for e in rd.flatten() {
+                    let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
+                    out.push(RomFile { dir: dir.clone(), name: e.file_name().to_string_lossy().into_owned(), is_dir, uri: String::new() });
+                }
+            }
+            return out;
         }
-        pick_roms_tree(app)?;
-        list_roms(app)
+        if acces.arbre.is_none() {
+            return Vec::new();
+        }
+        bridge(app)
+            .ok()
+            .and_then(|b| b.0.run_mobile_plugin::<RomList>("listRoms", ListArgs { dirs: rom_dirs() }).ok())
+            .map(|l| l.files)
+            .unwrap_or_default()
     }
 
     #[derive(Serialize)]
@@ -461,13 +642,27 @@ mod bridge {
         uri: Option<String>,
     }
 
-    /// Intent de l'émulateur ; jeu en dossier (Wii U) : son `code/*.rpx`.
-    pub fn local_intent(app: &tauri::AppHandle, emu: &AndroidEmu, uri: &str) -> Result<StartActivity, String> {
-        if !emu.folder {
-            return Ok(emulator_intent(emu, uri));
+    /// Intent de l'émulateur pour la ROM `rom` (relative à `Documents/Roms`) ; jeu en dossier (Wii U) : son
+    /// `code/*.rpx`, cherché par chemin (sinon dans l'arbre de repli). ROM vérifiée quand l'app peut lire.
+    pub fn local_intent(app: &tauri::AppHandle, emu: &AndroidEmu, conf: &AndroidConf, rom: &str, acces: &Acces) -> Result<StartActivity, String> {
+        let path = format!("{ROMS}/{rom}");
+        if acces.fichiers && !std::path::Path::new(&format!("{STORAGE}/{path}")).exists() {
+            return Err(format!("ROM introuvable : {path} (fichier déplacé ou supprimé) : brancher l'appareil au PC pour mettre à jour son inventaire"));
         }
-        let found: Found = bridge(app)?.0.run_mobile_plugin("findRpx", UriArgs { uri }).map_err(|e| e.to_string())?;
-        let rpx = found.uri.ok_or("Fichier .rpx introuvable dans le dossier du jeu (code/)")?;
+        if !emu.folder {
+            return rom_intent(emu, conf, &path, acces);
+        }
+        if acces.fichiers {
+            let names: Vec<String> = std::fs::read_dir(format!("{STORAGE}/{path}/code"))
+                .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+                .unwrap_or_default();
+            let rpx = pick_rpx(&names).ok_or_else(|| format!("Fichier .rpx introuvable dans {path}/code"))?;
+            return rom_intent(emu, conf, &format!("{path}/code/{rpx}"), acces);
+        }
+        // Repli : arbre SAF accordé autrefois à l'app.
+        let folder = acces.arbre.as_deref().and_then(tree_dir).and_then(|d| tree_document_uri(&d, &path, false)).ok_or(NO_ACCESS_WIIU)?;
+        let found: Found = bridge(app)?.0.run_mobile_plugin("findRpx", UriArgs { uri: &folder }).map_err(|e| e.to_string())?;
+        let rpx = found.uri.ok_or_else(|| format!("Fichier .rpx introuvable dans {path}/code"))?;
         folder_game_intent(emu, &rpx).ok_or_else(|| format!("Adresse du jeu inattendue : {rpx}"))
     }
 
@@ -496,8 +691,12 @@ mod bridge {
 
     /// Message du plugin Kotlin (déjà en français), sans l'enveloppe technique de l'erreur.
     fn plugin_error(e: tauri::plugin::mobile::PluginInvokeError) -> String {
+        plugin_message(e, "Mise à jour impossible")
+    }
+
+    fn plugin_message(e: tauri::plugin::mobile::PluginInvokeError, defaut: &str) -> String {
         match e {
-            tauri::plugin::mobile::PluginInvokeError::InvokeRejected(r) => r.message.unwrap_or_else(|| "Mise à jour impossible".into()),
+            tauri::plugin::mobile::PluginInvokeError::InvokeRejected(r) => r.message.unwrap_or_else(|| defaut.into()),
             other => other.to_string(),
         }
     }
@@ -508,27 +707,42 @@ mod bridge {
     }
 
     /// Flux : intent Moonlight, avec l'identifiant `AppId` du raccourci Cocoon s'il existe pour cette appli
-    /// et cet hôte (sinon le nom seul, cherché par Moonlight dans son cache).
-    pub fn stream_intent(app: &tauri::AppHandle, host: &str, name: &str, hdr: bool) -> StartActivity {
+    /// et cet hôte (sinon le nom seul, cherché par Moonlight dans son cache). Raccourci lu par chemin, sinon
+    /// dans l'arbre de repli ; jamais de sélecteur.
+    pub fn stream_intent(app: &tauri::AppHandle, host: &str, name: &str, hdr: bool, acces: &Acces) -> StartActivity {
         let mut intent = moonlight_intent(host, name, hdr);
         let file = cocoon_file(name);
-        let id = list_roms_in(app, &["moonlight"])
-            .ok()
-            .and_then(|l| l.files.into_iter().find(|f| !f.is_dir && f.name == file))
-            .and_then(|f| bridge(app).ok()?.0.run_mobile_plugin::<Texte>("readText", UriArgs { uri: &f.uri }).ok()?.text)
-            .and_then(|t| cocoon_app_id(&t, host));
-        if let Some(id) = id {
+        let text = if acces.fichiers {
+            std::fs::read(format!("{STORAGE}/{ROMS}/moonlight/{file}")).ok().map(|b| String::from_utf8_lossy(&b[..b.len().min(4096)]).into_owned())
+        } else if acces.arbre.is_some() {
+            bridge(app)
+                .ok()
+                .and_then(|b| b.0.run_mobile_plugin::<RomList>("listRoms", ListArgs { dirs: vec!["moonlight".into()] }).ok())
+                .and_then(|l| l.files.into_iter().find(|f| !f.is_dir && f.name == file))
+                .and_then(|f| bridge(app).ok()?.0.run_mobile_plugin::<Texte>("readText", UriArgs { uri: &f.uri }).ok()?.text)
+        } else {
+            None
+        };
+        if let Some(id) = text.and_then(|t| cocoon_app_id(&t, host)) {
             intent.extras.insert("AppId".into(), id);
         }
         intent
     }
 
-    fn list_roms_in(app: &tauri::AppHandle, dirs: &[&str]) -> Result<RomList, String> {
-        bridge(app)?.0.run_mobile_plugin("listRoms", ListArgs { dirs: dirs.iter().map(|d| d.to_string()).collect() }).map_err(|e| e.to_string())
+    pub fn start(app: &tauri::AppHandle, intent: &StartActivity) -> Result<(), String> {
+        bridge(app)?.0.run_mobile_plugin::<serde_json::Value>("startActivity", intent).map(|_| ()).map_err(|e| plugin_message(e, "Lancement impossible"))
     }
 
-    pub fn start(app: &tauri::AppHandle, intent: &StartActivity) -> Result<(), String> {
-        bridge(app)?.0.run_mobile_plugin::<serde_json::Value>("startActivity", intent).map(|_| ()).map_err(|e| e.to_string())
+    /// Vibration du moteur de l'appareil (motif converti par `vibration_pattern`).
+    pub fn vibrer(app: &tauri::AppHandle, pattern: &VibrationPattern) {
+        if let Ok(b) = bridge(app) {
+            let _ = b.0.run_mobile_plugin::<serde_json::Value>("vibrer", pattern);
+        }
+    }
+
+    /// Mode d'affichage courant (écran du bas, taille de la vue en dp), annoncé par DoubleEcran.kt.
+    pub fn ecran_etat(app: &tauri::AppHandle) -> Result<serde_json::Value, String> {
+        bridge(app)?.0.run_mobile_plugin::<serde_json::Value>("ecranEtat", ()).map_err(|e| e.to_string())
     }
 
     /// Nom du paquet (avec le suffixe `.debug` d'une version de développement).
@@ -704,7 +918,7 @@ mod tests {
             .unwrap();
             let inv = DeviceGame { game: g.id.clone(), installed: g.installed, stream: g.stream, save: false, stream_app: g.stream_app.clone(), rom: None };
             match (g.installed, plan(&cg, &roms, &conf, Some(&inv), None)) {
-                (true, Ok(Plan::Local { emu, uri })) if uri.starts_with(&format!("content://t/{}/", emu.dir)) && emulator_for(&g.console) == Some(emu) => {}
+                (true, Ok(Plan::Local { emu, rom })) if rom.starts_with(&format!("{}/", emu.dir)) && emulator_for(&g.console) == Some(emu) => {}
                 (false, Ok(Plan::Stream { app, .. })) if Some(&app) == g.stream_app.as_ref() => {}
                 (_, other) => fails.push(format!("{} : {other:?}", g.id)),
             }
@@ -769,7 +983,7 @@ mod tests {
         assert!(matches!(plan(&mk8, &roms, &conf, Some(&inv), Some("flux")), Ok(Plan::Stream { .. })));
         // Ni ROM ni flux : l'erreur du lancement local est rendue.
         let err = plan(&mk8, &[], &conf, None, None).unwrap_err();
-        assert!(err.starts_with("Jeu absent"), "{err}");
+        assert_eq!(err, ROM_INCONNUE);
         // Appli imposée par la configuration.
         let conf = AndroidConf::parse("[moonlight]\nhote = \"H\"\napplis = { switch-mk8 = \"Autre\" }\n");
         assert_eq!(stream_app(&conf, Some(&inv), "switch-mk8").as_deref(), Some("Autre"));
@@ -791,6 +1005,89 @@ mod tests {
             stream_app: None,
             rom: Some("n3ds/Luigi's Mansion - Dark Moon (Europe) (En,Fr,De,Es,It,Nl,Pt,Ru).cxi".into()),
         };
-        assert!(matches!(plan(&lm2, &roms, &conf, Some(&inv), None), Ok(Plan::Local { uri, .. }) if uri == roms[0].uri));
+        assert!(matches!(plan(&lm2, &roms, &conf, Some(&inv), None), Ok(Plan::Local { rom, .. }) if rom == format!("n3ds/{}", roms[0].name)));
+        // Sans aucune liste (app sans accès aux fichiers) : le chemin de l'inventaire suffit.
+        assert!(matches!(plan(&lm2, &[], &conf, Some(&inv), None), Ok(Plan::Local { .. })));
+        // Chemin d'inventaire dangereux ou d'une autre console : ignoré.
+        let bad = DeviceGame { rom: Some("../../data/x.cxi".into()), ..inv.clone() };
+        assert_eq!(plan(&lm2, &[], &conf, Some(&bad), None), Err(ROM_INCONNUE.to_string()));
+        let other = DeviceGame { rom: Some("switch/x.nsp".into()), ..inv };
+        assert_eq!(plan(&lm2, &[], &conf, Some(&other), None), Err(ROM_INCONNUE.to_string()));
+    }
+
+    /// Retour de Guilhem (22/11) : « il ouvre à la place le système de fichier ». Chaque émulateur reçoit
+    /// la ROM dans l'arbre qu'il détient (relevé `dumpsys activity permissions`), sans permission transmise.
+    #[test]
+    fn rom_dans_l_arbre_de_l_emulateur_sans_selecteur() {
+        let conf = AndroidConf::default();
+        let none = Acces::default();
+        let az = emulator_for("3ds").unwrap();
+        let i = rom_intent(az, &conf, "Documents/Roms/n3ds/Legend of Zelda, The - Ocarina of Time 3D (Europe) (En,Fr,De,Es,It) (Rev 1).cxi", &none).unwrap();
+        // Exactement l'URI essayée par adb le 22/11 (Azahar charge le jeu, shell sans aucun droit à transmettre).
+        assert_eq!(
+            i.data.as_deref(),
+            Some("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms/document/primary%3ADocuments%2FRoms%2Fn3ds%2FLegend%20of%20Zelda%2C%20The%20-%20Ocarina%20of%20Time%203D%20(Europe)%20(En%2CFr%2CDe%2CEs%2CIt)%20(Rev%201).cxi")
+        );
+        assert!(!i.grant, "URI détenue par l'émulateur : rien à accorder");
+        // melonDS : son arbre est Roms/nds, URI dans CET arbre, et dans l'extra `uri`.
+        let m = rom_intent(emulator_for("ds").unwrap(), &conf, "Documents/Roms/nds/Pokemon Diamant.nds", &none).unwrap();
+        assert!(m.data.as_deref().unwrap().starts_with("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms%2Fnds/document/"));
+        assert_eq!(m.extras.get("uri"), m.data.as_ref());
+        // Cemu : format de sa bibliothèque (le même que l'essai adb du 22/11).
+        let c = rom_intent(emulator_for("wiiu").unwrap(), &conf, "Documents/Roms/wiiu/The Legend of Zelda The Wind Waker HD/code/cking.rpx", &none).unwrap();
+        assert_eq!(
+            c.data.as_deref(),
+            Some("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms%2Fwiiu/document/primary%3ADocuments/Roms/wiiu/The%20Legend%20of%20Zelda%20The%20Wind%20Waker%20HD/code/cking.rpx")
+        );
+        assert!(!c.grant && c.grant_tree.is_none());
+        // Dolphin : aucun arbre → sans accès aux fichiers, erreur claire ; avec, FileProvider de l'app.
+        let dol = emulator_for("gc").unwrap();
+        assert_eq!(rom_intent(dol, &conf, "Documents/Roms/gc/TP.rvz", &none), Err(NO_ACCESS.to_string()));
+        let f = rom_intent(dol, &conf, "Documents/Roms/gc/TP.rvz", &Acces { fichiers: true, arbre: None }).unwrap();
+        assert_eq!((f.file.as_deref(), f.data.as_deref()), (Some("/storage/emulated/0/Documents/Roms/gc/TP.rvz"), None));
+        assert_eq!(f.file_extras, vec!["AutoStartFile".to_string()]);
+        assert!(f.extras.is_empty());
+        // Repli : arbre accordé autrefois à l'app (version d'essai), lecture transmise.
+        let own = Acces { fichiers: false, arbre: Some("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms".into()) };
+        let r = rom_intent(dol, &conf, "Documents/Roms/gc/TP.rvz", &own).unwrap();
+        assert!(r.grant && r.data.as_deref().unwrap().ends_with("primary%3ADocuments%2FRoms%2Fgc%2FTP.rvz"));
+        // Dossier de jeux changé dans l'émulateur : réglage `[arbres]` de l'appareil.
+        let moved = AndroidConf::parse("[arbres]\n\"org.azahar_emu.azahar\" = \"Documents/Jeux3DS\"\n");
+        assert_eq!(rom_intent(az, &moved, "Documents/Roms/n3ds/x.cxi", &none), Err(NO_ACCESS.to_string()));
+        assert!(!rom_intent(az, &moved, "Documents/Jeux3DS/n3ds/x.cxi", &none).unwrap().grant);
+        // Sérialisation vers Kotlin.
+        let v = serde_json::to_value(&f).unwrap();
+        assert_eq!((v["file"].as_str(), v["fileExtras"][0].as_str(), v["grant"].as_bool(), v["nom"].as_str()), (Some("/storage/emulated/0/Documents/Roms/gc/TP.rvz"), Some("AutoStartFile"), Some(true), Some("Dolphin")));
+    }
+
+    #[test]
+    fn chemins_et_arbres() {
+        assert_eq!(safe_rel("n3ds/x.cxi"), Some("n3ds/x.cxi"));
+        assert_eq!(safe_rel("/n3ds/x.cxi/"), Some("n3ds/x.cxi"));
+        assert_eq!(safe_rel("n3ds/../x"), None);
+        assert_eq!(safe_rel("n3ds//x"), None);
+        assert_eq!(safe_rel(""), None);
+        assert_eq!(tree_document_uri("Documents/Roms/nds", "Documents/Roms/n3ds/x", false), None, "préfixe de nom, pas de dossier");
+        assert_eq!(tree_dir("content://com.android.externalstorage.documents/tree/primary%3ADocuments%2FRoms").as_deref(), Some("Documents/Roms"));
+        assert_eq!(tree_dir("content://autre/tree/primary%3AX"), None);
+        let names = ["meta.xml".to_string(), "Z.RPX".to_string(), "cking.rpx".to_string()];
+        assert_eq!(pick_rpx(&names).map(String::as_str), Some("Z.RPX"));
+        assert_eq!(pick_rpx(&names[..1]), None);
+    }
+
+    /// Écran de lancement honnête : chaque cas d'échec rend un message avec l'action possible.
+    #[test]
+    fn erreurs_de_lancement_claires() {
+        let mk8 = game("switch-mk8", "switch", "switch/Mario Kart 8 Deluxe [0100152000022000][v0].nsp");
+        let flux = DeviceGame { game: "switch-mk8".into(), installed: false, stream: true, save: false, stream_app: Some("MK8".into()), rom: None };
+        // Jeu en flux sans hôte Moonlight : l'erreur du flux, pas « ROM introuvable ».
+        let err = plan(&mk8, &[], &AndroidConf::default(), Some(&flux), None).unwrap_err();
+        assert_eq!(err, SANS_HOTE);
+        assert!(err.contains("brancher l'appareil au PC"));
+        // Console sans émulateur Android, flux imposé sans appli.
+        let n64 = game("n64-oot", "n64", "n64/OoT.z64");
+        assert!(plan(&n64, &[], &AndroidConf::default(), None, Some("local")).unwrap_err().starts_with("Aucun émulateur Android"));
+        assert!(plan(&n64, &[], &AndroidConf::default(), None, Some("flux")).unwrap_err().starts_with("Jeu non jouable en flux"));
+        assert!(NO_ACCESS.contains("brancher l'appareil au PC") && NO_ACCESS.contains("Accès à tous les fichiers"));
     }
 }

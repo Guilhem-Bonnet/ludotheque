@@ -105,7 +105,10 @@
   /** Ordre des étapes de `LaunchStep` → position dans la liste. */
   const index: Record<LaunchStep, number> = { profil: 0, telechargement: 1, sauvegarde: 2, lancement: 3, en_jeu: 4, envoi: 5, termine: 5 };
   /** Libellé d'une étape en échec. */
-  const failLabel = ['Profil indisponible', 'Téléchargement impossible', 'Sauvegarde impossible à synchroniser', 'Lancement impossible', 'Partie interrompue', 'Envoi de la sauvegarde impossible'];
+  const failLabel = isAndroid
+    // Android : l'étape 2 cherche le jeu (ROM de l'inventaire, accès, flux) ; rien ne s'y télécharge.
+    ? ['Profil indisponible', 'Jeu introuvable sur l\u2019appareil', 'Sauvegarde impossible à synchroniser', 'Lancement impossible']
+    : ['Profil indisponible', 'Téléchargement impossible', 'Sauvegarde impossible à synchroniser', 'Lancement impossible', 'Partie interrompue', 'Envoi de la sauvegarde impossible'];
 
   /** Applique une étape annoncée par l'app (lancement réel). */
   function onStep(e: LaunchEvent) {

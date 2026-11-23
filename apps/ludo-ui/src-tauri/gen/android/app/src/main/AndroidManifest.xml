@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lancement sans aucun sélecteur de dossier (android.rs) : ROM lues par chemin (Documents/Roms) et
+         confiées par le FileProvider aux émulateurs sans arbre (Dolphin). Accordé par le PC par adb
+         (`appops set <paquet> MANAGE_EXTERNAL_STORAGE allow` : scripts/apk.sh, ludo adb-watch), jamais
+         demandé par l'app. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <!-- Retour sensoriel (feedback.ts → rumble.rs → LudoPlugin.vibrer) : moteur de vibration de l'appareil. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Mise à jour depuis l'app (MiseAJourApk.kt) : APK de la release confié à l'installeur d'Android. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Menu en jeu (MenuJeuPlugin.kt) : « Fermer le jeu » ferme l'émulateur passé en arrière-plan. -->
