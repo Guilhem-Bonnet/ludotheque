@@ -1,0 +1,1256 @@
+{
+ "genere_par": "scripts/avatars.py",
+ "familles": [
+  "Mario",
+  "Donkey Kong",
+  "Zelda",
+  "Pokémon",
+  "Kirby",
+  "Animal Crossing",
+  "Splatoon",
+  "Metroid",
+  "Autres héros"
+ ],
+ "images": [
+  {
+   "slug": "mario-mario",
+   "label": "Mario",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e0372e",
+   "soft": "#38100e",
+   "ink": "#ffa29e",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5248"
+  },
+  {
+   "slug": "mario-peach",
+   "label": "Peach",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e7cd2c",
+   "soft": "#38320e",
+   "ink": "#fff19e",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5249"
+  },
+  {
+   "slug": "mario-luigi",
+   "label": "Luigi",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#5be051",
+   "soft": "#10380e",
+   "ink": "#a4ff9e",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5276"
+  },
+  {
+   "slug": "mario-yoshi",
+   "label": "Yoshi",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#5ae04a",
+   "soft": "#12380e",
+   "ink": "#a8ff9e",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5278"
+  },
+  {
+   "slug": "mario-toad",
+   "label": "Toad",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#f5de42",
+   "soft": "#38320e",
+   "ink": "#fff29e",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5250"
+  },
+  {
+   "slug": "mario-toadette",
+   "label": "Toadette",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e0488b",
+   "soft": "#380e20",
+   "ink": "#ff9ec8",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5277"
+  },
+  {
+   "slug": "mario-daisy",
+   "label": "Daisy",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e07239",
+   "soft": "#381c0e",
+   "ink": "#ffbf9e",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5301"
+  },
+  {
+   "slug": "mario-carottin",
+   "label": "Carottin",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#af64e0",
+   "soft": "#270e38",
+   "ink": "#d89eff",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5303"
+  },
+  {
+   "slug": "mario-bowser",
+   "label": "Bowser",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e09e34",
+   "soft": "#38280e",
+   "ink": "#ffd99e",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5281"
+  },
+  {
+   "slug": "mario-mario-elephant",
+   "label": "Mario éléphant",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#2c54e0",
+   "soft": "#0e1738",
+   "ink": "#9eb3ff",
+   "source": "lhub-data (icône Nintendo Switch Online) super-mario-bros-wonder_5273"
+  },
+  {
+   "slug": "mario-peach-2",
+   "label": "Peach",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e96498",
+   "soft": "#380e1e",
+   "ink": "#ff9ec4",
+   "source": "lhub-data (icône Nintendo Switch Online) princess-peach_5848"
+  },
+  {
+   "slug": "mario-peach-epeiste",
+   "label": "Peach épéiste",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e04d42",
+   "soft": "#38100e",
+   "ink": "#ffa49e",
+   "source": "lhub-data (icône Nintendo Switch Online) princess-peach_5850"
+  },
+  {
+   "slug": "mario-peach-detective",
+   "label": "Peach détective",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e0833c",
+   "soft": "#38200e",
+   "ink": "#ffc89e",
+   "source": "lhub-data (icône Nintendo Switch Online) princess-peach_5886"
+  },
+  {
+   "slug": "mario-stella",
+   "label": "Stella",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#fae758",
+   "soft": "#38330e",
+   "ink": "#fff39e",
+   "source": "lhub-data (icône Nintendo Switch Online) princess-peach_5849"
+  },
+  {
+   "slug": "mario-luigi-2",
+   "label": "Luigi",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#6ee033",
+   "soft": "#1c380e",
+   "ink": "#bfff9e",
+   "source": "lhub-data (icône Nintendo Switch Online) luigis-mansion-2-hd_6163"
+  },
+  {
+   "slug": "mario-luigi-et-sa-lampe",
+   "label": "Luigi et sa lampe",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#5be021",
+   "soft": "#1a380e",
+   "ink": "#bbff9e",
+   "source": "lhub-data (icône Nintendo Switch Online) luigis-mansion-2-hd_6164"
+  },
+  {
+   "slug": "mario-boo",
+   "label": "Boo",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e04e90",
+   "soft": "#380e21",
+   "ink": "#ff9ec9",
+   "source": "lhub-data (icône Nintendo Switch Online) luigis-mansion-2-hd_6202"
+  },
+  {
+   "slug": "mario-professeur-k-tastroff",
+   "label": "Professeur K. Tastroff",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#e03446",
+   "soft": "#380e12",
+   "ink": "#ff9ea7",
+   "source": "lhub-data (icône Nintendo Switch Online) luigis-mansion-2-hd_6188"
+  },
+  {
+   "slug": "mario-captain-toad",
+   "label": "Captain Toad",
+   "famille": "Mario",
+   "anime": false,
+   "accent": "#f7b425",
+   "soft": "#382a0e",
+   "ink": "#ffdf9e",
+   "source": "SteamGridDB icône 2400 (Captain Toad: Treasure Tracker)"
+  },
+  {
+   "slug": "donkey-kong-donkey-kong",
+   "label": "Donkey Kong",
+   "famille": "Donkey Kong",
+   "anime": false,
+   "accent": "#e09464",
+   "soft": "#381e0e",
+   "ink": "#ffc39e",
+   "source": "lhub-data (icône Nintendo Switch Online) donkey-kong-country-returns-hd_6880"
+  },
+  {
+   "slug": "donkey-kong-diddy-kong",
+   "label": "Diddy Kong",
+   "famille": "Donkey Kong",
+   "anime": false,
+   "accent": "#e06b2b",
+   "soft": "#381c0e",
+   "ink": "#ffc09e",
+   "source": "lhub-data (icône Nintendo Switch Online) donkey-kong-country-returns-hd_6881"
+  },
+  {
+   "slug": "donkey-kong-donkey-et-diddy",
+   "label": "Donkey et Diddy",
+   "famille": "Donkey Kong",
+   "anime": false,
+   "accent": "#e06d34",
+   "soft": "#381c0e",
+   "ink": "#ffbe9e",
+   "source": "lhub-data (icône Nintendo Switch Online) donkey-kong-country-returns-hd_6913"
+  },
+  {
+   "slug": "donkey-kong-cranky-kong",
+   "label": "Cranky Kong",
+   "famille": "Donkey Kong",
+   "anime": false,
+   "accent": "#e0a95a",
+   "soft": "#38260e",
+   "ink": "#ffd69e",
+   "source": "lhub-data (icône Nintendo Switch Online) donkey-kong-country-returns-hd_6892"
+  },
+  {
+   "slug": "donkey-kong-rambi",
+   "label": "Rambi",
+   "famille": "Donkey Kong",
+   "anime": false,
+   "accent": "#6db2f2",
+   "soft": "#0e2338",
+   "ink": "#9ed0ff",
+   "source": "lhub-data (icône Nintendo Switch Online) donkey-kong-country-returns-hd_6903"
+  },
+  {
+   "slug": "zelda-zelda",
+   "label": "Zelda",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e09264",
+   "soft": "#381d0e",
+   "ink": "#ffc29e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4802"
+  },
+  {
+   "slug": "zelda-link",
+   "label": "Link",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e0ad5c",
+   "soft": "#38270e",
+   "ink": "#ffd99e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4335"
+  },
+  {
+   "slug": "zelda-link-et-l-emprise",
+   "label": "Link et l'Emprise",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#2ae0c6",
+   "soft": "#0e3832",
+   "ink": "#9efff1",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4313"
+  },
+  {
+   "slug": "zelda-pru-ha",
+   "label": "Pru'ha",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e0824c",
+   "soft": "#381d0e",
+   "ink": "#ffc19e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4804"
+  },
+  {
+   "slug": "zelda-robelo",
+   "label": "Robelo",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e0c73d",
+   "soft": "#38310e",
+   "ink": "#fff09e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4806"
+  },
+  {
+   "slug": "zelda-tulin",
+   "label": "Tulin",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#d2e064",
+   "soft": "#33380e",
+   "ink": "#f3ff9e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4821"
+  },
+  {
+   "slug": "zelda-prince-sidon",
+   "label": "Prince Sidon",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e04264",
+   "soft": "#380e17",
+   "ink": "#ff9eb3",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4836"
+  },
+  {
+   "slug": "zelda-yona",
+   "label": "Yona",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#8fe060",
+   "soft": "#1d380e",
+   "ink": "#c1ff9e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-tears-of-the-kingdom_4838"
+  },
+  {
+   "slug": "zelda-zelda-2",
+   "label": "Zelda",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e1a342",
+   "soft": "#38270e",
+   "ink": "#ffd99e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-echoes-of-wisdom_6499"
+  },
+  {
+   "slug": "zelda-zelda-et-le-baton",
+   "label": "Zelda et le bâton",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e09664",
+   "soft": "#381f0e",
+   "ink": "#ffc59e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-echoes-of-wisdom_6497"
+  },
+  {
+   "slug": "zelda-link-2",
+   "label": "Link",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e09255",
+   "soft": "#38200e",
+   "ink": "#ffc89e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-echoes-of-wisdom_6500"
+  },
+  {
+   "slug": "zelda-tri",
+   "label": "Tri",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#f5ee47",
+   "soft": "#38360e",
+   "ink": "#fffa9e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-echoes-of-wisdom_6498"
+  },
+  {
+   "slug": "zelda-octorok",
+   "label": "Octorok",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e0432d",
+   "soft": "#38130e",
+   "ink": "#ffaa9e",
+   "source": "lhub-data (icône Nintendo Switch Online) the-legend-of-zelda-echoes-of-wisdom_6537"
+  },
+  {
+   "slug": "zelda-link-de-breath-of-the-wild",
+   "label": "Link de Breath of the Wild",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#e0b264",
+   "soft": "#38280e",
+   "ink": "#ffda9e",
+   "source": "SteamGridDB icône 71878 (The Legend of Zelda: Breath of the Wild)"
+  },
+  {
+   "slug": "zelda-link-de-a-link-between-worlds",
+   "label": "Link de A Link Between Worlds",
+   "famille": "Zelda",
+   "anime": false,
+   "accent": "#6ae04b",
+   "soft": "#17380e",
+   "ink": "#b2ff9e",
+   "source": "SteamGridDB icône 430 (The Legend of Zelda: A Link Between Worlds)"
+  },
+  {
+   "slug": "pokemon-pikachu",
+   "label": "Pikachu",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#edd46a",
+   "soft": "#382f0e",
+   "ink": "#ffec9e",
+   "source": "lhub-data (icône Nintendo Switch Online) pokemon-scarlet-and-violet_3479"
+  },
+  {
+   "slug": "pokemon-evoli",
+   "label": "Évoli",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#e0a75e",
+   "soft": "#38250e",
+   "ink": "#ffd49e",
+   "source": "lhub-data (icône Nintendo Switch Online) pokemon-scarlet-and-violet_3480"
+  },
+  {
+   "slug": "pokemon-poussacha",
+   "label": "Poussacha",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#8de057",
+   "soft": "#1e380e",
+   "ink": "#c4ff9e",
+   "source": "lhub-data (icône Nintendo Switch Online) pokemon-scarlet-and-violet_3247"
+  },
+  {
+   "slug": "pokemon-chochodile",
+   "label": "Chochodile",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#e0613c",
+   "soft": "#38170e",
+   "ink": "#ffb39e",
+   "source": "lhub-data (icône Nintendo Switch Online) pokemon-scarlet-and-violet_3246"
+  },
+  {
+   "slug": "pokemon-coiffeton",
+   "label": "Coiffeton",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#5ed1e0",
+   "soft": "#0e3338",
+   "ink": "#9ef4ff",
+   "source": "lhub-data (icône Nintendo Switch Online) pokemon-scarlet-and-violet_3248"
+  },
+  {
+   "slug": "pokemon-koraidon",
+   "label": "Koraidon",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#e05861",
+   "soft": "#380e10",
+   "ink": "#ff9ea4",
+   "source": "lhub-data (icône Nintendo Switch Online) pokemon-scarlet-and-violet_6869"
+  },
+  {
+   "slug": "pokemon-miraidon",
+   "label": "Miraidon",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#7633e0",
+   "soft": "#1e0e38",
+   "ink": "#c39eff",
+   "source": "lhub-data (icône Nintendo Switch Online) pokemon-scarlet-and-violet_6870"
+  },
+  {
+   "slug": "pokemon-detective-pikachu",
+   "label": "Détective Pikachu",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#eab346",
+   "soft": "#38290e",
+   "ink": "#ffde9e",
+   "source": "lhub-data (icône Nintendo Switch Online) detective-pikachu-returns_4953"
+  },
+  {
+   "slug": "pokemon-detective-pikachu-a-la-loupe",
+   "label": "Détective Pikachu à la loupe",
+   "famille": "Pokémon",
+   "anime": false,
+   "accent": "#e7ac3e",
+   "soft": "#38290e",
+   "ink": "#ffdd9e",
+   "source": "lhub-data (icône Nintendo Switch Online) detective-pikachu-returns_4954"
+  },
+  {
+   "slug": "pokemon-anime-pikachu",
+   "label": "Pikachu",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e5d167",
+   "soft": "#38310e",
+   "ink": "#ffef9e",
+   "source": "PokeAPI/sprites showdown 25.gif"
+  },
+  {
+   "slug": "pokemon-anime-evoli",
+   "label": "Évoli",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e0a156",
+   "soft": "#38250e",
+   "ink": "#ffd39e",
+   "source": "PokeAPI/sprites showdown 133.gif"
+  },
+  {
+   "slug": "pokemon-anime-bulbizarre",
+   "label": "Bulbizarre",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#64e095",
+   "soft": "#0e381e",
+   "ink": "#9effc3",
+   "source": "PokeAPI/sprites showdown 1.gif"
+  },
+  {
+   "slug": "pokemon-anime-salameche",
+   "label": "Salamèche",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e09d64",
+   "soft": "#38210e",
+   "ink": "#ffca9e",
+   "source": "PokeAPI/sprites showdown 4.gif"
+  },
+  {
+   "slug": "pokemon-anime-carapuce",
+   "label": "Carapuce",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#64c5e0",
+   "soft": "#0e2e38",
+   "ink": "#9ee9ff",
+   "source": "PokeAPI/sprites showdown 7.gif"
+  },
+  {
+   "slug": "pokemon-anime-dracaufeu",
+   "label": "Dracaufeu",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e0a65f",
+   "soft": "#38250e",
+   "ink": "#ffd39e",
+   "source": "PokeAPI/sprites showdown 6.gif"
+  },
+  {
+   "slug": "pokemon-anime-florizarre",
+   "label": "Florizarre",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#64cfe0",
+   "soft": "#0e3238",
+   "ink": "#9ef1ff",
+   "source": "PokeAPI/sprites showdown 3.gif"
+  },
+  {
+   "slug": "pokemon-anime-tortank",
+   "label": "Tortank",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#649ae0",
+   "soft": "#0e2038",
+   "ink": "#9ec8ff",
+   "source": "PokeAPI/sprites showdown 9.gif"
+  },
+  {
+   "slug": "pokemon-anime-mewtwo",
+   "label": "Mewtwo",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#6db2f2",
+   "soft": "#0e2338",
+   "ink": "#9ed0ff",
+   "source": "PokeAPI/sprites showdown 150.gif"
+  },
+  {
+   "slug": "pokemon-anime-mew",
+   "label": "Mew",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#64a1e0",
+   "soft": "#0e2238",
+   "ink": "#9ecdff",
+   "source": "PokeAPI/sprites showdown 151.gif"
+  },
+  {
+   "slug": "pokemon-anime-ronflex",
+   "label": "Ronflex",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#4fbde0",
+   "soft": "#0e2e38",
+   "ink": "#9ee7ff",
+   "source": "PokeAPI/sprites showdown 143.gif"
+  },
+  {
+   "slug": "pokemon-anime-rondoudou",
+   "label": "Rondoudou",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#25bde0",
+   "soft": "#0e3038",
+   "ink": "#9eecff",
+   "source": "PokeAPI/sprites showdown 39.gif"
+  },
+  {
+   "slug": "pokemon-anime-ectoplasma",
+   "label": "Ectoplasma",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#ef836b",
+   "soft": "#38150e",
+   "ink": "#ffaf9e",
+   "source": "PokeAPI/sprites showdown 94.gif"
+  },
+  {
+   "slug": "pokemon-anime-lucario",
+   "label": "Lucario",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#64b8e0",
+   "soft": "#0e2a38",
+   "ink": "#9edfff",
+   "source": "PokeAPI/sprites showdown 448.gif"
+  },
+  {
+   "slug": "pokemon-anime-amphinobi",
+   "label": "Amphinobi",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#4a99e0",
+   "soft": "#0e2438",
+   "ink": "#9ed1ff",
+   "source": "PokeAPI/sprites showdown 658.gif"
+  },
+  {
+   "slug": "pokemon-anime-brindibou",
+   "label": "Brindibou",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e09e64",
+   "soft": "#38210e",
+   "ink": "#ffcb9e",
+   "source": "PokeAPI/sprites showdown 722.gif"
+  },
+  {
+   "slug": "pokemon-anime-flamiaou",
+   "label": "Flamiaou",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e0554b",
+   "soft": "#38100e",
+   "ink": "#ffa49e",
+   "source": "PokeAPI/sprites showdown 725.gif"
+  },
+  {
+   "slug": "pokemon-anime-otaquin",
+   "label": "Otaquin",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#6492e0",
+   "soft": "#0e1d38",
+   "ink": "#9ec1ff",
+   "source": "PokeAPI/sprites showdown 728.gif"
+  },
+  {
+   "slug": "pokemon-anime-solgaleo",
+   "label": "Solgaleo",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e0d264",
+   "soft": "#38330e",
+   "ink": "#fff49e",
+   "source": "PokeAPI/sprites showdown 791.gif"
+  },
+  {
+   "slug": "pokemon-anime-lunala",
+   "label": "Lunala",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#7640e0",
+   "soft": "#1c0e38",
+   "ink": "#bf9eff",
+   "source": "PokeAPI/sprites showdown 792.gif"
+  },
+  {
+   "slug": "pokemon-anime-xerneas",
+   "label": "Xerneas",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#6495e0",
+   "soft": "#0e1e38",
+   "ink": "#9ec4ff",
+   "source": "PokeAPI/sprites showdown 716.gif"
+  },
+  {
+   "slug": "pokemon-anime-yveltal",
+   "label": "Yveltal",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e05470",
+   "soft": "#380e16",
+   "ink": "#ff9eb1",
+   "source": "PokeAPI/sprites showdown 717.gif"
+  },
+  {
+   "slug": "pokemon-anime-kyogre",
+   "label": "Kyogre",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#408de0",
+   "soft": "#0e2238",
+   "ink": "#9eccff",
+   "source": "PokeAPI/sprites showdown 382.gif"
+  },
+  {
+   "slug": "pokemon-anime-groudon",
+   "label": "Groudon",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e03b2e",
+   "soft": "#38110e",
+   "ink": "#ffa59e",
+   "source": "PokeAPI/sprites showdown 383.gif"
+  },
+  {
+   "slug": "pokemon-anime-dialga",
+   "label": "Dialga",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#6499e0",
+   "soft": "#0e1f38",
+   "ink": "#9ec7ff",
+   "source": "PokeAPI/sprites showdown 483.gif"
+  },
+  {
+   "slug": "pokemon-anime-psykokwak",
+   "label": "Psykokwak",
+   "famille": "Pokémon",
+   "anime": true,
+   "accent": "#e5bc67",
+   "soft": "#382a0e",
+   "ink": "#ffe09e",
+   "source": "PokeAPI/sprites showdown 54.gif"
+  },
+  {
+   "slug": "kirby-kirby",
+   "label": "Kirby",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#e05484",
+   "soft": "#380e1c",
+   "ink": "#ff9ebf",
+   "source": "lhub-data (icône Nintendo Switch Online) kirby-and-the-forgotten-land_1599"
+  },
+  {
+   "slug": "kirby-kirby-epee",
+   "label": "Kirby épée",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#e0264b",
+   "soft": "#380e16",
+   "ink": "#ff9eb1",
+   "source": "lhub-data (icône Nintendo Switch Online) kirby-and-the-forgotten-land_1602"
+  },
+  {
+   "slug": "kirby-bandana-waddle-dee",
+   "label": "Bandana Waddle Dee",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#e0a64f",
+   "soft": "#38270e",
+   "ink": "#ffd89e",
+   "source": "lhub-data (icône Nintendo Switch Online) kirby-and-the-forgotten-land_1600"
+  },
+  {
+   "slug": "kirby-meta-knight",
+   "label": "Meta Knight",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#e09f33",
+   "soft": "#38280e",
+   "ink": "#ffda9e",
+   "source": "lhub-data (icône Nintendo Switch Online) kirby-and-the-forgotten-land_1620"
+  },
+  {
+   "slug": "kirby-roi-dadidou",
+   "label": "Roi DaDiDou",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#e0a845",
+   "soft": "#38280e",
+   "ink": "#ffdb9e",
+   "source": "lhub-data (icône Nintendo Switch Online) kirby-and-the-forgotten-land_1640"
+  },
+  {
+   "slug": "kirby-elfilin",
+   "label": "Elfilin",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#61e0cf",
+   "soft": "#0e3832",
+   "ink": "#9efff1",
+   "source": "lhub-data (icône Nintendo Switch Online) kirby-and-the-forgotten-land_1660"
+  },
+  {
+   "slug": "kirby-kirby-reveur",
+   "label": "Kirby rêveur",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#e46793",
+   "soft": "#380e1c",
+   "ink": "#ff9ec0",
+   "source": "lhub-data (icône Nintendo Switch Online) kirbys-return-to-dream-land-deluxe_3868"
+  },
+  {
+   "slug": "kirby-magolor",
+   "label": "Magolor",
+   "famille": "Kirby",
+   "anime": false,
+   "accent": "#4478e0",
+   "soft": "#0e1b38",
+   "ink": "#9ebeff",
+   "source": "lhub-data (icône Nintendo Switch Online) kirbys-return-to-dream-land-deluxe_3870"
+  },
+  {
+   "slug": "animal-crossing-marie",
+   "label": "Marie",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#f3df5c",
+   "soft": "#38320e",
+   "ink": "#fff19e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4022"
+  },
+  {
+   "slug": "animal-crossing-tom-nook",
+   "label": "Tom Nook",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e08239",
+   "soft": "#38200e",
+   "ink": "#ffc89e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_3975"
+  },
+  {
+   "slug": "animal-crossing-meli-et-melo",
+   "label": "Méli et Mélo",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e07f3a",
+   "soft": "#381f0e",
+   "ink": "#ffc69e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_3977"
+  },
+  {
+   "slug": "animal-crossing-keke-laglisse",
+   "label": "Kéké Laglisse",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e0ac51",
+   "soft": "#38280e",
+   "ink": "#ffdb9e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_3978"
+  },
+  {
+   "slug": "animal-crossing-thibou",
+   "label": "Thibou",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e0aa64",
+   "soft": "#38250e",
+   "ink": "#ffd49e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4245"
+  },
+  {
+   "slug": "animal-crossing-celeste",
+   "label": "Céleste",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e0363e",
+   "soft": "#380e10",
+   "ink": "#ff9ea2",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4246"
+  },
+  {
+   "slug": "animal-crossing-porcelette",
+   "label": "Porcelette",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e0803f",
+   "soft": "#381f0e",
+   "ink": "#ffc59e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4286"
+  },
+  {
+   "slug": "animal-crossing-rounard",
+   "label": "Rounard",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#ef9a24",
+   "soft": "#38260e",
+   "ink": "#ffd69e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4259"
+  },
+  {
+   "slug": "animal-crossing-resetti",
+   "label": "Résetti",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e07841",
+   "soft": "#381c0e",
+   "ink": "#ffbf9e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4271"
+  },
+  {
+   "slug": "animal-crossing-pascal",
+   "label": "Pascal",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e03d4f",
+   "soft": "#380e12",
+   "ink": "#ff9ea8",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4256"
+  },
+  {
+   "slug": "animal-crossing-kapp-n",
+   "label": "Kapp'n",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e6b444",
+   "soft": "#382b0e",
+   "ink": "#ffe19e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_4260"
+  },
+  {
+   "slug": "animal-crossing-raymond",
+   "label": "Raymond",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e76b68",
+   "soft": "#380f0e",
+   "ink": "#ffa09e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_2851"
+  },
+  {
+   "slug": "animal-crossing-marshal",
+   "label": "Marshal",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e0da64",
+   "soft": "#38350e",
+   "ink": "#fffa9e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_2396"
+  },
+  {
+   "slug": "animal-crossing-judy",
+   "label": "Judy",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#ea4490",
+   "soft": "#380e21",
+   "ink": "#ff9eca",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_814"
+  },
+  {
+   "slug": "animal-crossing-sherb",
+   "label": "Sherb",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#6bc2ed",
+   "soft": "#0e2a38",
+   "ink": "#9edeff",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_3319"
+  },
+  {
+   "slug": "animal-crossing-ankha",
+   "label": "Ankha",
+   "famille": "Animal Crossing",
+   "anime": false,
+   "accent": "#e9d924",
+   "soft": "#38340e",
+   "ink": "#fff69e",
+   "source": "lhub-data (icône Nintendo Switch Online) animal-crossing-new-horizons_2372"
+  },
+  {
+   "slug": "splatoon-inkling",
+   "label": "Inkling",
+   "famille": "Splatoon",
+   "anime": false,
+   "accent": "#e9de42",
+   "soft": "#38350e",
+   "ink": "#fff89e",
+   "source": "lhub-data (icône Nintendo Switch Online) splatoon-3_2763"
+  },
+  {
+   "slug": "splatoon-inkling-souriante",
+   "label": "Inkling souriante",
+   "famille": "Splatoon",
+   "anime": false,
+   "accent": "#e59267",
+   "soft": "#381c0e",
+   "ink": "#ffbf9e",
+   "source": "lhub-data (icône Nintendo Switch Online) splatoon-3_2802"
+  },
+  {
+   "slug": "splatoon-octaling",
+   "label": "Octaling",
+   "famille": "Splatoon",
+   "anime": false,
+   "accent": "#6956f0",
+   "soft": "#130e38",
+   "ink": "#a99eff",
+   "source": "lhub-data (icône Nintendo Switch Online) splatoon-3_2764"
+  },
+  {
+   "slug": "splatoon-octaling-en-garde",
+   "label": "Octaling en garde",
+   "famille": "Splatoon",
+   "anime": false,
+   "accent": "#695bea",
+   "soft": "#120e38",
+   "ink": "#a79eff",
+   "source": "lhub-data (icône Nintendo Switch Online) splatoon-3_2803"
+  },
+  {
+   "slug": "splatoon-calamar",
+   "label": "Calamar",
+   "famille": "Splatoon",
+   "anime": false,
+   "accent": "#6af8cf",
+   "soft": "#0e382b",
+   "ink": "#9effe2",
+   "source": "lhub-data (icône Nintendo Switch Online) splatoon-3_2587"
+  },
+  {
+   "slug": "splatoon-poulpe",
+   "label": "Poulpe",
+   "famille": "Splatoon",
+   "anime": false,
+   "accent": "#f55359",
+   "soft": "#380e0f",
+   "ink": "#ff9ea1",
+   "source": "lhub-data (icône Nintendo Switch Online) splatoon-3_2588"
+  },
+  {
+   "slug": "splatoon-judd",
+   "label": "Judd",
+   "famille": "Splatoon",
+   "anime": false,
+   "accent": "#e0cc47",
+   "soft": "#38320e",
+   "ink": "#fff29e",
+   "source": "lhub-data (icône Nintendo Switch Online) splatoon-3_2836"
+  },
+  {
+   "slug": "metroid-samus",
+   "label": "Samus",
+   "famille": "Metroid",
+   "anime": false,
+   "accent": "#e05947",
+   "soft": "#38120e",
+   "ink": "#ffa99e",
+   "source": "lhub-data (icône Nintendo Switch Online) metroid-dread_6038"
+  },
+  {
+   "slug": "metroid-samus-en-action",
+   "label": "Samus en action",
+   "famille": "Metroid",
+   "anime": false,
+   "accent": "#58b2e0",
+   "soft": "#0e2938",
+   "ink": "#9edeff",
+   "source": "lhub-data (icône Nintendo Switch Online) metroid-dread_6074"
+  },
+  {
+   "slug": "metroid-samus-varia",
+   "label": "Samus Varia",
+   "famille": "Metroid",
+   "anime": false,
+   "accent": "#e09161",
+   "soft": "#381d0e",
+   "ink": "#ffc29e",
+   "source": "lhub-data (icône Nintendo Switch Online) metroid-prime-remastered_4003"
+  },
+  {
+   "slug": "metroid-metroid",
+   "label": "Metroid",
+   "famille": "Metroid",
+   "anime": false,
+   "accent": "#64e072",
+   "soft": "#0e3812",
+   "ink": "#9effa8",
+   "source": "lhub-data (icône Nintendo Switch Online) metroid-prime-remastered_3987"
+  },
+  {
+   "slug": "autres-heros-alear",
+   "label": "Alear",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#e02131",
+   "soft": "#380e11",
+   "ink": "#ff9ea6",
+   "source": "lhub-data (icône Nintendo Switch Online) fire-emblem-engage_3665"
+  },
+  {
+   "slug": "autres-heros-marth",
+   "label": "Marth",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#6477e0",
+   "soft": "#0e1438",
+   "ink": "#9eacff",
+   "source": "lhub-data (icône Nintendo Switch Online) fire-emblem-engage_3649"
+  },
+  {
+   "slug": "autres-heros-roy",
+   "label": "Roy",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#425be0",
+   "soft": "#0e1438",
+   "ink": "#9eadff",
+   "source": "lhub-data (icône Nintendo Switch Online) fire-emblem-engage_3644"
+  },
+  {
+   "slug": "autres-heros-ike",
+   "label": "Ike",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#5a8be0",
+   "soft": "#0e1d38",
+   "ink": "#9ec1ff",
+   "source": "lhub-data (icône Nintendo Switch Online) fire-emblem-engage_3656"
+  },
+  {
+   "slug": "autres-heros-sommie",
+   "label": "Sommie",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#6bd1ee",
+   "soft": "#0e2e38",
+   "ink": "#9ee9ff",
+   "source": "lhub-data (icône Nintendo Switch Online) fire-emblem-engage_3683"
+  },
+  {
+   "slug": "autres-heros-noah",
+   "label": "Noah",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#e05164",
+   "soft": "#380e13",
+   "ink": "#ff9eab",
+   "source": "lhub-data (icône Nintendo Switch Online) xenoblade3_2143"
+  },
+  {
+   "slug": "autres-heros-mio",
+   "label": "Mio",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#e0b164",
+   "soft": "#38270e",
+   "ink": "#ffd99e",
+   "source": "lhub-data (icône Nintendo Switch Online) xenoblade3_2252"
+  },
+  {
+   "slug": "autres-heros-manana",
+   "label": "Manana",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#e69767",
+   "soft": "#381d0e",
+   "ink": "#ffc29e",
+   "source": "lhub-data (icône Nintendo Switch Online) xenoblade3_2260"
+  },
+  {
+   "slug": "autres-heros-pikmin",
+   "label": "Pikmin",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#fbd525",
+   "soft": "#38300e",
+   "ink": "#ffed9e",
+   "source": "lhub-data (icône Nintendo Switch Online) pikmin-series_4783"
+  },
+  {
+   "slug": "autres-heros-olimar",
+   "label": "Olimar",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#e0212a",
+   "soft": "#380e10",
+   "ink": "#ff9ea2",
+   "source": "lhub-data (icône Nintendo Switch Online) pikmin-series_4770"
+  },
+  {
+   "slug": "autres-heros-otchin",
+   "label": "Otchin",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#e3a133",
+   "soft": "#38280e",
+   "ink": "#ffda9e",
+   "source": "lhub-data (icône Nintendo Switch Online) pikmin-series_4748"
+  },
+  {
+   "slug": "autres-heros-pit",
+   "label": "Pit",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#5093e0",
+   "soft": "#0e2138",
+   "ink": "#9ecbff",
+   "source": "SteamGridDB icône 4474 (Kid Icarus: Uprising)"
+  },
+  {
+   "slug": "autres-heros-whisper",
+   "label": "Whisper",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#9164e0",
+   "soft": "#1d0e38",
+   "ink": "#c19eff",
+   "source": "SteamGridDB icône 4493 (Yo-kai Watch)"
+  },
+  {
+   "slug": "autres-heros-shovel-knight",
+   "label": "Shovel Knight",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#21cbe0",
+   "soft": "#0e3338",
+   "ink": "#9ef4ff",
+   "source": "SteamGridDB icône 48166 (Shovel Knight)"
+  },
+  {
+   "slug": "autres-heros-professeur-layton",
+   "label": "Professeur Layton",
+   "famille": "Autres héros",
+   "anime": false,
+   "accent": "#e0672c",
+   "soft": "#381b0e",
+   "ink": "#ffbd9e",
+   "source": "SteamGridDB icône 118891 (Professor Layton and the Miracle Mask)"
+  }
+ ]
+}

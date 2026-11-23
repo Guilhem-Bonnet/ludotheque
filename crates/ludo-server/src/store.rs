@@ -65,7 +65,15 @@ impl Clock for SystemClock {
 }
 
 /// Formats d'image acceptés : extension de stockage et type MIME servi.
-const COVER_TYPES: &[(&str, &str)] = &[("png", "image/png"), ("jpg", "image/jpeg"), ("webp", "image/webp")];
+const COVER_TYPES: &[(&str, &str)] = &[("png", "image/png"), ("jpg", "image/jpeg"), ("webp", "image/webp"), ("gif", "image/gif")];
+
+/// Nombre maximal d'images par dossier de la galerie des profils.
+pub const MAX_GALLERY_FILES: usize = 1000;
+
+/// Nom d'une image de la galerie : celui de `perso:<slug>` (1 à 40 caractères `[a-z0-9-]`).
+pub fn gallery_slug_ok(slug: &str) -> bool {
+    (1..=40).contains(&slug.len()) && slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
 
 /// Taille maximale d'une image de jeu (5 Mo).
 pub const MAX_COVER_BYTES: usize = 5 * 1024 * 1024;
@@ -78,32 +86,46 @@ pub fn sniff_cover(d: &[u8]) -> Option<(&'static str, &'static str)> {
         Some(("jpg", "image/jpeg"))
     } else if d.len() >= 12 && &d[..4] == b"RIFF" && &d[8..12] == b"WEBP" {
         Some(("webp", "image/webp"))
+    } else if d.starts_with(b"GIF87a") || d.starts_with(b"GIF89a") {
+        Some(("gif", "image/gif"))
     } else {
         None
     }
 }
 
-/// Sorte d'image d'un jeu : la jaquette (tuile) ou le fond (grand format, affiché flouté derrière
-/// l'écran). Chacune dans son dossier du volume de données (`covers/`, `backgrounds/`).
+/// Sorte d'image : la jaquette d'un jeu (tuile), son fond (grand format, affiché flouté derrière
+/// l'écran), ou une image de la galerie des profils (telle quelle, animée possible) et sa version
+/// fixe (première image d'une animation). Chacune dans son dossier du volume de données.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageKind {
     Cover,
     Background,
+    Avatar,
+    AvatarStill,
 }
 
 impl ImageKind {
-    pub const ALL: [ImageKind; 2] = [ImageKind::Cover, ImageKind::Background];
+    pub const ALL: [ImageKind; 4] = [ImageKind::Cover, ImageKind::Background, ImageKind::Avatar, ImageKind::AvatarStill];
     pub fn dir(self) -> &'static str {
         match self {
             ImageKind::Cover => "covers",
             ImageKind::Background => "backgrounds",
+            ImageKind::Avatar => "avatars",
+            ImageKind::AvatarStill => "avatars-fixes",
         }
+    }
+    /// Image d'un jeu du catalogue (le jeu doit exister) ; sinon image de la galerie des profils,
+    /// identifiée par son seul nom.
+    pub fn per_game(self) -> bool {
+        matches!(self, ImageKind::Cover | ImageKind::Background)
     }
     /// Dernier segment de la route (`/api/v1/games/{id}/<segment>`).
     pub fn segment(self) -> &'static str {
         match self {
             ImageKind::Cover => "cover",
             ImageKind::Background => "background",
+            ImageKind::Avatar => "image",
+            ImageKind::AvatarStill => "fixe",
         }
     }
 }
@@ -210,7 +232,8 @@ CREATE TABLE IF NOT EXISTS device_games (
 ";
 
 /// Colonnes ajoutées après la création des tables (base existante : ALTER TABLE au démarrage).
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("device_games", "stream_app", "TEXT"), ("device_games", "rom", "TEXT")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] =
+    &[("device_games", "stream_app", "TEXT"), ("device_games", "rom", "TEXT"), ("profiles", "accent_auto", "INTEGER NOT NULL DEFAULT 1")];
 
 const COLS: &str = "rev, parent, hash, size, device, emulator, playtime_s, created_at, discarded";
 
@@ -301,10 +324,11 @@ fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         accent_soft: r.get(4)?,
         accent_ink: r.get(5)?,
         prefs: ProfilePrefs { sons: r.get::<_, i64>(6)? != 0, vibrations: r.get::<_, i64>(7)? != 0 },
+        accent_auto: r.get::<_, i64>(8)? != 0,
     })
 }
 
-const PROFILE_COLS: &str = "id, name, avatar_kind, accent, accent_soft, accent_ink, sons, vibrations";
+const PROFILE_COLS: &str = "id, name, avatar_kind, accent, accent_soft, accent_ink, sons, vibrations, accent_auto";
 
 fn row_to_file(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<GameFile> {
     let role: String = r.get(at + 1)?;
@@ -609,10 +633,11 @@ impl Store {
         }
         db.execute(
             &format!(
-                "INSERT INTO profiles ({PROFILE_COLS}, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+                "INSERT INTO profiles ({PROFILE_COLS}, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
                  ON CONFLICT(id) DO UPDATE SET name=excluded.name, avatar_kind=excluded.avatar_kind,
                    accent=excluded.accent, accent_soft=excluded.accent_soft, accent_ink=excluded.accent_ink,
-                   sons=excluded.sons, vibrations=excluded.vibrations, updated_at=excluded.updated_at"
+                   sons=excluded.sons, vibrations=excluded.vibrations, accent_auto=excluded.accent_auto,
+                   updated_at=excluded.updated_at"
             ),
             params![
                 p.id,
@@ -623,6 +648,7 @@ impl Store {
                 p.accent_ink,
                 p.prefs.sons as i64,
                 p.prefs.vibrations as i64,
+                p.accent_auto as i64,
                 self.clock.now() as i64
             ],
         )?;
@@ -776,15 +802,32 @@ impl Store {
     pub fn put_image(&self, kind: ImageKind, game: &str, data: &[u8]) -> Result<(), StoreError> {
         check(game)?;
         let dir = self.data_dir.join(kind.dir());
-        let Some((ext, _)) = sniff_cover(data) else {
-            return Err(StoreError::InvalidCover("format d'image non reconnu (png, jpeg ou webp attendu)".into()));
+        // GIF (animé) : seulement l'image de la galerie ; sa version fixe et les images des jeux restent fixes.
+        let gif_ok = kind == ImageKind::Avatar;
+        let sniffed = sniff_cover(data).filter(|(ext, _)| *ext != "gif" || gif_ok);
+        let Some((ext, _)) = sniffed else {
+            let wanted = if gif_ok { "png, jpeg, webp ou gif" } else { "png, jpeg ou webp" };
+            return Err(StoreError::InvalidCover(format!("format d'image non reconnu ({wanted} attendu)")));
         };
         if data.len() > MAX_COVER_BYTES {
             return Err(StoreError::InvalidCover(format!("image trop lourde (plus de {} Mo)", MAX_COVER_BYTES / 1_000_000)));
         }
-        let known = self.db.lock().expect("verrou base").query_row("SELECT 1 FROM games WHERE id=?1", params![game], |_| Ok(())).optional()?;
-        if known.is_none() {
-            return Err(StoreError::NotFound);
+        if !kind.per_game() {
+            // Galerie : pas de catalogue pour borner le volume. Nom au format des profils (`perso:<slug>`)
+            // et nombre de fichiers plafonné (un client du réseau local ne remplit pas le disque).
+            if !gallery_slug_ok(game) {
+                return Err(StoreError::InvalidId(game.into()));
+            }
+            let exists = COVER_TYPES.iter().any(|(e, _)| dir.join(format!("{game}.{e}")).exists());
+            if !exists && std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0) >= MAX_GALLERY_FILES {
+                return Err(StoreError::InvalidCover(format!("galerie pleine ({MAX_GALLERY_FILES} images au plus)")));
+            }
+        }
+        if kind.per_game() {
+            let known = self.db.lock().expect("verrou base").query_row("SELECT 1 FROM games WHERE id=?1", params![game], |_| Ok(())).optional()?;
+            if known.is_none() {
+                return Err(StoreError::NotFound);
+            }
         }
         // Nom temporaire unique : deux envois simultanés du même jeu n'écrivent jamais le même fichier.
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

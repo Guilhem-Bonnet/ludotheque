@@ -5,6 +5,7 @@
 // Hors Android (PC, Deck, démo) : rien n'est installé.
 import { api, isAndroid, isDemo } from './api';
 import { router } from './router.svelte';
+import { coverBase } from './avatars';
 import type { Game, Profile } from './types';
 
 /** Jeu tel que l'écran du haut l'affiche (sous-ensemble de `Game`). */
@@ -17,6 +18,8 @@ export interface EtatHaut {
   jeu?: JeuHaut;
   /** Partie en cours de lancement (écran de passage). */
   lancement?: boolean;
+  /** Adresse du serveur des images de profil (la WebView du haut n'appelle pas `api.device()`). */
+  images?: string;
 }
 
 let library: Game[] = [];
@@ -59,6 +62,7 @@ function etat(): EtatHaut {
     profil: p ? { name: p.name, accent: p.accent, accentSoft: p.accentSoft, accentInk: p.accentInk, avatar: p.avatar, avatarKind: p.avatarKind } : undefined,
     jeu: jeu ? jeuHaut(jeu) : undefined,
     lancement,
+    images: coverBase() || undefined,
   };
 }
 

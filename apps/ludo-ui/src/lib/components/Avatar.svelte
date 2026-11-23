@@ -1,20 +1,36 @@
 <script lang="ts">
   import AvatarArt from './AvatarArt.svelte';
-  import { portraitImage, portraitOf, portraitStyle } from '../avatars';
+  import { galleryImage, galleryOf } from '../avatars';
   import { reducedMotion } from '../motion';
   import type { AvatarArtKind, Profile } from '../types';
 
-  // Image de profil : portrait tiré de l'image d'un jeu, sinon personnage dessiné sur la couleur du profil,
-  // sinon initiale.
+  // Image de profil : image de la galerie (icône de profil, sprite animé), sinon personnage dessiné sur la
+  // couleur du profil, sinon initiale.
+  //
+  // Image animée (GIF) : jouée seulement quand l'élément porteur a le focus, ou partout si `live` (carte du
+  // profil) ; sa version fixe ailleurs, pour la sobriété (Thor). Jamais animée avec `prefers-reduced-motion`.
   //
   // Mini-animation, toujours UNE fois et jamais en boucle : le personnage se réveille (petit rebond, respiration
   // courte, clignement des yeux) quand l'élément qui le porte reçoit le focus (manette, clavier, survol) ;
   // `celebrate` joue un rebond plus ample au choix du profil. Aucune animation hors focus ni fenêtre inactive,
   // et rien du tout avec `prefers-reduced-motion`.
-  let { profile, size = 52, ring = false, celebrate = false }: { profile: Profile; size?: number; ring?: boolean; celebrate?: boolean } = $props();
+  let { profile, size = 52, ring = false, celebrate = false, live = false }: { profile: Profile; size?: number; ring?: boolean; celebrate?: boolean; live?: boolean } = $props();
 
-  const portrait = $derived(portraitOf(profile.avatarKind));
-  const image = $derived(portrait ? portraitImage(portrait) : undefined);
+  const gallery = $derived(galleryOf(profile.avatarKind));
+  let focused = $state(false);
+  // Fenêtre inactive (jeu au premier plan, autre appli) : image fixe, même pour la carte du profil.
+  let windowActive = $state(typeof document === 'undefined' || document.hasFocus());
+  $effect(() => {
+    const on = () => (windowActive = true);
+    const off = () => (windowActive = false);
+    window.addEventListener('focus', on);
+    window.addEventListener('blur', off);
+    return () => {
+      window.removeEventListener('focus', on);
+      window.removeEventListener('blur', off);
+    };
+  });
+  const image = $derived(gallery ? galleryImage(gallery, (live || focused) && windowActive && !reducedMotion()) : undefined);
   let failed = $state(false);
   $effect(() => {
     void image;
@@ -32,13 +48,23 @@
     requestAnimationFrame(() => (wake = true));
   }
 
-  // Le focus de l'élément porteur (bouton du profil, pastille de l'accueil) réveille le personnage : écoute
-  // d'événement, aucune scrutation.
+  // Le focus de l'élément porteur (bouton du profil, pastille de l'accueil) réveille le personnage et lance
+  // l'image animée ; la perte du focus la remet fixe : écoute d'événements, aucune scrutation.
   $effect(() => {
     const host = el?.closest<HTMLElement>('button, .focusable, [tabindex]');
     if (!host) return;
-    host.addEventListener('focus', wakeUp);
-    return () => host.removeEventListener('focus', wakeUp);
+    const onFocus = () => {
+      focused = true;
+      wakeUp();
+    };
+    const onBlur = () => (focused = false);
+    focused = document.activeElement === host;
+    host.addEventListener('focus', onFocus);
+    host.addEventListener('blur', onBlur);
+    return () => {
+      host.removeEventListener('focus', onFocus);
+      host.removeEventListener('blur', onBlur);
+    };
   });
 </script>
 
@@ -60,11 +86,11 @@
   <span class="inner">
     {#if profile.avatar}
       <img src={profile.avatar} alt="" />
-    {:else if portrait}
+    {:else if gallery}
       {#if image && !failed}
-        <img class="portrait" src={image} alt="" style={portraitStyle(portrait)} draggable="false" onerror={() => (failed = true)} />
+        <img class="gallery" class:sprite={gallery.anime} src={image} alt="" loading="lazy" decoding="async" draggable="false" onerror={() => (failed = true)} />
       {:else}
-        {portrait.label.slice(0, 1)}
+        {gallery.label.slice(0, 1)}
       {/if}
     {:else if profile.avatarKind}
       <AvatarArt kind={profile.avatarKind as AvatarArtKind} />
@@ -82,8 +108,10 @@
   }
   .inner { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; border-radius: 50%; overflow: hidden; }
   img { width: 100%; height: 100%; object-fit: cover; }
-  /* Portrait : l'image entière, agrandie et décalée pour centrer le personnage dans le disque. */
-  img.portrait { position: absolute; height: auto; max-width: none; object-fit: fill; user-select: none; }
+  /* Icône de profil : l'image entière remplit le disque (elle est conçue pour un cadre rond ou carré). */
+  img.gallery { user-select: none; }
+  /* Sprite animé (petit, souvent plus large que haut) : entier, avec une marge, posé sur la couleur du profil. */
+  img.gallery.sprite { object-fit: contain; width: 78%; height: 78%; image-rendering: auto; }
 
   @media (prefers-reduced-motion: no-preference) {
     /* Réveil : petit saut, se pose avec un léger écrasement, puis une respiration courte. */

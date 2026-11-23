@@ -16,7 +16,7 @@ export interface Art { motif: Motif; from: string; to: string; ink?: string }
 /** Personnages dessinés pour la Ludothèque (AvatarArt.svelte). */
 export type AvatarArtKind = 'renard' | 'champi' | 'chat' | 'etoile' | 'planete' | 'poisson';
 
-/** Image de profil : personnage dessiné, ou portrait tiré de l'image d'un jeu (« perso:pikachu », cf. avatars.ts). */
+/** Image de profil : personnage dessiné, ou image de la galerie (« perso:pokemon-pikachu », cf. avatars.ts). */
 export type AvatarKind = AvatarArtKind | `perso:${string}`;
 
 export type DeviceKind = 'pc' | 'deck' | 'thor' | 'tv';
@@ -31,6 +31,8 @@ export interface Profile {
   accent: string;
   accentSoft: string;
   accentInk: string;
+  /** Accent tiré de l'image (vrai ou absent) ou choisi à la main (faux, il reste quand l'image change). */
+  accentAuto?: boolean;
   /** Texte secondaire sous l'avatar (« Dernière partie : … », « En cours sur Steam Deck »). */
   status?: string;
   busyElsewhere?: boolean;
