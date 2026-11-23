@@ -263,7 +263,8 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
       args.grantTree?.let {
         activity.grantUriPermission(args.packageName, Uri.parse(it), Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
       }
-      activity.startActivity(intent)
+      // Écran principal imposé : le visuel de l'écran du bas (EcranBas) vient peut-être d'y être lancé.
+      activity.startActivity(intent, EcranBas.principal())
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
       revokeTree(args)

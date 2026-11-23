@@ -50,6 +50,63 @@ pub struct Fermeture {
     pub raison: Option<String>,
 }
 
+/// Visuel « En cours » de l'écran du bas pendant un jeu à un écran (lot ecran-bas, 23/11 ; Kotlin :
+/// `EcranBas.kt`). Transmis au plugin en JSON avec le jeu suivi ; la vue native l'affiche sans aucune action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EcranBasInfo {
+    pub titre: String,
+    /// Console lisible (« Wii U »).
+    pub console: String,
+    /// Émulateur, ou « Flux depuis le PC ».
+    pub via: String,
+    /// Couleur du jeu (`art.to` du catalogue) : filet fin sous la jaquette, seul signe coloré.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub couleur: Option<String>,
+    /// URL absolue de la jaquette sur le serveur de la Ludothèque.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub couverture: Option<String>,
+    /// Où vit la sauvegarde pendant la partie.
+    pub sauvegarde: String,
+}
+
+/// Le jeu laisse-t-il l'écran du bas libre ? Oui pour tout jeu à un écran (Switch, Wii U, GameCube) et
+/// pour tout flux Moonlight ; non pour la 3DS et la DS, dont l'émulateur se sert de l'écran du bas : la
+/// Ludothèque ne s'y impose jamais.
+pub fn ecran_bas_pour(console: &str, flux: bool) -> bool {
+    flux || !matches!(console, "3ds" | "ds")
+}
+
+/// Console lisible sur l'écran du bas (identifiant inconnu : rendu tel quel, en majuscules).
+pub fn console_lisible(console: &str) -> String {
+    match console {
+        "switch" => "Nintendo Switch".into(),
+        "switch2" => "Nintendo Switch 2".into(),
+        "wiiu" => "Wii U".into(),
+        "gc" => "GameCube".into(),
+        "3ds" => "Nintendo 3DS".into(),
+        "ds" => "Nintendo DS".into(),
+        autre => autre.to_uppercase(),
+    }
+}
+
+impl EcranBasInfo {
+    /// Visuel d'un lancement Android, ou `None` si le jeu se sert des deux écrans.
+    pub fn pour(console: &str, flux: bool, titre: &str, via: &str, couleur: Option<&str>, couverture: Option<String>) -> Option<Self> {
+        if !ecran_bas_pour(console, flux) {
+            return None;
+        }
+        Some(Self {
+            titre: titre.to_string(),
+            console: console_lisible(console),
+            via: if flux { "Flux depuis le PC".into() } else { via.to_string() },
+            couleur: couleur.filter(|c| !c.is_empty()).map(str::to_string),
+            couverture,
+            sauvegarde: if flux { "Sauvegarde sur le PC".into() } else { "Sauvegarde synchronisée à la fermeture".into() },
+        })
+    }
+}
+
 #[cfg(target_os = "android")]
 mod pont {
     use super::*;
@@ -79,15 +136,20 @@ mod pont {
     }
 
     #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
     struct Suivre<'a> {
         game: &'a str,
         intent: &'a StartActivity,
+        /// JSON d'[`EcranBasInfo`] (chaîne : le plugin Kotlin la garde telle quelle pour « Reprendre »).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ecran_bas: Option<String>,
     }
 
     /// Retient le jeu qui va être lancé (juste avant `android::start`). Une erreur ici n'empêche pas
     /// la partie : seul le menu en jeu manquera.
-    pub fn lance(app: &tauri::AppHandle, game: &str, intent: &StartActivity) {
-        if let Err(e) = appel::<serde_json::Value>(app, "suivre", Suivre { game, intent }) {
+    pub fn lance(app: &tauri::AppHandle, game: &str, intent: &StartActivity, ecran_bas: Option<&EcranBasInfo>) {
+        let ecran_bas = ecran_bas.and_then(|i| serde_json::to_string(i).ok());
+        if let Err(e) = appel::<serde_json::Value>(app, "suivre", Suivre { game, intent, ecran_bas }) {
             eprintln!("ludo-ui : menu en jeu indisponible pour {game} : {e}");
         }
     }
@@ -196,6 +258,35 @@ mod tests {
         assert_eq!(k.arret_direct, None);
         let k: EtatMenu = serde_json::from_str(r#"{"arretDirect":"refuse"}"#).unwrap();
         assert_eq!(k.arret_direct.as_deref(), Some("refuse"));
+    }
+
+    #[test]
+    fn ecran_bas_seulement_pour_les_jeux_a_un_ecran() {
+        for c in ["switch", "switch2", "wiiu", "gc"] {
+            assert!(ecran_bas_pour(c, false), "{c}");
+        }
+        assert!(!ecran_bas_pour("3ds", false));
+        assert!(!ecran_bas_pour("ds", false));
+        // En flux, l'image du PC n'occupe que l'écran du haut, même pour un jeu 3DS.
+        assert!(ecran_bas_pour("3ds", true));
+        assert_eq!(EcranBasInfo::pour("ds", false, "Pokémon Diamant", "melonDS", None, None), None);
+    }
+
+    #[test]
+    fn ecran_bas_pour_le_plugin() {
+        let i = EcranBasInfo::pour("wiiu", false, "The Legend of Zelda: The Wind Waker HD", "Cemu", Some("#1f6fb2"), Some("https://ludo.test/api/v1/games/ww/cover?v=1".into())).unwrap();
+        let v = serde_json::to_value(&i).unwrap();
+        assert_eq!(v["console"], "Wii U");
+        assert_eq!(v["via"], "Cemu");
+        assert_eq!(v["couleur"], "#1f6fb2");
+        assert_eq!(v["couverture"], "https://ludo.test/api/v1/games/ww/cover?v=1");
+        assert_eq!(v["sauvegarde"], "Sauvegarde synchronisée à la fermeture");
+        let f = EcranBasInfo::pour("switch", true, "Mario Kart 8 Deluxe", "Moonlight", Some(""), None).unwrap();
+        let v = serde_json::to_value(&f).unwrap();
+        assert_eq!(v["via"], "Flux depuis le PC");
+        assert_eq!(v["sauvegarde"], "Sauvegarde sur le PC");
+        assert!(v.get("couleur").is_none() && v.get("couverture").is_none());
+        assert_eq!(console_lisible("n64"), "N64");
     }
 
     #[test]

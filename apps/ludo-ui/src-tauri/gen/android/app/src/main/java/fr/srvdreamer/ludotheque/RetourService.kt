@@ -231,6 +231,8 @@ class RetourService : AccessibilityService() {
       return
     }
     // Toute autre appli (ou le lanceur sans jeu de la Ludothèque juste avant) : la règle se désarme.
+    // Le jeu n'est plus devant ni suivi : le visuel de l'écran du bas s'efface (lot ecran-bas).
+    if (jeu != null && avant == jeu.paquet && pkg != lanceur()) EcranBas.retirer("$pkg devant à la place du jeu")
     arme = false
     attendu = false
   }

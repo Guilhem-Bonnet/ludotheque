@@ -100,6 +100,14 @@ class MainActivity : TauriActivity() {
     return new
   }
 
+  // Ludothèque de nouveau visible (retour du jeu, HOME puis tuile, « Fermer le jeu ») : elle reprend
+  // l'écran du bas (DoubleEcran) ; le visuel « En cours » n'a plus lieu d'être. onStart et non onResume :
+  // seul un vrai retour après onStop compte, pas un changement d'activité active entre les deux écrans.
+  override fun onStart() {
+    super.onStart()
+    EcranBas.retirer("Ludothèque devant")
+  }
+
   // Menu en jeu : la Ludothèque revient devant alors qu'un jeu est ouvert (bouton HOME, lanceur,
   // geste) : le jeu vient d'être quitté, ce qui fixe le délai de garde avant sa fermeture (MenuJeuPlugin).
   override fun onResume() {

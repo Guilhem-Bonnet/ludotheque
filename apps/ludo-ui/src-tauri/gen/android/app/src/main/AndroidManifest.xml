@@ -56,6 +56,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Écran du bas pendant un jeu à un écran (EcranBas.kt) : visuel « En cours » sans aucune action,
+             dans sa propre tâche (affinité distincte, jamais dans les récents), lancé sur l'écran de
+             présentation ; une autre appli mise en bas le recouvre et il s'efface. -->
+        <activity
+            android:name=".EcranBasActivity"
+            android:exported="false"
+            android:taskAffinity="${applicationId}.ecranbas"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|density|uiMode"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
         <!-- Retour à la Ludothèque en un appui après une partie qu'elle a lancée (Mode, HOME, jeu quitté).
              Changements de fenêtre seulement : aucune touche, aucun contenu d'écran. Activé par le PC (adb). -->
         <service
