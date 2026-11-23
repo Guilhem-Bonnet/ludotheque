@@ -32,6 +32,30 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
      * après la dernière écriture du jeu). Attente UNIQUE et calculée, pas une scrutation.
      */
     const val GARDE_MS = 2500L
+
+    /** Paquet de Moonlight : un jeu ouvert par lui tourne EN FLUX sur le PC (Sunshine). */
+    const val MOONLIGHT = "com.limelight"
+
+    /** Demande de fin du flux lue par le PC (`crates/ludo-client/src/flux.rs`, `DEMANDE`). */
+    const val DEMANDE_FIN_FLUX = "fermer-flux"
+  }
+
+  /**
+   * Jeu en flux : arrêter Moonlight ne ferait que couper la connexion, le jeu continuerait sur le PC.
+   * La Ludothèque dépose une demande explicite dans son dossier (`Android/data/<paquet>/files`), écrite
+   * à côté puis renommée : `ludo adb-watch` la reçoit (inotifyd) et termine l'appli Sunshine comme
+   * « Quitter l'appli » (l'émulateur sauvegarde, puis la synchro part). Une simple mort de Moonlight
+   * (réseau, Android) ne dépose rien. Sans PC relié, la demande périme (120 s) sans effet.
+   */
+  private fun demanderFinDuFlux(game: String) {
+    try {
+      val dossier = activity.getExternalFilesDir(null) ?: return
+      val tmp = java.io.File(dossier, "$DEMANDE_FIN_FLUX.tmp")
+      tmp.writeText("${System.currentTimeMillis() / 1000} ${game.replace(Regex("\\s"), "_")}\n")
+      if (!tmp.renameTo(java.io.File(dossier, DEMANDE_FIN_FLUX))) tmp.delete()
+    } catch (e: Exception) {
+      android.util.Log.w("LudoArret", "demande de fin du flux non déposée : $e")
+    }
   }
 
   override fun load(webView: android.webkit.WebView) {
@@ -124,6 +148,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
         if (reste > 0) Thread.sleep(reste)
         EnCours.oublier(activity)
         RetourService.desarmer()
+        if (j.paquet == MOONLIGHT) demanderFinDuFlux(j.game)
         val issue = ArretDirect.arreter(j.paquet)
         if (issue.ok) {
           invoke.resolve(fermeture(true, null))

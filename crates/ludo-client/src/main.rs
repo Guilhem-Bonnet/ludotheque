@@ -693,6 +693,8 @@ enum WatchEv {
     SaveWritten(String),
     /// Nouveau dossier de jeu créé : la surveillance doit l'inclure.
     NewSaveDir,
+    /// « Fermer le jeu » d'un jeu en flux demandé par la Ludothèque de l'appareil (dossier de la demande).
+    FermerFlux(String),
 }
 
 /// Lit le flux de `adb track-devices` : trames « longueur sur 4 hex + lignes série\tétat ».
@@ -776,6 +778,16 @@ fn save_event(line: &str) -> Option<WatchEv> {
     })
 }
 
+/// Ligne d'`inotifyd` : demande de fin de flux de la Ludothèque (`flux.rs`), sinon sauvegarde.
+fn inotify_event(line: &str) -> Option<WatchEv> {
+    use ludo_client::flux::{classer, Ligne};
+    match classer(line) {
+        Ligne::Demande(dir) => Some(WatchEv::FermerFlux(dir)),
+        Ligne::Ignoree => None,
+        Ligne::Autre => save_event(line),
+    }
+}
+
 /// Dossiers de sauvegarde à surveiller sur l'appareil : racines par profil (création d'un jeu)
 /// et dossier de chaque jeu (écritures). inotify n'est pas récursif.
 fn watch_dirs(ctx: &Ctx, dev: &ludo_client::adb::Adb) -> (Vec<String>, Vec<String>) {
@@ -811,6 +823,8 @@ fn watch_dirs(ctx: &Ctx, dev: &ludo_client::adb::Adb) -> (Vec<String>, Vec<Strin
     for r in &roots {
         dirs.extend(dev.list(r).into_iter().filter(|n| !n.contains(".ludo-")).map(|n| format!("{r}/{n}")));
     }
+    // Dossiers des apps Ludothèque : demande de fin d'un jeu en flux (« Fermer le jeu », flux.rs).
+    dirs.extend(ludo_client::flux::dossiers().into_iter().filter(|d| dev.is_dir(d)));
     (dirs, packages)
 }
 
@@ -882,7 +896,7 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                         // le dossier (sauvegarde écrite à côté puis renommée), n = créé). Vérifié sur la Thor le 16/11.
                         if !dirs.is_empty() {
                             let args: Vec<String> = dirs.iter().map(|d| format!("'{d}':wmn")).collect();
-                            if let Some(c) = spawn_device_stream(&serial, &format!("inotifyd - {}", args.join(" ")), tx.clone(), save_event) {
+                            if let Some(c) = spawn_device_stream(&serial, &format!("inotifyd - {}", args.join(" ")), tx.clone(), inotify_event) {
                                 watchers.push(c);
                             }
                         }
@@ -909,6 +923,23 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                     println!("Sauvegarde modifiée ({dir}) : synchronisation après {} s sans nouvelle écriture", AFTER_WRITE.as_secs());
                 }
                 due = Some(Instant::now() + AFTER_WRITE);
+            }
+            WatchEv::FermerFlux(dir) => {
+                // Jeu en flux fermé depuis l'appareil : l'appli Sunshine est terminée comme par « Quitter
+                // l'appli » ; `ludo run` laisse l'émulateur sauvegarder puis synchronise lui-même.
+                let Some(serial) = connected.clone() else { continue };
+                let dev = ludo_client::adb::Adb { serial };
+                match dev.shell(&ludo_client::flux::script_lire(&dir)) {
+                    Ok(s) => match ludo_client::flux::demande_fraiche(&s) {
+                        Some(jeu) => {
+                            println!("Fermer le jeu en flux ({jeu}) demandé par {}", ctx.cfg.appareil);
+                            ludo_client::flux::fermer_appli_sunshine().iter().for_each(|l| println!("{l}"));
+                        }
+                        None if s.trim().is_empty() => {}
+                        None => println!("Demande de fin de flux périmée ou illisible ({}) : ignorée", s.trim()),
+                    },
+                    Err(e) => println!("Demande de fin de flux illisible : {e}"),
+                }
             }
             WatchEv::NewSaveDir => {
                 // Relance la surveillance pour inclure le nouveau dossier de jeu.

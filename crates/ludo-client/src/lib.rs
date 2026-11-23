@@ -13,3 +13,4 @@ pub mod local;
 pub mod watch;
 pub mod layout;
 pub mod shizuku;
+pub mod flux;
