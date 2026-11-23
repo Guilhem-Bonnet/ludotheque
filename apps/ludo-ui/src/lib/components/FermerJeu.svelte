@@ -3,10 +3,11 @@
   // « En cours » (X) ou par un lancement pendant qu'un autre jeu est ouvert (play.ts). Le focus est
   // posé sur l'action demandée : X puis A ferme, comme demandé (« rapide dès le premier appui ») ;
   // B ou « Annuler » referme sans rien faire.
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { fade, scale } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { enCours } from '../enCours.svelte';
+  import { raisonSansArretDirect } from '../arretDirect';
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
   import { focusFirst } from '../nav';
@@ -15,6 +16,11 @@
 
   const titre = $derived(enCours.titre);
   const demande = $derived(enCours.confirmation);
+  // Android sans arrêt direct (Shizuku absent, arrêté ou sans accès) : la page d'Android s'ouvre.
+  // La raison n'est expliquée qu'une fois (par raison), l'étape reste annoncée à chaque fois.
+  const parPage = $derived(isAndroid && enCours.etat.arretDirect !== 'pret');
+  let raison = $state<string | null>(null);
+  const CLE_RAISON = 'ludo.arretDirect.raisonVue';
   let erreur = $state<string | null>(null);
   let retour: HTMLElement | null = null;
 
@@ -22,6 +28,26 @@
     if (!demande) return;
     retour = document.activeElement as HTMLElement | null;
     erreur = null;
+    raison = null;
+    // Lu sans dépendance : la fermeture met l'état à jour, elle ne doit pas relancer cet effet.
+    const etat = untrack(() => enCours.etat.arretDirect);
+    const texte = isAndroid ? raisonSansArretDirect(etat) : null;
+    if (texte) {
+      let vue: string | null = null;
+      try {
+        vue = localStorage.getItem(CLE_RAISON);
+      } catch {
+        // Stockage indisponible : la raison s'affiche simplement à chaque fois.
+      }
+      if (vue !== etat) {
+        raison = texte;
+        try {
+          localStorage.setItem(CLE_RAISON, etat ?? '');
+        } catch {
+          // idem
+        }
+      }
+    }
     focusFirst();
   });
 
@@ -36,8 +62,9 @@
   async function fermer() {
     const d = enCours.confirmation;
     if (!d || enCours.occupe) return;
+    let issue;
     try {
-      await enCours.fermer();
+      issue = await enCours.fermer();
     } catch (e) {
       erreur = e instanceof Error ? e.message : String(e);
       feedback('err');
@@ -48,12 +75,15 @@
     feedback('ok');
     // La carte disparaît avec le bouton qui avait le focus : il revient à la tuile choisie de l'accueil.
     requestAnimationFrame(() => {
-      const tuile = document.querySelector<HTMLElement>('.slot.focused .tile');
+      // Créneau choisi : une tuile de jeu ou « Tous les jeux » (bouton `.all-games`, sans `.tile`) ;
+      // sinon le focus se perdait (essai Thor du 23/11 après une partie lancée de la Bibliothèque).
+      const tuile = document.querySelector<HTMLElement>('.slot.focused .focusable');
       if (tuile) tuile.focus({ preventScroll: true });
       else focusFirst();
     });
-    // Android : la page d'Android (« Forcer l'arrêt ») s'ouvre ; le jeu suivant part au retour ici.
-    if (isAndroid && d.ensuite) enCours.apresRetour = d.ensuite;
+    // Arrêt direct : le jeu suivant part aussitôt. Sinon la page d'Android (« Forcer l'arrêt ») s'ouvre
+    // et le jeu suivant part au retour ici.
+    if (!issue.direct && d.ensuite) enCours.apresRetour = d.ensuite;
     else d.ensuite?.();
   }
 
@@ -81,7 +111,8 @@
     {#if demande.titreEnsuite}
       <h2 id="fermer-titre">{titre} est en cours</h2>
       <p id="fermer-texte">Fermer ce jeu pour lancer {demande.titreEnsuite} ? La progression non sauvegardée dans le jeu sera perdue.</p>
-      {#if isAndroid}<p class="etape">Android affiche d'abord la page de l'appli : « Forcer l'arrêt » ferme le jeu, puis le suivant se lance.</p>{/if}
+      {#if raison}<p class="etape">{raison}</p>{/if}
+      {#if parPage}<p class="etape">Android affiche d'abord la page de l'appli : « Forcer l'arrêt » ferme le jeu, puis le suivant se lance.</p>{/if}
       <div class="acts">
         <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}><span class="touche" aria-hidden="true">A</span>{enCours.occupe ? 'Fermeture…' : 'Fermer et lancer'}</button>
         <button class="act focusable" disabled={enCours.occupe} onclick={() => void reprendre()}>Reprendre {titre}</button>
@@ -89,7 +120,8 @@
     {:else}
       <h2 id="fermer-titre">Fermer le jeu ?</h2>
       <p id="fermer-texte">{titre}. La progression non sauvegardée dans le jeu sera perdue ; la dernière sauvegarde part ensuite vers le serveur.</p>
-      {#if isAndroid}<p class="etape">Android affiche ensuite la page de l'appli : « Forcer l'arrêt » ferme le jeu et ramène ici.</p>{/if}
+      {#if raison}<p class="etape">{raison}</p>{/if}
+      {#if parPage}<p class="etape">Android affiche ensuite la page de l'appli : « Forcer l'arrêt » ferme le jeu et ramène ici.</p>{/if}
       <div class="acts">
         <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}><span class="touche" aria-hidden="true">A</span>{enCours.occupe ? 'Fermeture…' : 'Fermer le jeu'}</button>
         <button class="act focusable" disabled={enCours.occupe} onclick={annuler}><span class="touche" aria-hidden="true">B</span>Annuler</button>

@@ -32,17 +32,38 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
      * après la dernière écriture du jeu). Attente UNIQUE et calculée, pas une scrutation.
      */
     const val GARDE_MS = 2500L
+
+    /** Paquet de Moonlight : un jeu ouvert par lui tourne EN FLUX sur le PC (Sunshine). */
+    const val MOONLIGHT = "com.limelight"
+
+    /** Étiquette de journal de la demande de fin du flux, lue par le PC (`flux.rs`, `ETIQUETTE`). */
+    const val TAG_FLUX = "LudoFlux"
+  }
+
+  /**
+   * Jeu en flux : arrêter Moonlight ne ferait que couper la connexion, le jeu continuerait sur le PC.
+   * La Ludothèque écrit une demande explicite dans le journal (`LudoFlux: fermer <jeu>`) : `ludo
+   * adb-watch` la reçoit (flux `logcat -v uid`, uid de la Ludothèque vérifié) et termine l'appli
+   * Sunshine comme « Quitter l'appli » (l'émulateur sauvegarde, puis la synchro part). Pas de fichier
+   * dans `Android/data` : mesuré sur la Thor le 23/11, l'inotifyd du shell ne voit pas les écritures
+   * de l'app dans son propre dossier. Une simple mort de Moonlight (réseau, Android) ne demande rien ;
+   * sans PC relié, la demande reste sans effet (le journal ne garde que les lignes nouvelles pour le PC).
+   */
+  private fun demanderFinDuFlux(game: String) {
+    android.util.Log.i(TAG_FLUX, "fermer ${game.replace(Regex("\\s"), "_")}")
   }
 
   override fun load(webView: android.webkit.WebView) {
     super.load(webView)
     EnCours.restaurer(activity)
+    ArretDirect.demarrer(activity)
   }
 
   @Command
   fun etat(invoke: Invoke) {
     val out = JSObject()
     out.put("retourActif", RetourService.actif)
+    out.put("arretDirect", ArretDirect.etat().code)
     EnCours.jeu?.let { j ->
       val jeu = JSObject()
       jeu.put("game", j.game)
@@ -89,26 +110,45 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   /**
-   * Fermer le jeu, après le délai de garde (écriture d'une sauvegarde en cours) : la page « Infos de
-   * l'appli » de l'émulateur s'ouvre, où « Forcer l'arrêt » ferme le jeu (une confirmation d'Android).
+   * Fermer le jeu, après le délai de garde (écriture d'une sauvegarde en cours).
    *
-   * Pourquoi pas un arrêt direct : mesuré sur la Thor le 22/11 (12:43:14), `killBackgroundProcesses`
-   * est refusé pour un autre paquet (« ActivityManager: Invalid packageName: org.azahar_emu.azahar »,
-   * permission pourtant accordée), comme sur Android 14, et Android ne dit pas à l'app si l'arrêt a eu
-   * lieu. « Forcer l'arrêt » ferme le processus ET retire sa tâche (un simple arrêt laissait une tâche
-   * périmée qu'Azahar faisait planter au lancement suivant, 12:49:23). Ce qui n'a pas été sauvegardé
-   * dans le jeu est perdu, comme « Fermer le logiciel » d'une console ; l'arrêt (`am_kill`) déclenche
-   * la synchro du PC (`ludo-thor-watch`).
+   * 1. **Arrêt direct** (lot arret, 23/11) : Shizuku actif et accès accordé par le PC → `force-stop` de
+   *    l'émulateur ([ArretDirect]), aucune page, la Ludothèque reste devant ; réponse `direct: true`
+   *    (« Fermer et lancer » enchaîne aussitôt).
+   * 2. **Repli** : la page « Infos de l'appli » de l'émulateur s'ouvre, où « Forcer l'arrêt » ferme le
+   *    jeu (une confirmation d'Android) ; l'annonce `PACKAGE_RESTARTED` ramène ensuite la Ludothèque
+   *    (RetourService). Réponse `direct: false` + `raison` (état de Shizuku).
+   *
+   * Pourquoi pas un arrêt par l'app elle-même : mesuré sur la Thor le 22/11 (12:43:14),
+   * `killBackgroundProcesses` est refusé pour un autre paquet (« ActivityManager: Invalid packageName:
+   * org.azahar_emu.azahar », permission pourtant accordée), comme sur Android 14. Un arrêt forcé retire
+   * le processus ET sa tâche (un simple arrêt laissait une tâche périmée qu'Azahar faisait planter au
+   * lancement suivant, 12:49:23). Ce qui n'a pas été sauvegardé dans le jeu est perdu, comme « Fermer
+   * le logiciel » d'une console ; l'arrêt (`am_kill`) déclenche la synchro du PC (`ludo-thor-watch`).
    */
+  private fun fermeture(direct: Boolean, raison: String?): JSObject {
+    val out = JSObject()
+    out.put("direct", direct)
+    if (raison != null) out.put("raison", raison)
+    return out
+  }
+
   @Command
   fun fermer(invoke: Invoke) {
-    val j = EnCours.jeu ?: return invoke.resolve()
+    val j = EnCours.jeu ?: return invoke.resolve(fermeture(true, null))
     val quitte = EnCours.quitteA
     Thread {
       try {
         val reste = if (quitte == 0L) GARDE_MS else quitte + GARDE_MS - SystemClock.uptimeMillis()
         if (reste > 0) Thread.sleep(reste)
         EnCours.oublier(activity)
+        RetourService.desarmer()
+        if (j.paquet == MOONLIGHT) demanderFinDuFlux(j.game)
+        val issue = ArretDirect.arreter(j.paquet)
+        if (issue.ok) {
+          invoke.resolve(fermeture(true, null))
+          return@Thread
+        }
         // L'arrêt forcé confirmé ramène la Ludothèque sur l'accueil (RetourService, PACKAGE_RESTARTED).
         RetourService.attendreFermeture(j.paquet)
         val infos = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", j.paquet, null))
@@ -120,7 +160,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
             // Réglages sans page d'appli : la carte disparaît quand même, l'émulateur se ferme depuis son menu.
           }
         }
-        invoke.resolve()
+        invoke.resolve(fermeture(false, issue.raison))
       } catch (e: Exception) {
         invoke.reject("Fermeture impossible : ${e.message ?: e.javaClass.simpleName}")
       }

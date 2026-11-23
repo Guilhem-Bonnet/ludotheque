@@ -108,6 +108,10 @@ enum Cmd {
     /// Jeux du catalogue et leurs fichiers trouvés sur cet appareil (dossier de la Ludothèque ou
     /// collection existante). Lecture seule.
     Jeux,
+    /// Prépare Shizuku sur l'appareil adb (fait aussi par `adb-sync`) : accès des apps Ludothèque,
+    /// démarrage au boot, serveur démarré. « Fermer le jeu » arrête alors l'émulateur sans aucune page
+    /// d'Android. Idempotent.
+    Shizuku,
 }
 
 struct Ctx {
@@ -287,6 +291,11 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         match dev.activer_retour() {
             Ok(l) => l.iter().for_each(|x| println!("Retour après une partie : {x}")),
             Err(e) => println!("Retour après une partie non activé : {e}"),
+        }
+        // « Fermer le jeu » sans page d'Android (Shizuku : accès, démarrage au boot, serveur) ; idempotent.
+        match ludo_client::shizuku::preparer(&dev) {
+            Ok(l) => l.iter().for_each(|x| println!("Arrêt direct : {x}")),
+            Err(e) => println!("Arrêt direct non préparé : {e}"),
         }
     }
     let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
@@ -684,6 +693,8 @@ enum WatchEv {
     SaveWritten(String),
     /// Nouveau dossier de jeu créé : la surveillance doit l'inclure.
     NewSaveDir,
+    /// « Fermer le jeu » d'un jeu en flux demandé par la Ludothèque de l'appareil (ligne de journal).
+    FermerFlux(String),
 }
 
 /// Lit le flux de `adb track-devices` : trames « longueur sur 4 hex + lignes série\tétat ».
@@ -767,6 +778,11 @@ fn save_event(line: &str) -> Option<WatchEv> {
     })
 }
 
+/// Ligne du journal `LudoFlux` : demande de fin d'un jeu en flux (uid vérifié à la réception, `flux.rs`).
+fn flux_event(line: &str) -> Option<WatchEv> {
+    ludo_client::flux::est_demande(line).then(|| WatchEv::FermerFlux(line.to_string()))
+}
+
 /// Dossiers de sauvegarde à surveiller sur l'appareil : racines par profil (création d'un jeu)
 /// et dossier de chaque jeu (écritures). inotify n'est pas récursif.
 fn watch_dirs(ctx: &Ctx, dev: &ludo_client::adb::Adb) -> (Vec<String>, Vec<String>) {
@@ -821,6 +837,8 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
     let mut connected: Option<String> = None;
     let mut last_present: Vec<String> = Vec::new();
     let mut packages: Vec<String> = Vec::new();
+    // Uid des apps Ludothèque de l'appareil connecté (demandes de fin de flux acceptées).
+    let mut ludo_uids: Vec<u32> = Vec::new();
     // Anti-rebond : échéance de synchronisation repoussée à chaque événement, calculée (pas de tick).
     let mut due: Option<Instant> = None;
     const AFTER_WRITE: Duration = Duration::from_secs(20);
@@ -877,6 +895,11 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                                 watchers.push(c);
                             }
                         }
+                        // « Fermer le jeu » d'un jeu en flux : ligne de journal de la Ludothèque (flux.rs).
+                        ludo_uids = dev.shell(&ludo_client::flux::script_uids()).map(|s| ludo_client::flux::lire_uids(&s)).unwrap_or_default();
+                        if let Some(c) = spawn_device_stream(&serial, &ludo_client::flux::script_logcat(), tx.clone(), flux_event) {
+                            watchers.push(c);
+                        }
                         due = Some(Instant::now());
                     } else {
                         println!("{} déconnecté", ctx.cfg.appareil);
@@ -900,6 +923,24 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                     println!("Sauvegarde modifiée ({dir}) : synchronisation après {} s sans nouvelle écriture", AFTER_WRITE.as_secs());
                 }
                 due = Some(Instant::now() + AFTER_WRITE);
+            }
+            WatchEv::FermerFlux(ligne) => {
+                // Jeu en flux fermé depuis l'appareil : l'appli Sunshine est terminée comme par « Quitter
+                // l'appli » ; `ludo run` laisse l'émulateur sauvegarder puis synchronise lui-même.
+                // Uid inconnu : app réinstallée depuis la connexion (nouvel uid) ? Relus une fois.
+                if ludo_client::flux::demande(&ligne, &ludo_uids).is_none() {
+                    if let Some(serial) = connected.clone() {
+                        let dev = ludo_client::adb::Adb { serial };
+                        ludo_uids = dev.shell(&ludo_client::flux::script_uids()).map(|s| ludo_client::flux::lire_uids(&s)).unwrap_or_default();
+                    }
+                }
+                match ludo_client::flux::demande(&ligne, &ludo_uids) {
+                    Some(jeu) => {
+                        println!("Fermer le jeu en flux ({jeu}) demandé par {}", ctx.cfg.appareil);
+                        ludo_client::flux::fermer_appli_sunshine(&ctx.cfg.appareil).iter().for_each(|l| println!("{l}"));
+                    }
+                    None => println!("Demande de fin de flux refusée (uid hors Ludothèque) : {}", ligne.trim()),
+                }
             }
             WatchEv::NewSaveDir => {
                 // Relance la surveillance pour inclure le nouveau dossier de jeu.
@@ -1032,6 +1073,16 @@ fn main() -> ExitCode {
             Cmd::Run { jeu, rom, jouer_ici, via, lanceur } => run(&mut ctx, &jeu, &rom, jouer_ici, via.as_deref(), lanceur.as_deref()),
             Cmd::AdbSync { profil, jeu, resoudre, a_blanc } => adb_sync(&ctx, profil, jeu, resoudre, a_blanc),
             Cmd::AdbWatch => adb_watch(&ctx),
+            Cmd::Shizuku => {
+                let conf = ctx.cfg.adb.as_ref().ok_or("section [adb] absente de la configuration")?;
+                let Some(dev) = ludo_client::adb::Adb::find(&conf.series) else {
+                    println!("{} non connecté (adb) : rien à faire", ctx.cfg.appareil);
+                    return Ok(ExitCode::SUCCESS);
+                };
+                let lignes = ludo_client::shizuku::preparer(&dev).map_err(|e| e.to_string())?;
+                lignes.iter().for_each(|x| println!("Arrêt direct : {x}"));
+                Ok(ExitCode::SUCCESS)
+            }
             Cmd::Watch => local_watch(&mut ctx),
             Cmd::Jeux => {
                 let local = ludo_client::local::LocalIndex::scan(&ctx.cfg, &ludo_client::detect::Host::current());

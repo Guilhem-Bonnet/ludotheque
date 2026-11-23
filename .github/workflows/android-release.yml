@@ -137,6 +137,8 @@ jobs:
               echo "LUDO_ANDROID_KEYSTORE_PASSWORD=$pass"
               echo "LUDO_ANDROID_KEY_ALIAS=jetable"
               echo "CLE=jetable"
+              # Paquet distinct de la release (build.gradle.kts) : l'essai s'installe à côté d'elle sur la Thor.
+              echo "LUDO_ANDROID_SUFFIXE=.debug"
             } >> "$GITHUB_ENV"
             echo "::warning::Secrets de signature absents : APK signé par une clé jetable (essai seulement)."
           fi

@@ -21,7 +21,19 @@ export interface EtatMenu {
   jeu?: JeuEnCours;
   /** Android : retour automatique après une partie actif (service activé par le PC). */
   retourActif?: boolean;
+  /**
+   * Android : arrêt d'un jeu sans page d'Android (Shizuku, ArretDirect.kt) : `pret`, sinon la raison
+   * (`absent`, `arrete`, `refuse`, `ancien`). Absent : ancienne coque, arrêt par la page d'Android.
+   */
+  arretDirect?: string;
 }
+
+/** Issue de « Fermer le jeu ». `direct` : aucune page d'Android, la suite peut partir aussitôt. */
+export interface Fermeture {
+  direct: boolean;
+  raison?: string;
+}
+
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
@@ -84,13 +96,18 @@ class EnCoursStore {
     await invoke('reprendreJeu');
   }
 
-  /** Ferme le jeu ouvert (Android : après le délai de garde ; bureau : SIGTERM à l'émulateur). */
-  async fermer(): Promise<void> {
+  /**
+   * Ferme le jeu ouvert (Android : après le délai de garde, sans page si Shizuku est prêt ; bureau :
+   * SIGTERM à l'émulateur).
+   */
+  async fermer(): Promise<Fermeture> {
     this.occupe = true;
     try {
       this.fermetureDemandee = true;
-      if (!isDemo) await invoke('fermerJeu');
+      const f = isDemo ? { direct: true } : await invoke<Fermeture | null>('fermerJeu');
       this.etat = { ...this.etat, jeu: undefined };
+      // Ancienne coque (réponse vide) : la page d'Android s'est ouverte.
+      return f ?? { direct: !isAndroid };
     } finally {
       this.occupe = false;
     }
