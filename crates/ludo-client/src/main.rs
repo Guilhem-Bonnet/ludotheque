@@ -282,6 +282,12 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
             Ok(_) => {}
             Err(e) => println!("Accès aux fichiers non accordé : {e}"),
         }
+        // Retour à la Ludothèque en un appui après une partie (service d'accessibilité ajouté à ceux
+        // d'AYN, HOME en un appui) ; idempotent.
+        match dev.activer_retour() {
+            Ok(l) => l.iter().for_each(|x| println!("Retour après une partie : {x}")),
+            Err(e) => println!("Retour après une partie non activé : {e}"),
+        }
     }
     let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
     let games = ctx.client.games().map_err(|e| e.to_string())?;

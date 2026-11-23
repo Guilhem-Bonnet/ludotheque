@@ -1,8 +1,9 @@
 // Menu en jeu (lot menu-jeu du 22/11) : jeu ouvert pendant que la Ludothèque est devant.
 //
-// Android : pendant une partie, la Ludothèque revient devant par le raccourci de touches AYN « Start
-// app » ou HOME puis Cocoon (aucune touche système captée) ; l'accueil met alors le jeu en tête
-// (carte « En cours » : Reprendre, Fermer le jeu).
+// Android : pendant une partie lancée par la Ludothèque, le bouton Mode, HOME en un appui ou la fin du
+// jeu ramènent la Ludothèque devant (RetourService.kt : le lanceur passe devant juste après le jeu ;
+// aucune touche captée) ; l'accueil met alors le jeu en tête (carte « En cours » : Reprendre, Fermer
+// le jeu). Un jeu quitté par le menu de l'émulateur est oublié : l'accueil s'ouvre sans carte.
 // L'état est relu quand la page redevient visible (`visibilitychange`) : un événement, pas une
 // scrutation. Bureau : la partie est portée par l'écran « En jeu » (Passage) ; seules `reprendre` et
 // `fermer` servent (réduire la fenêtre, terminer l'émulateur).
@@ -18,6 +19,8 @@ export interface JeuEnCours {
 
 export interface EtatMenu {
   jeu?: JeuEnCours;
+  /** Android : retour automatique après une partie actif (service activé par le PC). */
+  retourActif?: boolean;
 }
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -90,6 +93,16 @@ class EnCoursStore {
       this.etat = { ...this.etat, jeu: undefined };
     } finally {
       this.occupe = false;
+    }
+  }
+
+  /** B à la racine de l'interface (Android) : la Ludothèque passe derrière, le lanceur revient. */
+  async versLanceur(): Promise<void> {
+    if (!isAndroid) return;
+    try {
+      await invoke('versLanceur');
+    } catch {
+      // Pont indisponible (ancienne coque) : B reste sans effet à la racine, comme avant.
     }
   }
 

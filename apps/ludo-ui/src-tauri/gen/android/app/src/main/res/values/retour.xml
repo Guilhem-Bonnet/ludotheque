@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="retour_service_nom">Ludothèque : retour après une partie</string>
+    <string name="retour_service_resume">Après une partie lancée par la Ludothèque, Mode ou HOME ramène à la Ludothèque</string>
+    <string name="retour_service_description">Pendant une partie lancée depuis la Ludothèque, le bouton Mode, HOME ou la fin du jeu ramènent à la Ludothèque, sur le jeu en cours : reprendre ou fermer. Un jeu lancé depuis le lanceur n\'est jamais concerné. Aucune touche n\'est captée et aucun contenu d\'écran n\'est lu : seul le nom de l\'appli au premier plan est utilisé.</string>
+</resources>

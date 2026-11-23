@@ -42,6 +42,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun etat(invoke: Invoke) {
     val out = JSObject()
+    out.put("retourActif", RetourService.actif)
     EnCours.jeu?.let { j ->
       val jeu = JSObject()
       jeu.put("game", j.game)
@@ -58,6 +59,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     val a = args.intent
     val lancement = EnCours.Lancement(a.packageName, a.activity, a.action, a.data, a.extras, a.boolExtras)
     EnCours.suivre(activity, EnCours.Jeu(args.game, lancement, System.currentTimeMillis()))
+    RetourService.armer()
     invoke.resolve()
   }
 
@@ -76,6 +78,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     val lanceur = activity.packageManager.getLaunchIntentForPackage(j.paquet)
       ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
     try {
+      RetourService.armer()
       activity.startActivity(lanceur ?: j.lancement.intent())
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
@@ -120,6 +123,18 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.reject("Fermeture impossible : ${e.message ?: e.javaClass.simpleName}")
       }
     }.start()
+  }
+
+  /**
+   * B à la racine de l'interface : la Ludothèque passe derrière, le lanceur (Cocoon) revient. L'app
+   * reste ouverte (retour instantané) ; aucune redirection, la Ludothèque étant l'appli devant.
+   */
+  @Command
+  fun versLanceur(invoke: Invoke) {
+    activity.runOnUiThread {
+      activity.moveTaskToBack(true)
+      invoke.resolve()
+    }
   }
 
   /** Oublie le jeu sans rien fermer (il s'est terminé tout seul). */

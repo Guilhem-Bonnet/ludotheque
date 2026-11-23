@@ -14,12 +14,22 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Menu en jeu (MenuJeuPlugin.kt) : « Reprendre » ouvre l'activité de lanceur de l'émulateur
          (getLaunchIntentForPackage), visible seulement par cette déclaration. -->
+    <!-- Retour après une partie (RetourService.kt) : reconnaître le lanceur HOME (Cocoon) et la
+         bibliothèque de l'émulateur (activité de lanceur). -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
+    <!-- Retour après une partie (RetourService.kt) : second filet pour remettre la Ludothèque devant
+         depuis l'arrière-plan. Accordé par le PC (adb `appops set <paquet> SYSTEM_ALERT_WINDOW allow`,
+         scripts/apk.sh, ludo adb-sync), jamais demandé par l'app ; aucune fenêtre superposée n'est dessinée. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -43,6 +53,21 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Retour à la Ludothèque en un appui après une partie qu'elle a lancée (Mode, HOME, jeu quitté).
+             Changements de fenêtre seulement : aucune touche, aucun contenu d'écran. Activé par le PC (adb). -->
+        <service
+            android:name=".RetourService"
+            android:exported="false"
+            android:label="@string/retour_service_nom"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/retour_service" />
+        </service>
 
         <provider
           android:name="androidx.core.content.FileProvider"

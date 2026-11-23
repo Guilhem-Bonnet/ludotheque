@@ -30,6 +30,9 @@ pub struct JeuEnCours {
 pub struct EtatMenu {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jeu: Option<JeuEnCours>,
+    /// Android : service de retour après une partie lié (`RetourService.kt`, activé par le PC).
+    #[serde(default)]
+    pub retour_actif: bool,
 }
 
 #[cfg(target_os = "android")]
@@ -100,7 +103,7 @@ pub async fn jeu_en_cours(app: tauri::AppHandle) -> Result<EtatMenu, String> {
     {
         let _ = app;
         // Bureau : l'écran « En jeu » (Passage) porte déjà la partie en cours.
-        Ok(EtatMenu { jeu: None })
+        Ok(EtatMenu { jeu: None, retour_actif: false })
     }
 }
 
@@ -135,6 +138,19 @@ pub async fn fermer_jeu(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+/// B à la racine de l'interface. Android : la Ludothèque passe derrière et le lanceur (Cocoon) revient,
+/// sans fermer l'app. Bureau : rien (la fenêtre reste, comme avant).
+#[tauri::command(rename = "versLanceur")]
+pub async fn vers_lanceur(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    return crate::blocking(move || pont::action(&app, "versLanceur")).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,12 +159,17 @@ mod tests {
     fn etat_pour_l_interface() {
         let e = EtatMenu {
             jeu: Some(JeuEnCours { game: "mm3d".into(), paquet: Some("io.github.lime3ds.android".into()), depuis_ms: 1_795_000_000_000 }),
+            retour_actif: true,
         };
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["jeu"]["game"], "mm3d");
         assert_eq!(v["jeu"]["depuisMs"], 1_795_000_000_000u64);
+        assert_eq!(v["retourActif"], true);
         // Réponse du plugin Kotlin (champs camelCase, `jeu` absent quand rien n'est ouvert).
         let k: EtatMenu = serde_json::from_str("{}").unwrap();
         assert_eq!(k.jeu, None);
+        assert!(!k.retour_actif);
+        let k: EtatMenu = serde_json::from_str(r#"{"retourActif":true}"#).unwrap();
+        assert!(k.retour_actif);
     }
 }

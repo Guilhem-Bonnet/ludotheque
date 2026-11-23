@@ -78,6 +78,15 @@ impl Adb {
         Ok(self.shell(&grant_script())?.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
     }
 
+    /// Retour à la Ludothèque en un appui après une partie (lot menu-jeu2) : service d'accessibilité
+    /// `RetourService` AJOUTÉ à ceux déjà actifs (celui d'AYN reste), `SYSTEM_ALERT_WINDOW` accordé, HOME
+    /// en un appui (`prevent_press_home_accidentally` = 0, valeur d'origine notée une fois dans
+    /// `Android/data/<paquet>/files/reglages-origine.txt`). Idempotent. Rend les lignes du script
+    /// (valeur relue des services actifs).
+    pub fn activer_retour(&self) -> Result<Vec<String>, AdbError> {
+        Ok(self.shell(&retour_script("/sdcard/Android/data"))?.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+    }
+
     /// Le paquet a-t-il un processus en cours ?
     pub fn running(&self, package: &str) -> bool {
         self.shell(&format!("pidof {} >/dev/null && echo oui || echo non", sq(package))).is_ok_and(|s| s.trim() == "oui")
@@ -267,9 +276,84 @@ pub fn grant_script() -> String {
         .join("; ")
 }
 
+/// Classe du service de retour après une partie (`RetourService.kt`), commune aux deux paquets.
+pub const RETOUR_SERVICE: &str = "fr.srvdreamer.ludotheque.RetourService";
+
+/// Script shell de l'appareil pour [`Adb::activer_retour`] : première app Ludothèque installée (release,
+/// sinon essai). La liste `enabled_accessibility_services` est lue, complétée (séparateur `:`) et réécrite
+/// en entier, puis relue : un service déjà présent (AYN) n'est jamais retiré ni remplacé. `data` : dossier
+/// `Android/data` (paramètre pour les tests).
+pub fn retour_script(data: &str) -> String {
+    let pkgs = LUDO_PACKAGES.join(" ");
+    format!(
+        r#"for p in {pkgs}; do pm path "$p" >/dev/null 2>&1 || continue
+c="$p/{RETOUR_SERVICE}"
+v="$(settings get secure enabled_accessibility_services)"
+case ":$v:" in
+  *":$c:"*) ;;
+  *) if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${{v}}:${{c}}"; fi
+     settings put secure enabled_accessibility_services "$n" ;;
+esac
+settings put secure accessibility_enabled 1
+appops set "$p" SYSTEM_ALERT_WINDOW allow
+d="{data}/$p/files"
+mkdir -p "$d"
+[ -f "$d/reglages-origine.txt" ] || echo "prevent_press_home_accidentally=$(settings get system prevent_press_home_accidentally)" > "$d/reglages-origine.txt"
+settings put system prevent_press_home_accidentally 0
+echo "services : $(settings get secure enabled_accessibility_services)"
+break
+done"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exécute `retour_script` avec un `sh` local et des commandes Android simulées (réglages en fichiers).
+    fn retour_simule(services: &str, installes: &[&str]) -> (String, String, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("secure.enabled_accessibility_services"), services).unwrap();
+        std::fs::write(d.join("system.prevent_press_home_accidentally"), "1").unwrap();
+        let mocks = format!(
+            r#"R={r}
+settings() {{ if [ "$1" = get ]; then cat "$R/$2.$3" 2>/dev/null || echo null; else printf %s "$4" > "$R/$2.$3"; fi; }}
+pm() {{ case " {inst} " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }}
+appops() {{ echo "$2 $3 $4" >> "$R/appops"; }}
+"#,
+            r = d.display(),
+            inst = installes.join(" ")
+        );
+        let script = format!("{mocks}{}", retour_script(&d.join("data").display().to_string()));
+        let out = Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let lire = |n: &str| std::fs::read_to_string(d.join(n)).unwrap_or_default();
+        let origine = std::fs::read_to_string(d.join("data/fr.srvdreamer.ludotheque/files/reglages-origine.txt")).unwrap_or_default();
+        (lire("secure.enabled_accessibility_services"), lire("system.prevent_press_home_accidentally"), lire("appops"), origine)
+    }
+
+    #[test]
+    fn retour_ajoute_le_service_sans_retirer_celui_d_ayn() {
+        let ayn = "com.odin.gameassistant/com.ro.gameassistant.service.ForegroundAppMonitorV4Service";
+        let (s, home, appops, origine) = retour_simule(ayn, &["fr.srvdreamer.ludotheque", "fr.srvdreamer.ludotheque.debug"]);
+        assert_eq!(s, format!("{ayn}:fr.srvdreamer.ludotheque/fr.srvdreamer.ludotheque.RetourService"));
+        assert_eq!(home, "0");
+        assert_eq!(appops.trim(), "fr.srvdreamer.ludotheque SYSTEM_ALERT_WINDOW allow");
+        assert_eq!(origine.trim(), "prevent_press_home_accidentally=1");
+    }
+
+    #[test]
+    fn retour_idempotent_et_liste_vide() {
+        let c = "fr.srvdreamer.ludotheque/fr.srvdreamer.ludotheque.RetourService";
+        let deja = format!("a/b.C:{c}");
+        assert_eq!(retour_simule(&deja, &["fr.srvdreamer.ludotheque"]).0, deja);
+        assert_eq!(retour_simule("null", &["fr.srvdreamer.ludotheque"]).0, c);
+        // Seule l'app d'essai installée : son propre composant.
+        assert_eq!(retour_simule("", &["fr.srvdreamer.ludotheque.debug"]).0, "fr.srvdreamer.ludotheque.debug/fr.srvdreamer.ludotheque.RetourService");
+        // Aucune app Ludothèque : rien ne change.
+        assert_eq!(retour_simule("x/y.Z", &[]).0, "x/y.Z");
+    }
 
     #[test]
     fn acces_fichiers_des_apps_ludotheque() {

@@ -6,6 +6,7 @@
 # Usage : scripts/apk.sh [--debug] [--installer [SERIE]]
 #         scripts/apk.sh [--debug] --apk FICHIER.apk [SERIE]   installe un APK déjà construit (artefact de la CI)
 #         scripts/apk.sh [--debug] --config [SERIE]            configuration + accès seulement (ni build ni install)
+#         scripts/apk.sh [--debug] --retablir [SERIE]          défait le retour après une partie (HOME d'origine, service retiré)
 #
 # Paquet visé : la release `fr.srvdreamer.ludotheque` par défaut ; `--debug` : build de développement et
 # paquet `fr.srvdreamer.ludotheque.debug`. (`--release`, ancienne option, est accepté et ne change rien.)
@@ -27,6 +28,7 @@ profile=release
 install=""
 apk=""
 config_only=""
+retablir=""
 serial="${LUDO_ADB_SERIAL:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,7 +38,8 @@ while [ $# -gt 0 ]; do
     --apk) [ $# -gt 1 ] || { echo "--apk : fichier attendu" >&2; exit 2; }; apk="$2"; install=1; shift
       if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then serial="$2"; shift; fi ;;
     --config) config_only=1; install=1; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then serial="$2"; shift; fi ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    --retablir) retablir=1; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then serial="$2"; shift; fi ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "Option inconnue : $1" >&2; exit 2 ;;
   esac
   shift
@@ -75,8 +78,50 @@ deposer_config() {
   else
     echo "Accès aux fichiers non accordé (appops) : à accorder dans Réglages › Applications › Ludothèque" >&2
   fi
+  activer_retour
 }
 
+# Retour à la Ludothèque en un appui après une partie (RetourService.kt) : service d'accessibilité AJOUTÉ à
+# ceux déjà actifs (celui d'AYN reste : liste lue, complétée par « : », réécrite en entier, relue),
+# SYSTEM_ALERT_WINDOW accordé, HOME en un appui (prevent_press_home_accidentally = 0, valeur d'origine notée
+# une fois dans files/reglages-origine.txt). Même script que `ludo adb-sync` (crates/ludo-client/src/adb.rs,
+# retour_script). Le script passe en UN argument entre apostrophes : aucune expansion côté PC.
+activer_retour() {
+  local c="$package/fr.srvdreamer.ludotheque.RetourService" d="/sdcard/Android/data/$package/files"
+  "${adb_dev[@]}" shell "c='$c'; p='$package'; d='$d'"'
+v="$(settings get secure enabled_accessibility_services)"
+case ":$v:" in
+  *":$c:"*) ;;
+  *) if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${v}:${c}"; fi
+     settings put secure enabled_accessibility_services "$n" ;;
+esac
+settings put secure accessibility_enabled 1
+appops set "$p" SYSTEM_ALERT_WINDOW allow
+mkdir -p "$d"
+[ -f "$d/reglages-origine.txt" ] || echo "prevent_press_home_accidentally=$(settings get system prevent_press_home_accidentally)" > "$d/reglages-origine.txt"
+settings put system prevent_press_home_accidentally 0
+echo "Retour après une partie : services = $(settings get secure enabled_accessibility_services)"'
+}
+
+# Défait activer_retour : HOME remis à la valeur notée (1 si rien n'a été noté), service retiré de la liste
+# (les autres gardés dans leur ordre), SYSTEM_ALERT_WINDOW remis par défaut.
+retablir_retour() {
+  local c="$package/fr.srvdreamer.ludotheque.RetourService" d="/sdcard/Android/data/$package/files"
+  "${adb_dev[@]}" shell "c='$c'; p='$package'; d='$d'"'
+o="$(sed -n "s/^prevent_press_home_accidentally=//p" "$d/reglages-origine.txt" 2>/dev/null)"
+case "$o" in ""|null) o=1 ;; esac
+settings put system prevent_press_home_accidentally "$o"
+v="$(settings get secure enabled_accessibility_services)"
+n="$(echo "$v" | tr ":" "\n" | grep -vxF "$c" | paste -sd: -)"
+if [ -n "$n" ]; then settings put secure enabled_accessibility_services "$n"; else settings delete secure enabled_accessibility_services; fi
+appops set "$p" SYSTEM_ALERT_WINDOW default
+echo "Rétabli : HOME prevent=$(settings get system prevent_press_home_accidentally), services = $(settings get secure enabled_accessibility_services)"'
+}
+
+if [ -n "$retablir" ]; then
+  retablir_retour
+  exit 0
+fi
 if [ -n "$config_only" ]; then
   deposer_config
   exit 0
