@@ -66,6 +66,50 @@ pub fn title_id_from_header(ext: &str, header: &[u8]) -> Option<u64> {
     }
 }
 
+/// Formats Switch à table de fichiers PFS0 en clair (`.nsp`, et `.nsz` qui garde la même table).
+/// Les `.xci`/`.xcz` n'en ont pas : leur identifiant de titre est dans une partie chiffrée (relevé le
+/// 23/11 sur la Thor : « HEAD » à 0x100 puis l'identifiant de paquet, pas celui du titre), seul leur
+/// nom `[<titre>]` le donne.
+pub const PFS0_EXTS: &[&str] = &["nsp", "nsz"];
+
+/// Octets à lire pour [`title_id_from_pfs0`] : en-tête, entrées et table des noms (relevé : 6 à 7
+/// fichiers, table finie avant 0x1A0 ; 4 Kio couvrent une cinquantaine de fichiers, paquets « jeu +
+/// MAJ + DLC » compris). Table plus longue : repli sur le nom du fichier.
+pub const PFS0_HEADER_LEN: usize = 0x1000;
+
+fn u32_le(b: &[u8], at: usize) -> Option<usize> {
+    Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?) as usize)
+}
+
+/// Identifiant de titre d'un `.nsp`/`.nsz` d'après sa table de fichiers PFS0 : le ticket s'appelle
+/// `<identifiant de droits>.tik` (32 chiffres hexadécimaux), dont les 16 premiers sont l'identifiant
+/// du titre contenu : celui du jeu de base pour un paquet de base, celui de la mise à jour
+/// (`…800`) ou du contenu additionnel pour les autres. Relevé le 23/11 sur la Thor :
+/// « Pokémon FireRed Version (French Ver.) [01004B3023412000][v0].nsp » contient
+/// `01004b30234120000000000000000012.tik`. `None` : pas de PFS0, pas de ticket (paquet sans ticket),
+/// ou table coupée par la lecture.
+pub fn title_id_from_pfs0(header: &[u8]) -> Option<u64> {
+    if header.get(0..4)? != b"PFS0" {
+        return None;
+    }
+    let count = u32_le(header, 4)?;
+    let table = 0x10usize.checked_add(count.checked_mul(0x18)?)?;
+    let names = header.get(table..table.checked_add(u32_le(header, 8)?)?.min(header.len()))?;
+    let tickets: Vec<u64> = (0..count)
+        .filter_map(|i| {
+            let name_at = u32_le(header, 0x10 + i * 0x18 + 0x10)?;
+            let rest = names.get(name_at..)?;
+            // Nom terminé par un zéro DANS la lecture : un nom coupé n'est jamais une preuve.
+            let name = std::str::from_utf8(&rest[..rest.iter().position(|&b| b == 0)?]).ok()?;
+            let rights = name.strip_suffix(".tik")?;
+            (rights.len() == 32 && rights.chars().all(|c| c.is_ascii_hexdigit())).then(|| u64::from_str_radix(&rights[..16], 16).ok())?
+        })
+        .collect();
+    // Paquet à plusieurs titres (jeu + MAJ + DLC) : celui du jeu de base (12 bits bas à zéro ; une
+    // MAJ finit par 800, un DLC par son numéro), sinon le premier (paquet de MAJ ou de DLC seul).
+    tickets.iter().copied().find(|t| t & 0xFFF == 0).or_else(|| tickets.first().copied())
+}
+
 /// Identifiant d'un jeu Wii U d'après le texte de son `meta/meta.xml`.
 pub fn title_id_from_meta_xml(xml: &str) -> Option<u64> {
     let start = xml.find("<title_id")?;
@@ -94,6 +138,62 @@ mod tests {
         let mut h = vec![0u8; HEADER_LEN];
         h[at..at + bytes.len()].copy_from_slice(bytes);
         h
+    }
+
+    /// Paquet PFS0 minimal avec ces noms de fichiers (tailles et décalages des données à zéro).
+    fn pfs0(names: &[&str]) -> Vec<u8> {
+        let mut table = Vec::new();
+        let mut entries = Vec::new();
+        for n in names {
+            entries.extend_from_slice(&[0u8; 16]);
+            entries.extend_from_slice(&(table.len() as u32).to_le_bytes());
+            entries.extend_from_slice(&[0u8; 4]);
+            table.extend_from_slice(n.as_bytes());
+            table.push(0);
+        }
+        let mut h = b"PFS0".to_vec();
+        h.extend_from_slice(&(names.len() as u32).to_le_bytes());
+        h.extend_from_slice(&(table.len() as u32).to_le_bytes());
+        h.extend_from_slice(&[0u8; 4]);
+        h.extend(entries);
+        h.extend(table);
+        h
+    }
+
+    #[test]
+    fn nsp_de_la_thor_identifiant_du_ticket() {
+        // Tables relevées le 23/11 sur la Thor (`dd | strings`).
+        let rouge_feu = pfs0(&[
+            "01004b30234120000000000000000012.tik",
+            "01004b30234120000000000000000012.cert",
+            "4e62aaa758be8b3eb66588e28c0d756c.cnmt.nca",
+            "eca366f88d4dfc4746b6b474c93b1d57.nca",
+            "728718a889070f53aef3ef51ffb70da5.nca",
+            "fcf9c056c609eea18bc0b76fb752f313.nca",
+        ]);
+        assert_eq!(title_id_from_pfs0(&rouge_feu), Some(0x0100_4b30_2341_2000));
+        // Ticket après le certificat (Super Mario Party, Skyward Sword HD).
+        let smp = pfs0(&["010036b0034e40000000000000000005.cert", "010036b0034e40000000000000000005.tik", "9942e4e65076669f2fcb98f140e2d7e5.cnmt.xml"]);
+        assert_eq!(title_id_from_pfs0(&smp), Some(0x0100_36b0_034e_4000));
+        // Mise à jour : l'identifiant lu est celui de la mise à jour (…800), jamais celui du jeu de base.
+        let maj = pfs0(&["0100f2c0115b68000000000000000010.tik", "a.nca"]);
+        assert_eq!(title_id_from_pfs0(&maj), Some(0x0100_f2c0_115b_6800));
+        assert!(rouge_feu.len() <= PFS0_HEADER_LEN);
+        // Paquet jeu + MAJ + DLC, tickets de la MAJ et du DLC d'abord : l'identifiant du jeu de base.
+        let pack = pfs0(&["0100000011d908000000000000000010.tik", "0100000011d910010000000000000010.tik", "0100000011d900000000000000000010.tik"]);
+        assert_eq!(title_id_from_pfs0(&pack), Some(0x0100_0000_11d9_0000));
+    }
+
+    #[test]
+    fn pfs0_sans_ticket_coupe_ou_autre_format() {
+        assert_eq!(title_id_from_pfs0(&pfs0(&["4e62aaa758be8b3eb66588e28c0d756c.cnmt.nca", "eca366f8.nca"])), None, "paquet sans ticket");
+        let full = pfs0(&["a.nca", "01004b30234120000000000000000012.tik"]);
+        assert_eq!(title_id_from_pfs0(&full[..full.len() - 3]), None, "nom du ticket coupé par la lecture");
+        assert_eq!(title_id_from_pfs0(b"HEAD\0\0\0\0"), None, "xci");
+        assert_eq!(title_id_from_pfs0(&pfs0(&["0100zz30234120000000000000000012.tik"])), None, "pas hexadécimal");
+        let mut absurd = pfs0(&["x.tik"]);
+        absurd[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(title_id_from_pfs0(&absurd), None, "nombre d'entrées absurde");
     }
 
     #[test]
