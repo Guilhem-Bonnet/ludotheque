@@ -8,10 +8,11 @@
   import StateNotice from './lib/components/StateNotice.svelte';
   import Repos from './lib/components/Repos.svelte';
   import Colonnes from './lib/components/ecrans/Colonnes.svelte';
-  import { androidViewportWidth, applyLayout, computeLayout, computeZoom, layout, screenHasSide, screenIsWide, type EcranMode } from './lib/layout';
+  import { androidPageWidth, applyLayout, computeLayout, computeZoom, layout, screenHasSide, screenIsWide, type EcranInfo, type EcranMode } from './lib/layout';
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
   import FermerJeu from './lib/components/FermerJeu.svelte';
+  import { enCours } from './lib/enCours.svelte';
   import Bibliotheque from './screens/Bibliotheque.svelte';
   import Conflit from './screens/Conflit.svelte';
   import FicheJeu from './screens/FicheJeu.svelte';
@@ -98,8 +99,10 @@
       // Proportions de la VUE (fenêtre de l'app), pas de `screen` qui décrit l'écran 0 : sur l'écran du bas de la
       // Thor (1080×1240), screen.* donnait les proportions de l'écran du haut (constat et essai du lot thor2, 22/11).
       // Écran du bas en double écran (`data-ecran="bas"`, posé par DoubleEcran.kt) : échelle du Deck (lib/layout.ts).
-      const width = window.outerWidth > 0
-        ? androidViewportWidth(window.outerWidth, window.outerHeight, document.documentElement.dataset.ecran as EcranMode)
+      // Taille de la vue annoncée en dp par DoubleEcran.kt (lib/layout.ts `androidPageWidth`) ; outerWidth en repli.
+      const info = (window as unknown as { __ludoEcran?: EcranInfo }).__ludoEcran;
+      const width = (info?.vueLargeurDp ?? 0) > 0 || window.outerWidth > 0
+        ? androidPageWidth(info ?? { mode: document.documentElement.dataset.ecran as EcranMode }, window.outerWidth, window.outerHeight)
         : Math.ceil(Math.max(1280, (800 * screen.width) / screen.height));
       document.querySelector('meta[name="viewport"]')?.setAttribute('content', `width=${width}, user-scalable=no`);
       return relayout();
@@ -118,6 +121,20 @@
       appliedZoom = previous; // zoom refusé : l'interface reste à l'échelle précédente
     } finally {
       relayout();
+    }
+  }
+
+  /** Android : état des écrans relu auprès de la coque (commande `ecranEtat`), puis échelle recalculée. */
+  async function syncEcran() {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const info = await invoke<EcranInfo>('ecranEtat');
+      if (!info?.mode) return;
+      (window as unknown as { __ludoEcran?: EcranInfo }).__ludoEcran = info;
+      document.documentElement.dataset.ecran = info.mode;
+      onResize();
+    } catch {
+      // Coque sans cette commande : l'annonce et le script de début de document suffisent.
     }
   }
 
@@ -148,10 +165,13 @@
     window.addEventListener('resize', onResize);
     // Passage en double écran ou retour à un seul écran (DoubleEcran.kt) : l'échelle de la vue change.
     window.addEventListener('ludo-ecran', onResize);
-    // B : un menu ouvert se referme d'abord ; sinon, écran précédent.
+    // L'annonce de DoubleEcran.kt a pu partir avant cette page (démarrage à froid) : état relu une fois.
+    if (isAndroid) void syncEcran();
+    // B : un menu ouvert se referme d'abord ; sinon, écran précédent ; à la racine sur Android, retour au
+    // lanceur (Cocoon), l'app restant ouverte (lot menu-jeu2).
     const onBack = () => {
       if (document.querySelector('[data-modal]')) window.dispatchEvent(new CustomEvent('ludo:modal-back'));
-      else router.back();
+      else if (!router.back() && isAndroid) void enCours.versLanceur();
     };
     window.addEventListener('ludo:back', onBack);
 

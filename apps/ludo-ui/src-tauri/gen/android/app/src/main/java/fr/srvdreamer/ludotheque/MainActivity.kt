@@ -36,6 +36,10 @@ class MainActivity : TauriActivity() {
     webView.settings.useWideViewPort = true
     webView.settings.loadWithOverviewMode = true
     webView.settings.setSupportZoom(false)
+    // Sons de l'interface (Web Audio, sound.ts) : sans geste exigé par la WebView. Avec `true` (défaut),
+    // le contexte audio reste suspendu tant que la WebView ne voit pas de geste qu'elle reconnaît, et
+    // les touches de la manette traduites par dispatchKeyEvent n'en font pas toujours partie.
+    webView.settings.mediaPlaybackRequiresUserGesture = false
   }
 
   /**
@@ -102,6 +106,7 @@ class MainActivity : TauriActivity() {
     super.onResume()
     EnCours.restaurer(this)
     if (EnCours.jeu != null) EnCours.quitte()
+    RetourService.arrivee()
   }
 
   // Fenêtre qui perd le focus (jeu lancé, autre app, autre écran) : toute flèche tenue est relâchée.

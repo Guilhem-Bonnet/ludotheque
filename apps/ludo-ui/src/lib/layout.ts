@@ -70,6 +70,26 @@ export const DECK_PX_DP = 0.744;
 /** Mode d'affichage annoncé par la coque Android (DoubleEcran.kt) : `bas` = écran du bas de la Thor en double écran. */
 export type EcranMode = 'bas' | 'seul' | undefined;
 
+/** État annoncé par DoubleEcran.kt (`window.__ludoEcran`, commande `ecranEtat`) : mode et taille de la vue en dp. */
+export interface EcranInfo {
+  mode?: EcranMode;
+  vueLargeurDp?: number;
+  vueHauteurDp?: number;
+}
+
+/**
+ * Largeur logique de la page sur Android. Taille de la vue annoncée par la coque (dp) d'abord : elle ne dépend
+ * pas de la balise viewport. `window.outerWidth`, lui, la suit sur la WebView Android : relu après la pose de la
+ * balise, il donnait un point fixe sur une mauvaise largeur (écran du bas petit à CHAQUE lancement, 22/11 soir).
+ */
+export function androidPageWidth(info: EcranInfo | undefined, outerW: number, outerH: number): number {
+  const mode = info?.mode;
+  const w = info?.vueLargeurDp ?? 0;
+  const h = info?.vueHauteurDp ?? 0;
+  if (w > 0 && h > 0) return androidViewportWidth(w, h, mode);
+  return androidViewportWidth(outerW, outerH, mode);
+}
+
 /**
  * Largeur logique (balise viewport) de la WebView Android pour une fenêtre de `outerW`×`outerH` dp.
  * - Écran du bas de la Thor (`bas`, 538×469 dp en paysage) : 1 px CSS = 1 px du Deck (≈ 723×630 px logiques).

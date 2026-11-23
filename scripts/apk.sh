@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Construit l'APK Android de la Ludothèque (arm64, Ayn Thor) et, avec --installer, l'installe par adb
-# puis dépose la configuration de l'appareil dans Android/data/<paquet>/files/config.toml.
+# puis dépose la configuration de l'appareil dans Android/data/<paquet>/files/config.toml et accorde à
+# l'app l'accès « tous les fichiers » (lancement des jeux sans aucun sélecteur de dossier).
 #
-# Usage : scripts/apk.sh [--release] [--installer [SERIE]]
+# Usage : scripts/apk.sh [--debug] [--installer [SERIE]]
+#         scripts/apk.sh [--debug] --apk FICHIER.apk [SERIE]   installe un APK déjà construit (artefact de la CI)
+#         scripts/apk.sh [--debug] --config [SERIE]            configuration + accès seulement (ni build ni install)
+#         scripts/apk.sh [--debug] --retablir [SERIE]          défait le retour après une partie (HOME d'origine, service retiré)
+#
+# Paquet visé : la release `fr.srvdreamer.ludotheque` par défaut ; `--debug` : build de développement et
+# paquet `fr.srvdreamer.ludotheque.debug`. (`--release`, ancienne option, est accepté et ne change rien.)
 #
 # Outils attendus (installés sans droits administrateur, voir README.md, « App Android ») :
 #   JDK 17/21 (JAVA_HOME, défaut ~/.cache/jdk/jdk-21*), SDK Android (ANDROID_HOME, défaut ~/.cache/android-sdk)
@@ -17,18 +24,121 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-profile=debug
+profile=release
 install=""
+apk=""
+config_only=""
+retablir=""
 serial="${LUDO_ADB_SERIAL:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --release) profile=release ;;
+    --debug) profile=debug ;;
     --installer) install=1; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then serial="$2"; shift; fi ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    --apk) [ $# -gt 1 ] || { echo "--apk : fichier attendu" >&2; exit 2; }; apk="$2"; install=1; shift
+      if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then serial="$2"; shift; fi ;;
+    --config) config_only=1; install=1; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then serial="$2"; shift; fi ;;
+    --retablir) retablir=1; if [ $# -gt 1 ] && [ "${2#-}" = "$2" ]; then serial="$2"; shift; fi ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "Option inconnue : $1" >&2; exit 2 ;;
   esac
   shift
 done
+[ -z "$apk" ] || [ -f "$apk" ] || { echo "APK introuvable : $apk" >&2; exit 1; }
+
+adb_dev=(adb)
+[ -n "$serial" ] && adb_dev=(adb -s "$serial")
+package=fr.srvdreamer.ludotheque
+[ "$profile" = debug ] && package="$package.debug"
+
+# Configuration de l'appareil et accès aux fichiers (fonction appelée après l'installation éventuelle).
+deposer_config() {
+  # Configuration : serveur, appareil et profil de ~/.config/ludo/thor.toml, hôte Moonlight = UUID de ce PC
+  # dans Sunshine. Un fichier déjà présent sur l'appareil est gardé en .ludo-old-<date>.
+  local conf_src="${LUDO_THOR_CONFIG:-$HOME/.config/ludo/thor.toml}" uuid tmp dest
+  uuid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["root"]["uniqueid"])' "$HOME/.config/sunshine/sunshine_state.json" 2>/dev/null || true)"
+  tmp="$(mktemp)"
+  {
+    echo "# Ludothèque — $(date +%d/%m/%Y) : déposée par scripts/apk.sh depuis $(hostname)."
+    grep -E '^(serveur|appareil|profil_defaut) *=' "$conf_src"
+    echo
+    echo "[moonlight]"
+    [ -n "$uuid" ] && echo "hote = \"$uuid\""
+    echo "hdr = false"
+  } > "$tmp"
+  dest="/sdcard/Android/data/$package/files"
+  "${adb_dev[@]}" shell "mkdir -p $dest && if [ -f $dest/config.toml ]; then mv $dest/config.toml $dest/config.toml.ludo-old-$(date +%Y%m%d-%H%M%S); fi"
+  "${adb_dev[@]}" push "$tmp" "$dest/config.toml" >/dev/null
+  rm -f "$tmp"
+  echo "Configuration déposée : $dest/config.toml"
+  # Accès « tous les fichiers » : ROM lues par chemin, confiées aux émulateurs sans arbre (Dolphin) ;
+  # l'app ne le demande jamais elle-même (aucun écran de réglage, aucun sélecteur).
+  if "${adb_dev[@]}" shell appops set "$package" MANAGE_EXTERNAL_STORAGE allow; then
+    echo "Accès aux fichiers : $("${adb_dev[@]}" shell appops get "$package" MANAGE_EXTERNAL_STORAGE | head -1)"
+  else
+    echo "Accès aux fichiers non accordé (appops) : à accorder dans Réglages › Applications › Ludothèque" >&2
+  fi
+  activer_retour
+}
+
+# Retour à la Ludothèque en un appui après une partie (RetourService.kt) : service d'accessibilité AJOUTÉ à
+# ceux déjà actifs (celui d'AYN reste : liste lue, complétée par « : », réécrite en entier, relue),
+# SYSTEM_ALERT_WINDOW accordé, HOME en un appui (prevent_press_home_accidentally = 0, valeur d'origine notée
+# une fois dans files/reglages-origine.txt). Même script que `ludo adb-sync` (crates/ludo-client/src/adb.rs,
+# retour_script). Le script passe en UN argument entre apostrophes : aucune expansion côté PC.
+activer_retour() {
+  local c="$package/fr.srvdreamer.ludotheque.RetourService" d="/sdcard/Android/data/$package/files"
+  "${adb_dev[@]}" shell "c='$c'; p='$package'; d='$d'"'
+mkdir -p "$d"
+v="$(settings get secure enabled_accessibility_services)" || { echo "services illisibles : rien écrit"; exit 1; }
+case "$v" in *" "*|*rror*|*xception*) echo "services illisibles ($v) : rien écrit"; exit 1 ;; esac
+case ":$v:" in
+  *":$c:"*) ;;
+  *) [ -f "$d/services-origine.txt" ] || echo "$v" > "$d/services-origine.txt"
+     if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${v}:${c}"; fi
+     settings put secure enabled_accessibility_services "$n"
+     r="$(settings get secure enabled_accessibility_services)"
+     if [ "$r" != "$n" ]; then
+       [ -z "$v" ] || [ "$v" = null ] || settings put secure enabled_accessibility_services "$v"
+       echo "relecture inattendue ($r) : liste d origine remise"; exit 1
+     fi ;;
+esac
+settings put secure accessibility_enabled 1
+appops set "$p" SYSTEM_ALERT_WINDOW allow
+[ -f "$d/reglages-origine.txt" ] || echo "prevent_press_home_accidentally=$(settings get system prevent_press_home_accidentally)" > "$d/reglages-origine.txt"
+settings put system prevent_press_home_accidentally 0
+echo "Retour après une partie : services = $(settings get secure enabled_accessibility_services)"'
+}
+
+# Défait activer_retour : HOME remis à la valeur notée (1 si rien n'a été noté), service retiré de la liste
+# (les autres gardés dans leur ordre), SYSTEM_ALERT_WINDOW remis par défaut.
+retablir_retour() {
+  local c="$package/fr.srvdreamer.ludotheque.RetourService" d="/sdcard/Android/data/$package/files"
+  "${adb_dev[@]}" shell "c='$c'; p='$package'; d='$d'"'
+o="$(sed -n "s/^prevent_press_home_accidentally=//p" "$d/reglages-origine.txt" 2>/dev/null)"
+case "$o" in ""|null) o=1 ;; esac
+settings put system prevent_press_home_accidentally "$o"
+v="$(settings get secure enabled_accessibility_services)" || { echo "services illisibles : rien écrit"; exit 1; }
+case "$v" in *" "*|*rror*|*xception*) echo "services illisibles ($v) : rien écrit"; exit 1 ;; null) v="" ;; esac
+n="$(echo "$v" | tr ":" "\n" | grep -vxF "$c" | paste -sd: -)"
+if [ -n "$n" ]; then settings put secure enabled_accessibility_services "$n"; else settings delete secure enabled_accessibility_services; fi
+appops set "$p" SYSTEM_ALERT_WINDOW default
+echo "Rétabli : HOME prevent=$(settings get system prevent_press_home_accidentally), services = $(settings get secure enabled_accessibility_services)"'
+}
+
+if [ -n "$retablir" ]; then
+  retablir_retour
+  exit 0
+fi
+if [ -n "$config_only" ]; then
+  deposer_config
+  exit 0
+fi
+if [ -n "$apk" ]; then
+  "${adb_dev[@]}" install -r "$apk"
+  deposer_config
+  exit 0
+fi
 
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/.cache/android-sdk}"
 if [ -z "${JAVA_HOME:-}" ]; then
@@ -69,27 +179,5 @@ apk="$(find -L "$gen/app/build/outputs/apk" -name '*.apk' -path "*$profile*" -ne
 echo "APK : $apk"
 [ -n "$install" ] || exit 0
 
-adb_dev=(adb)
-[ -n "$serial" ] && adb_dev=(adb -s "$serial")
-package=fr.srvdreamer.ludotheque
-[ "$profile" = debug ] && package="$package.debug"
 "${adb_dev[@]}" install -r "$apk"
-
-# Configuration de l'appareil : serveur, appareil et profil de ~/.config/ludo/thor.toml, hôte Moonlight
-# = UUID de ce PC dans Sunshine. Un fichier déjà présent sur l'appareil est gardé en .ludo-old-<date>.
-conf_src="${LUDO_THOR_CONFIG:-$HOME/.config/ludo/thor.toml}"
-uuid="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["root"]["uniqueid"])' "$HOME/.config/sunshine/sunshine_state.json" 2>/dev/null || true)"
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
-{
-  echo "# Ludothèque — $(date +%d/%m/%Y) : déposée par scripts/apk.sh depuis $(hostname)."
-  grep -E '^(serveur|appareil|profil_defaut) *=' "$conf_src"
-  echo
-  echo "[moonlight]"
-  [ -n "$uuid" ] && echo "hote = \"$uuid\""
-  echo "hdr = false"
-} > "$tmp"
-dest="/sdcard/Android/data/$package/files"
-"${adb_dev[@]}" shell "mkdir -p $dest && if [ -f $dest/config.toml ]; then mv $dest/config.toml $dest/config.toml.ludo-old-$(date +%Y%m%d-%H%M%S); fi"
-"${adb_dev[@]}" push "$tmp" "$dest/config.toml" >/dev/null
-echo "Configuration déposée : $dest/config.toml"
+deposer_config

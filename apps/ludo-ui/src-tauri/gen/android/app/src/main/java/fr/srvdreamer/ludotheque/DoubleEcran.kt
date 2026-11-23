@@ -23,7 +23,10 @@ import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import org.json.JSONObject
 
 /**
@@ -61,6 +64,20 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
   }
   private var observer: ViewTreeObserver? = null
 
+  /**
+   * État annoncé à l'interface du bas : mode (`bas` | `seul`) et taille de la vue en dp. La largeur de la
+   * page (balise viewport, App.svelte) se déduit de cette taille ; `window.outerWidth` ne convient pas :
+   * sur la WebView Android il suit la balise viewport déjà posée (écran du bas petit à CHAQUE lancement,
+   * 22/11 21:16-21:52 : mode `bas` bien appliqué, échelle ≈ 1 px CSS par pixel).
+   */
+  @Volatile private var etat: JSONObject = JSONObject()
+  /** Script injecté au début de chaque document : l'état est connu AVANT le premier rendu. */
+  private var docStart: ScriptHandler? = null
+  /** Taille de la vue changée (Presentation affichée, rotation) : nouvelle annonce, sans minuterie. */
+  private val layoutListener = View.OnLayoutChangeListener { _, l, t, r, b, oL, oT, oR, oB ->
+    if (r - l != oR - oL || b - t != oB - oT) announce(if (presentation != null) "bas" else "seul")
+  }
+
   /** WebView pas encore attachée au démarrage à froid : le double écran attend son attachement. */
   private val attach = object : View.OnAttachStateChangeListener {
     override fun onViewAttachedToWindow(v: View) = update()
@@ -69,7 +86,11 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
 
   fun install() {
     main.addOnAttachStateChangeListener(attach)
+    main.addOnLayoutChangeListener(layoutListener)
     (activity as LifecycleOwner).lifecycle.addObserver(this)
+    // Démarrage sur un seul écran : aucune transition n'annoncerait le mode (la page retomberait sur
+    // window.outerWidth). Annonce initiale ; le double écran, s'il arrive, la remplace.
+    announce(if (presentation != null) "bas" else "seul")
   }
 
   override fun onStart(owner: LifecycleOwner) {
@@ -141,7 +162,9 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
     }
     main.requestFocus()
     main.onWindowFocusChanged(activity.hasWindowFocus())
-    announce("bas", display)
+    // Taille pas encore celle de l'écran du bas (la vue vient de changer de fenêtre) : annonce du mode seul,
+    // la taille suit au premier agencement dans la Presentation (layoutListener).
+    announce("bas", withSize = false)
   }
 
   /** Retour à un seul écran : la WebView Tauri reprend sa place dans l'activité. */
@@ -161,23 +184,39 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
     home = null
     main.requestFocus()
     main.onWindowFocusChanged(activity.hasWindowFocus())
-    announce("seul", null)
+    announce("seul", withSize = false)
   }
 
-  /** Annonce le mode à l'interface du bas (`data-ecran` sur la racine, événement `ludo-ecran`). */
-  private fun announce(mode: String, display: Display?) {
+  /**
+   * Annonce le mode à l'interface du bas (`data-ecran` sur la racine, événement `ludo-ecran`), avec la
+   * taille de la vue en dp (densité de l'écran où elle est affichée) ; rejouée à chaque nouveau document
+   * par un script de début de document, et lisible à tout moment par `ecranEtat` (LudoPlugin).
+   */
+  private fun announce(mode: String, withSize: Boolean = true) {
     val info = JSONObject().put("mode", mode)
-    if (display != null) {
-      val size = android.graphics.Point()
-      @Suppress("DEPRECATION") display.getRealSize(size)
-      info.put("largeur", size.x).put("hauteur", size.y)
+    val disp = main.display
+    if (withSize && main.width > 0 && main.height > 0 && disp != null) {
+      val density = activity.createDisplayContext(disp).resources.displayMetrics.density
+      info.put("vueLargeurDp", Math.round(main.width / density)).put("vueHauteurDp", Math.round(main.height / density)).put("densite", density.toDouble())
     }
-    main.evaluateJavascript(
-      "window.__ludoEcran=$info;document.documentElement.dataset.ecran='$mode';" +
-        "window.dispatchEvent(new CustomEvent('ludo-ecran',{detail:window.__ludoEcran}));",
-      null,
-    )
+    if (info.toString() == etat.toString()) return
+    etat = info
+    // `document.documentElement` peut manquer au tout début du document : attribut posé dès qu'il existe.
+    val js = "window.__ludoEcran=$info;(function(){var s=function(){var r=document.documentElement;" +
+      "if(r)r.dataset.ecran='$mode';return!!r};if(!s())document.addEventListener('readystatechange',s,{once:true})})();"
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+      docStart?.remove()
+      // Seule la WebView du bas reçoit ce script ; elle ne charge que l'interface de l'app.
+      docStart = WebViewCompat.addDocumentStartJavaScript(main, js, setOf("*"))
+    }
+    // Sans taille (la vue vient de changer de fenêtre) : pas d'événement, le recalcul attend la vraie taille
+    // (layoutListener), sinon la page repasserait un instant par window.outerWidth.
+    val event = if (info.has("vueLargeurDp") || mode == "seul") "window.dispatchEvent(new CustomEvent('ludo-ecran',{detail:window.__ludoEcran}));" else ""
+    main.evaluateJavascript(js + event, null)
   }
+
+  /** Dernier état annoncé (copie). */
+  fun etat(): JSONObject = JSONObject(etat.toString())
 
   /** État du jeu choisi (JSON) poussé par l'interface du bas ; rejoué au chargement du haut. */
   fun push(state: String) {
@@ -214,7 +253,7 @@ class DoubleEcran(private val activity: Activity, private val main: WebView) :
     view.isFocusableInTouchMode = false
     view.settings.javaScriptEnabled = true
     view.settings.domStorageEnabled = true
-    view.settings.mediaPlaybackRequiresUserGesture = true
+    view.settings.mediaPlaybackRequiresUserGesture = false
     view.settings.useWideViewPort = true
     view.settings.loadWithOverviewMode = true
     view.settings.setSupportZoom(false)

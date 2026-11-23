@@ -10,6 +10,8 @@
   import { feedback } from '../feedback';
   import { reducedMotion } from '../motion';
   import { focusFirst } from '../nav';
+  import { isAndroid } from '../api';
+  import ButtonHints from './ButtonHints.svelte';
 
   const titre = $derived(enCours.titre);
   const demande = $derived(enCours.confirmation);
@@ -44,7 +46,15 @@
     }
     enCours.confirmation = null;
     feedback('ok');
-    d.ensuite?.();
+    // La carte disparaît avec le bouton qui avait le focus : il revient à la tuile choisie de l'accueil.
+    requestAnimationFrame(() => {
+      const tuile = document.querySelector<HTMLElement>('.slot.focused .tile');
+      if (tuile) tuile.focus({ preventScroll: true });
+      else focusFirst();
+    });
+    // Android : la page d'Android (« Forcer l'arrêt ») s'ouvre ; le jeu suivant part au retour ici.
+    if (isAndroid && d.ensuite) enCours.apresRetour = d.ensuite;
+    else d.ensuite?.();
   }
 
   async function reprendre() {
@@ -71,19 +81,25 @@
     {#if demande.titreEnsuite}
       <h2 id="fermer-titre">{titre} est en cours</h2>
       <p id="fermer-texte">Fermer ce jeu pour lancer {demande.titreEnsuite} ? La progression non sauvegardée dans le jeu sera perdue.</p>
+      {#if isAndroid}<p class="etape">Android affiche d'abord la page de l'appli : « Forcer l'arrêt », puis retour ici pour lancer.</p>{/if}
       <div class="acts">
-        <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}>{enCours.occupe ? 'Fermeture…' : 'Fermer et lancer'}</button>
+        <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}><span class="touche" aria-hidden="true">A</span>{enCours.occupe ? 'Fermeture…' : 'Fermer et lancer'}</button>
         <button class="act focusable" disabled={enCours.occupe} onclick={() => void reprendre()}>Reprendre {titre}</button>
       </div>
     {:else}
       <h2 id="fermer-titre">Fermer le jeu ?</h2>
       <p id="fermer-texte">{titre}. La progression non sauvegardée dans le jeu sera perdue ; la dernière sauvegarde part ensuite vers le serveur.</p>
+      {#if isAndroid}<p class="etape">Android affiche ensuite la page de l'appli : « Forcer l'arrêt » ferme le jeu.</p>{/if}
       <div class="acts">
-        <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}>{enCours.occupe ? 'Fermeture…' : 'Fermer le jeu'}</button>
-        <button class="act focusable" disabled={enCours.occupe} onclick={annuler}>Annuler</button>
+        <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}><span class="touche" aria-hidden="true">A</span>{enCours.occupe ? 'Fermeture…' : 'Fermer le jeu'}</button>
+        <button class="act focusable" disabled={enCours.occupe} onclick={annuler}><span class="touche" aria-hidden="true">B</span>Annuler</button>
       </div>
     {/if}
     {#if erreur}<p class="erreur" role="alert">{erreur}</p>{/if}
+  </div>
+  <!-- Consignes de la boîte, par-dessus celles de l'écran dessous (qui décriraient l'accueil). -->
+  <div class="consignes">
+    <ButtonHints hints={[{ key: 'A', label: demande.titreEnsuite ? 'Fermer et lancer' : 'Fermer le jeu' }, { key: 'B', label: 'Annuler' }]} />
   </div>
 {/if}
 
@@ -101,9 +117,23 @@
   .act {
     min-height: 56px; border-radius: 16px; font: inherit; font-size: 18px; font-weight: 700;
     background: transparent; color: #f5f7fa; border: 2px solid rgba(255, 255, 255, 0.62); cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
   }
+  .touche {
+    width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 800; border: 2px solid currentColor; box-sizing: border-box; flex-shrink: 0;
+  }
+  /* Fond opaque : --ground est translucide sur l’accueil (ambiance), la barre dessous transparaîtrait. */
+  .consignes { position: fixed; left: 0; right: 0; bottom: 0; z-index: 42; background: #15171c; }
+  /* Écran du bas de la Thor (≈ 723×630 px logiques) : boîte presque pleine largeur, actions côte à côte
+     comme sur une console (A à gauche, B à droite), au-dessus de la barre de consignes. */
+  :global(html[data-ecran='bas']) .boite { width: calc(100vw - 32px); padding: 22px; gap: 12px; translate: -50% calc(-50% - 27px); }
+  :global(html[data-ecran='bas']) h2 { font-size: 23px; }
+  :global(html[data-ecran='bas']) .acts { flex-direction: row; }
+  :global(html[data-ecran='bas']) .act { flex: 1; min-width: 0; padding: 0 12px; }
   .act.plein { background: var(--accent); color: #0e1116; border-color: transparent; font-weight: 800; }
   .act:focus-visible, .act:focus { outline: 3px solid #f5f7fa; outline-offset: 3px; }
   .act:disabled { opacity: 0.6; cursor: default; }
   .erreur { color: #ff8a94; font-size: 15px; }
+  .etape { font-size: 15px; color: #c9d0db; }
 </style>

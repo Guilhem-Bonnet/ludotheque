@@ -3,7 +3,10 @@
 
 À lancer sur le PC (le serveur n'a volontairement aucun accès Internet) :
 - Switch : blawar/titledb (FR.fr.json) : nom français, icône officielle, par identifiant de titre ;
-- 3DS, DS, GameCube, Wii U : libretro-thumbnails (Named_Boxarts), retrouvées par le nom du fichier ROM.
+- 3DS, DS, GameCube, Wii U : libretro-thumbnails (Named_Boxarts), retrouvées par le nom du fichier ROM
+  (site thumbnails.libretro.com, ou dépôts GitHub libretro-thumbnails quand le site ne répond plus) ;
+- jeu sans image dans ces bases : grille SteamGridDB 600×900 (clé `~/.config/ludotheque/steamgriddb.key`,
+  jamais affichée), retrouvée par le titre ; titre approchant = non envoyée sans `--approchants`.
 Deux images par jeu : la jaquette (`PUT /api/v1/games/{id}/cover`) et le fond grand format
 (`PUT /api/v1/games/{id}/background`, serveur >= 0.4.0) : bannière titledb (Switch), capture
 d'écran libretro Named_Snaps (3DS, DS…). Images choisies à la main (jeux sans base publique, comme
@@ -40,6 +43,11 @@ import urllib.request
 UA = "Ludotheque/0.2"
 TITLEDB = "https://raw.githubusercontent.com/blawar/titledb/master/FR.fr.json"
 LIBRETRO = "https://thumbnails.libretro.com"
+# Même contenu sur GitHub (un dépôt par système, « Nintendo_-_GameCube ») : repli quand le site tombe.
+LIBRETRO_GH_API = "https://api.github.com/repos/libretro-thumbnails"
+LIBRETRO_GH_RAW = "https://raw.githubusercontent.com/libretro-thumbnails"
+SGDB = "https://www.steamgriddb.com/api/v2"
+CLE_SGDB = os.path.expanduser("~/.config/ludotheque/steamgriddb.key")
 SYSTEMES = {
     "3ds": "Nintendo - Nintendo 3DS",
     "ds": "Nintendo - Nintendo DS",
@@ -98,11 +106,14 @@ NOMS_FR = {
     "kid icarus uprising": "Kid Icarus : Uprising",
     "professor layton vs phoenix wright ace attorney": "Professeur Layton vs Phoenix Wright : Ace Attorney",
     "mario luigi superstar saga bowsers minions": "Mario & Luigi : Superstar Saga + Les Sbires de Bowser",
+    "zelda twilight princess": "The Legend of Zelda : Twilight Princess",
+    "the legend of zelda the wind waker hd": "The Legend of Zelda : The Wind Waker HD",
 }
 
 # Titre à chercher chez libretro quand il diffère du nom du fichier (même clé que NOMS_FR).
 ALIAS_LIBRETRO = {
     "rhythm heaven megamix": "Rhythm Paradise Megamix",
+    "zelda twilight princess": "The Legend of Zelda - Twilight Princess",
 }
 
 # Noms Switch à fixer après titledb (typographie) : clé = identifiant de titre.
@@ -257,22 +268,55 @@ def rang_region(nom):
     return len(REGIONS)
 
 
+def _depot(systeme):
+    return systeme.replace(" ", "_")
+
+
+def index_libretro_github(systeme):
+    """Liste des boxarts depuis le dépôt GitHub du système (deux requêtes : racine, puis Named_Boxarts)."""
+    try:
+        with requete(f"{LIBRETRO_GH_API}/{_depot(systeme)}/git/trees/master") as r:
+            racine = json.load(r)
+        sha = next(t["sha"] for t in racine.get("tree", []) if t["path"] == "Named_Boxarts")
+        time.sleep(PAUSE_S)
+        with requete(f"{LIBRETRO_GH_API}/{_depot(systeme)}/git/trees/{sha}") as r:
+            arbre = json.load(r)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError, StopIteration) as e:
+        log(f"  libretro (GitHub) {systeme} : liste indisponible ({e})")
+        return []
+    return [t["path"] for t in arbre.get("tree", []) if t["path"].lower().endswith(".png")]
+
+
+def urls_libretro(systeme, dossier, fichier):
+    """Adresses d'une image libretro : le site, puis le dépôt GitHub."""
+    return [f"{LIBRETRO}/{urllib.parse.quote(systeme)}/{dossier}/{urllib.parse.quote(fichier)}",
+            f"{LIBRETRO_GH_RAW}/{_depot(systeme)}/master/{dossier}/{urllib.parse.quote(fichier)}"]
+
+
+def telecharger_premier(urls, dest):
+    return any(telecharger(u, dest) for u in urls)
+
+
 def index_libretro(systeme, cache):
-    """Liste des boxarts d'un système, mise en cache (une requête par système)."""
+    """Liste des boxarts d'un système, mise en cache (une requête par système ; GitHub si le site tombe)."""
     dest = os.path.join(cache, "libretro", systeme.replace(" ", "_") + ".json")
     if os.path.exists(dest):
         with open(dest) as f:
             return json.load(f)
     url = f"{LIBRETRO}/{urllib.parse.quote(systeme)}/Named_Boxarts/"
+    noms = []
     try:
         with requete(url) as r:
             texte = r.read().decode("utf-8", "replace")
+        p = _Liens()
+        p.feed(texte)
+        noms = sorted(set(p.noms))
     except (urllib.error.URLError, TimeoutError, OSError) as e:
-        log(f"  libretro {systeme} : liste indisponible ({e})")
+        log(f"  libretro {systeme} : liste du site indisponible ({e}), essai sur GitHub")
+    if not noms:
+        noms = sorted(set(index_libretro_github(systeme)))
+    if not noms:
         return []
-    p = _Liens()
-    p.feed(texte)
-    noms = sorted(set(p.noms))
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w") as f:
         json.dump(noms, f)
@@ -379,8 +423,7 @@ def analyser(jeux, cache, avec_images):
                 if fichier:
                     if avec_images:
                         dest = os.path.join(cache, c, hashlib.sha1(fichier.encode()).hexdigest()[:16] + ".png")
-                        url = f"{LIBRETRO}/{urllib.parse.quote(SYSTEMES[c])}/Named_Boxarts/{urllib.parse.quote(fichier)}"
-                        if telecharger(url, dest):
+                        if telecharger_premier(urls_libretro(SYSTEMES[c], "Named_Boxarts", fichier), dest):
                             ligne.update(image=dest, source_image=f"libretro {methode} : {fichier}")
                         else:
                             ligne["note"] = "boxart : téléchargement échoué"
@@ -388,16 +431,53 @@ def analyser(jeux, cache, avec_images):
                         # sinon écran-titre (Named_Titles).
                         for dossier in ("Named_Snaps", "Named_Titles"):
                             fond = os.path.join(cache, c, hashlib.sha1((dossier + fichier).encode()).hexdigest()[:16] + ".png")
-                            url_f = f"{LIBRETRO}/{urllib.parse.quote(SYSTEMES[c])}/{dossier}/{urllib.parse.quote(fichier)}"
-                            if telecharger(url_f, fond):
+                            if telecharger_premier(urls_libretro(SYSTEMES[c], dossier, fichier), fond):
                                 ligne.update(fond=fond, source_fond=f"libretro {methode} {dossier}")
                                 break
                     else:
                         ligne.update(source_image=f"libretro {methode} : {fichier} (non téléchargée)")
                 else:
                     ligne["note"] = "aucune boxart libretro"
+        # Repli pour tout jeu resté sans image (Wii U, GameCube, futurs jeux) : grille SteamGridDB.
+        if avec_images and not ligne["image"] and not ligne["source_image"]:
+            grille = grille_steamgriddb(ligne["nom"], cache)
+            if grille:
+                ligne.update(image=grille[0], source_image=grille[1], note="")
         lignes.append(ligne)
     return lignes
+
+
+def grille_steamgriddb(titre, cache):
+    """(chemin local, source) de la grille 600×900 la mieux notée du jeu, ou None. Titre trouvé différent
+    du titre cherché = « approchant » (envoyé seulement avec --approchants, après relecture)."""
+    try:
+        with open(CLE_SGDB) as f:
+            entetes = {"Authorization": "Bearer " + f.read().strip()}
+    except OSError:
+        return None
+    titre_en = titre.replace(" : ", ": ")
+    try:
+        with requete(f"{SGDB}/search/autocomplete/{urllib.parse.quote(titre_en)}", entetes=entetes) as r:
+            jeux = json.load(r).get("data") or []
+        time.sleep(PAUSE_S)
+        if not jeux:
+            return None
+        jeu = jeux[0]
+        with requete(f"{SGDB}/grids/game/{jeu['id']}?dimensions=600x900&types=static&nsfw=false&humor=false", entetes=entetes) as r:
+            grilles = [g for g in json.load(r).get("data") or [] if g.get("mime") in ("image/png", "image/jpeg", "image/webp")]
+        time.sleep(PAUSE_S)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        log(f"  SteamGridDB {titre} : {e}")
+        return None
+    if not grilles:
+        return None
+    g = sorted(grilles, key=lambda x: (-(x.get("score") or 0), -(x.get("upvotes") or 0)))[0]
+    ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[g["mime"]]
+    dest = os.path.join(cache, "steamgriddb", f"grille-{g['id']}{ext}")
+    if not telecharger(g["url"], dest):
+        return None
+    methode = "exact" if norm(jeu["name"]) == norm(titre_en) else "approchant"
+    return dest, f"SteamGridDB {methode} : grille {g['id']} ({jeu['name']})"
 
 
 def appliquer_manuel(lignes, dossier):

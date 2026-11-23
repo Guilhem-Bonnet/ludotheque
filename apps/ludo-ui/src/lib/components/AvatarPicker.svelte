@@ -4,29 +4,35 @@
   import { cubicOut } from 'svelte/easing';
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
-  import { AVATARS, LICENCES, PORTRAITS, PORTRAIT_PREFIX, withAvatar } from '../avatars';
+  import { AVATARS, currentKind, FAMILLES, GALLERY, GALLERY_PREFIX, withAvatar } from '../avatars';
   import { focusFirst } from '../nav';
   import { reducedMotion } from '../motion';
   import type { AvatarKind, Profile } from '../types';
 
-  // Choix de l'image de profil : personnages des jeux de la collection, rangés par famille, puis les
-  // personnages dessinés de la Ludothèque. Manette, clavier, souris et toucher : chaque disque est un bouton
-  // `.focusable` (navigation spatiale de nav.ts) ; B ou Échap ferment (événement `ludo:modal-back`).
+  // Choix de l'image de profil : galerie d'icônes de profil et de sprites animés, rangée par famille (licence),
+  // puis les personnages dessinés de la Ludothèque. Les images animées ne jouent qu'au focus (Avatar.svelte).
+  // Manette, clavier, souris et toucher : chaque disque est un bouton `.focusable` (navigation spatiale de
+  // nav.ts) ; B ou Échap ferment (événement `ludo:modal-back`).
   let { profile, onpick, onclose }: { profile: Profile; onpick: (kind: AvatarKind) => void; onclose: () => void } = $props();
 
   type Choice = { kind: AvatarKind; label: string; preview: Profile };
-  const groups: { name: string; items: Choice[] }[] = [
-    ...LICENCES.map((name) => ({
+  // Aperçu de chaque image avec ses propres couleurs (accent automatique), quel que soit l'accent du profil.
+  const auto = $derived({ ...profile, accentAuto: true });
+  const current = $derived(currentKind(profile.avatarKind));
+  const groups: { name: string; items: Choice[] }[] = $derived([
+    ...FAMILLES.map((name) => ({
       name,
-      items: PORTRAITS.filter((p) => p.licence === name).map((p) => {
-        const kind = `${PORTRAIT_PREFIX}${p.slug}` as AvatarKind;
-        return { kind, label: p.label, preview: withAvatar(profile, kind) };
+      items: GALLERY.filter((g) => g.famille === name).map((g) => {
+        const kind = `${GALLERY_PREFIX}${g.slug}` as AvatarKind;
+        return { kind, label: g.label, preview: withAvatar(auto, kind) };
       }),
     })),
-    { name: 'Personnages de la Ludothèque', items: AVATARS.map((a) => ({ kind: a.kind, label: a.label, preview: withAvatar(profile, a.kind) })) },
-  ].filter((g) => g.items.length > 0);
+    { name: 'Personnages de la Ludothèque', items: AVATARS.map((a) => ({ kind: a.kind, label: a.label, preview: withAvatar(auto, a.kind) })) },
+  ].filter((g) => g.items.length > 0));
 
-  let label = $state(groups.flatMap((g) => g.items).find((c) => c.kind === profile.avatarKind)?.label ?? '');
+  // Nom de l'image sous le focus (l'image actuelle à l'ouverture).
+  let focusLabel = $state<string | null>(null);
+  const label = $derived(focusLabel ?? groups.flatMap((g) => g.items).find((c) => c.kind === current)?.label ?? '');
 
   let list: HTMLDivElement | undefined = $state();
   onMount(() => {
@@ -60,18 +66,18 @@
           {#each g.items as c (c.kind)}
             <button
               class="choice focusable"
-              class:chosen={c.kind === profile.avatarKind}
+              class:chosen={c.kind === current}
               style:--c={c.preview.accent}
               aria-label={c.label}
-              aria-pressed={c.kind === profile.avatarKind}
-              data-autofocus={c.kind === profile.avatarKind ? '' : undefined}
+              aria-pressed={c.kind === current}
+              data-autofocus={c.kind === current ? '' : undefined}
               data-hover-focus
               data-sound="none"
-              onfocus={() => (label = c.label)}
+              onfocus={() => (focusLabel = c.label)}
               onclick={() => onpick(c.kind)}
             >
               <Avatar profile={c.preview} size={72} />
-              {#if c.kind === profile.avatarKind}<span class="tick"><Icon name="check" size={14} color="#0b0f14" /></span>{/if}
+              {#if c.kind === current}<span class="tick"><Icon name="check" size={14} color="#0b0f14" /></span>{/if}
             </button>
           {/each}
         </div>
@@ -95,7 +101,8 @@
   .current { font-size: 16px; color: var(--ink-2); }
   .close { all: unset; cursor: pointer; margin-left: auto; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.08); }
   .close.focusable:focus { box-shadow: inset 0 0 0 2px var(--accent); background: rgba(255, 255, 255, 0.14); }
-  .groups { flex: 1; overflow-y: auto; padding: 4px 28px 28px; display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); align-content: start; gap: 18px 40px; scrollbar-width: none; }
+  /* scroll-padding : le disque sous le focus (agrandi, avec son anneau) reste entier quand la liste défile. */
+  .groups { flex: 1; overflow-y: auto; padding: 4px 28px 28px; display: flex; flex-direction: column; gap: 18px; scrollbar-width: none; scroll-padding-block: 24px; }
   section { display: flex; flex-direction: column; gap: 10px; }
   h3 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3); }
   .grid { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 4px; }

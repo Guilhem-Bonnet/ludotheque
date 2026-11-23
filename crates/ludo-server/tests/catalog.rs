@@ -518,6 +518,58 @@ async fn image_refus_magic_taille_jeu_inconnu() {
     assert!(catalog(&a).await.iter().all(|g| g.cover.is_none()));
 }
 
+// --- Galerie des images de profil ---
+
+fn gif() -> Vec<u8> {
+    let mut v = b"GIF89a".to_vec();
+    v.extend_from_slice(&[3; 40]);
+    v
+}
+
+fn put_req(uri: &str, body: Vec<u8>) -> Request<Body> {
+    Request::put(uri).body(Body::from(body)).unwrap()
+}
+
+/// Une image de la galerie ne dépend d'aucun jeu : GIF animé accepté, version fixe à part, cache et ETag
+/// comme les jaquettes ; un GIF reste refusé comme jaquette.
+#[tokio::test]
+async fn galerie_avatars_gif_et_fixe() {
+    let a = app();
+    let (s, _, _) = call(&a, Request::get("/api/v1/avatars/pokemon-pikachu").body(Body::empty()).unwrap()).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _, _) = call(&a, put_req("/api/v1/avatars/pokemon-pikachu", gif())).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, _, _) = call(&a, put_req("/api/v1/avatars/pokemon-pikachu/fixe", png())).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, h, b) = call(&a, Request::get("/api/v1/avatars/pokemon-pikachu").body(Body::empty()).unwrap()).await;
+    assert_eq!((s, h[header::CONTENT_TYPE].to_str().unwrap(), b), (StatusCode::OK, "image/gif", gif()));
+    assert!(h.contains_key(header::ETAG));
+    let (s, h, b) = call(&a, Request::get("/api/v1/avatars/pokemon-pikachu/fixe").body(Body::empty()).unwrap()).await;
+    assert_eq!((s, h[header::CONTENT_TYPE].to_str().unwrap(), b), (StatusCode::OK, "image/png", png()));
+    // Remplacement par un PNG : le GIF disparaît.
+    call(&a, put_req("/api/v1/avatars/pokemon-pikachu", png())).await;
+    let (_, h, _) = call(&a, Request::get("/api/v1/avatars/pokemon-pikachu").body(Body::empty()).unwrap()).await;
+    assert_eq!(h[header::CONTENT_TYPE], "image/png");
+    // Contenu ou nom malsain refusés ; GIF refusé comme jaquette de jeu.
+    let (s, _, _) = call(&a, put_req("/api/v1/avatars/x", b"<svg onload=alert(1)>".to_vec())).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _, _) = call(&a, put_req("/api/v1/avatars/.cache", png())).await;
+    assert!(s == StatusCode::BAD_REQUEST || s == StatusCode::NOT_FOUND, "{s}");
+    for nom in ["Majuscule", "point.png", "souligne_x", &"x".repeat(41)] {
+        let (s, _, _) = call(&a, put_req(&format!("/api/v1/avatars/{nom}"), png())).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{nom}");
+    }
+    // Version fixe : jamais animée.
+    let (s, _, _) = call(&a, put_req("/api/v1/avatars/pokemon-pikachu/fixe", gif())).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    // URL fixe : revalidée par l'ETag (pas de cache long).
+    let (_, h, _) = call(&a, Request::get("/api/v1/avatars/pokemon-pikachu").body(Body::empty()).unwrap()).await;
+    assert_eq!(h[header::CACHE_CONTROL], "no-cache");
+    a.store.rescan().unwrap();
+    let (s, _, _) = call(&a, put_cover("switch-lm3", "image/gif", gif())).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+}
+
 #[tokio::test]
 async fn image_survit_au_rebalayage() {
     let a = app();

@@ -6,14 +6,14 @@
   import ButtonHints from '../lib/components/ButtonHints.svelte';
   import Icon from '../lib/components/Icon.svelte';
   import { api } from '../lib/api';
-  import { AVATARS, portraitOf, withAvatar } from '../lib/avatars';
+  import { ACCENTS, avatarLabel, currentKind, withAccent, withAvatar } from '../lib/avatars';
   import { feedback, setRumble } from '../lib/feedback';
   import { focusFirst } from '../lib/nav';
   import { router } from '../lib/router.svelte';
   import { setMuted } from '../lib/sound';
   import type { AvatarKind, DeviceInfo, Profile } from '../lib/types';
 
-  // Profil de la personne : image (et donc couleur de l'interface), nom, préférences.
+  // Profil de la personne : image, couleur d'accent (d'après l'image ou choisie), nom, préférences.
   // Chaque changement est enregistré tout de suite (pas de bouton « Enregistrer »), comme sur la Switch.
   let { device }: { device: DeviceInfo } = $props();
 
@@ -50,7 +50,7 @@
     requestAnimationFrame(() => document.querySelector<HTMLElement>('.change-image')?.focus());
   }
   function pick(kind: AvatarKind) {
-    if (kind !== p.avatarKind) {
+    if (kind !== currentKind(p.avatarKind)) {
       void save(withAvatar(p, kind), 'avatar');
       feedback('arrive');
     } else {
@@ -58,7 +58,20 @@
     }
     closePicker();
   }
-  const imageLabel = $derived(portraitOf(p.avatarKind)?.label ?? AVATARS.find((a) => a.kind === p.avatarKind)?.label ?? 'Initiale');
+  const imageLabel = $derived(avatarLabel(p.avatarKind));
+
+  // Accent : « Automatique » (couleur tirée de l'image) ou une des 12 teintes ; enregistré tout de suite.
+  const autoAccent = $derived(p.accentAuto !== false);
+  const accentLabel = $derived(autoAccent ? 'Automatique' : (ACCENTS.find((a) => a.accent === p.accent)?.name ?? 'Personnalisé'));
+  function pickAccent(accent: string | null) {
+    const same = accent === null ? autoAccent : !autoAccent && p.accent === accent;
+    if (same) {
+      feedback('ok');
+      return;
+    }
+    void save(withAccent(p, accent), 'accent');
+    feedback('tab');
+  }
 
   function switchPlayer() {
     router.go({ name: 'qui-joue' });
@@ -111,7 +124,7 @@
   <main>
     <aside>
       {#key p.avatarKind}
-        <div class="big pop"><Avatar profile={p} size={200} ring /></div>
+        <div class="big pop"><Avatar profile={p} size={200} ring live={!picking} /></div>
       {/key}
       <h1>{p.name}</h1>
       <span class="device">{device.name}</span>
@@ -124,6 +137,21 @@
         <button class="field change-image focusable" data-autofocus data-sound="none" aria-label="Changer d'image (actuelle : {imageLabel})" onclick={openPicker}>
           <Avatar profile={p} size={40} /><span>{imageLabel}</span><span class="edit"><Icon name="pencil" size={18} />Changer d'image</span>
         </button>
+      </div>
+
+      <div class="group">
+        <h2>Couleur d'accent <span class="sub">{accentLabel}</span> {#if saved === 'accent'}<span class="ok"><Icon name="check" size={16} color="var(--ok)" />Enregistré</span>{:else if failed === 'accent'}<span class="ko">Non enregistré</span>{/if}</h2>
+        <div class="swatches" role="radiogroup" aria-label="Couleur d'accent">
+          <button class="swatch auto focusable" role="radio" aria-checked={autoAccent} aria-label="Automatique, d'après l'image" data-sound="none" onclick={() => pickAccent(null)}>
+            <span class="mini"><Avatar profile={withAccent(p, null)} size={30} /></span>
+            <span class="auto-label">Auto</span>
+          </button>
+          {#each ACCENTS as a (a.accent)}
+            <button class="swatch focusable" role="radio" aria-checked={!autoAccent && p.accent === a.accent} aria-label={a.name} data-sound="none" style:--c={a.accent} onclick={() => pickAccent(a.accent)}>
+              {#if !autoAccent && p.accent === a.accent}<Icon name="check" size={16} color="#0b0f14" />{/if}
+            </button>
+          {/each}
+        </div>
       </div>
 
       <div class="group">
@@ -169,6 +197,20 @@
   .ok { display: inline-flex; align-items: center; gap: 4px; text-transform: none; letter-spacing: 0; color: var(--ok); font-weight: 500; animation: fadein 200ms ease-out; }
   @keyframes fadein { from { opacity: 0; } }
   .ko { text-transform: none; letter-spacing: 0; color: #ff9b9b; font-weight: 500; }
+  .sub { text-transform: none; letter-spacing: 0; font-weight: 500; color: rgba(255, 255, 255, 0.55); }
+
+  /* Pastilles d'accent : aplats, anneau de focus net (manette), coche sur la teinte choisie. */
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; padding: 4px 2px; }
+  .swatch {
+    all: unset; cursor: pointer; box-sizing: border-box; width: 44px; height: 44px; border-radius: 50%; background: var(--c);
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: transform var(--t-quick) var(--ease-pop), box-shadow var(--t-quick) ease-out;
+  }
+  .swatch.auto { width: auto; padding: 0 12px 0 7px; gap: 6px; border-radius: 22px; background: rgba(255, 255, 255, 0.1); font-size: 14px; color: var(--ink); }
+  .swatch .mini { display: inline-flex; line-height: 0; }
+  .swatch[aria-checked='true'] { box-shadow: 0 0 0 3px var(--ground, #0b0f14), 0 0 0 5px rgba(255, 255, 255, 0.85); }
+  .swatch.focusable:focus { transform: scale(1.12); box-shadow: 0 0 0 3px var(--ground, #0b0f14), 0 0 0 6px var(--accent); }
+  .swatch.auto.focusable:focus { transform: scale(1.05); background: rgba(255, 255, 255, 0.16); }
 
   .switch-player {
     all: unset; cursor: pointer; margin-top: 18px; display: inline-flex; align-items: center; gap: 10px; min-height: 44px;
@@ -199,5 +241,5 @@
     .pop { animation: pop 420ms var(--ease-pop); }
     @keyframes pop { from { transform: scale(0.82); opacity: 0.4; } to { transform: none; opacity: 1; } }
   }
-  @media (prefers-reduced-motion: reduce) { .switch-player.focusable:focus, .field.focusable:focus, .row.focusable:focus { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .switch-player.focusable:focus, .field.focusable:focus, .row.focusable:focus, .swatch.focusable:focus { transform: none; } }
 </style>

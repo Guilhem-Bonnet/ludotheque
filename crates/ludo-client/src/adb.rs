@@ -71,6 +71,22 @@ impl Adb {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
+    /// Accès « tous les fichiers » accordé aux apps Ludothèque installées (release et essai) : elles
+    /// lancent les jeux par le chemin de l'inventaire, sans jamais demander l'accès à un dossier. Rend les
+    /// paquets traités. Sans effet sur une version qui ne déclare pas la permission (avant 0.8.1).
+    pub fn grant_ludo_files(&self) -> Result<Vec<String>, AdbError> {
+        Ok(self.shell(&grant_script())?.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+    }
+
+    /// Retour à la Ludothèque en un appui après une partie (lot menu-jeu2) : service d'accessibilité
+    /// `RetourService` AJOUTÉ à ceux déjà actifs (celui d'AYN reste), `SYSTEM_ALERT_WINDOW` accordé, HOME
+    /// en un appui (`prevent_press_home_accidentally` = 0, valeur d'origine notée une fois dans
+    /// `Android/data/<paquet>/files/reglages-origine.txt`). Idempotent. Rend les lignes du script
+    /// (valeur relue des services actifs).
+    pub fn activer_retour(&self) -> Result<Vec<String>, AdbError> {
+        Ok(self.shell(&retour_script("/sdcard/Android/data"))?.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+    }
+
     /// Le paquet a-t-il un processus en cours ?
     pub fn running(&self, package: &str) -> bool {
         self.shell(&format!("pidof {} >/dev/null && echo oui || echo non", sq(package))).is_ok_and(|s| s.trim() == "oui")
@@ -248,9 +264,130 @@ pub fn prepare_mirrored_rom(cfg: &Config, conf: &GameConf, profile: &str, mirror
     Ok((prepared, pairs))
 }
 
+/// Paquets de l'app Ludothèque sur un appareil Android (release, puis version d'essai).
+pub const LUDO_PACKAGES: &[&str] = &["fr.srvdreamer.ludotheque", "fr.srvdreamer.ludotheque.debug"];
+
+/// Script shell : `appops set … MANAGE_EXTERNAL_STORAGE allow` pour chaque app Ludothèque installée.
+pub fn grant_script() -> String {
+    LUDO_PACKAGES
+        .iter()
+        // `if` : un paquet absent (cas normal du `.debug`) ne rend pas le script en échec.
+        .map(|p| format!("if pm path {p} >/dev/null 2>&1; then appops set {p} MANAGE_EXTERNAL_STORAGE allow && echo {p}; fi"))
+        .collect::<Vec<_>>()
+        .join("; ")
+        + "; true"
+}
+
+/// Classe du service de retour après une partie (`RetourService.kt`), commune aux deux paquets.
+pub const RETOUR_SERVICE: &str = "fr.srvdreamer.ludotheque.RetourService";
+
+/// Script shell de l'appareil pour [`Adb::activer_retour`] : première app Ludothèque installée (release,
+/// sinon essai). La liste `enabled_accessibility_services` est lue, complétée (séparateur `:`) et réécrite
+/// en entier, puis relue : un service déjà présent (AYN) n'est jamais retiré ni remplacé. `data` : dossier
+/// `Android/data` (paramètre pour les tests).
+pub fn retour_script(data: &str) -> String {
+    let pkgs = LUDO_PACKAGES.join(" ");
+    format!(
+        r#"for p in {pkgs}; do pm path "$p" >/dev/null 2>&1 || continue
+c="$p/{RETOUR_SERVICE}"
+d="{data}/$p/files"
+mkdir -p "$d"
+v="$(settings get secure enabled_accessibility_services)" || {{ echo "services illisibles : rien écrit"; exit 1; }}
+case "$v" in *" "*|*rror*|*xception*) echo "services illisibles ($v) : rien écrit"; exit 1 ;; esac
+case ":$v:" in
+  *":$c:"*) ;;
+  *) [ -f "$d/services-origine.txt" ] || echo "$v" > "$d/services-origine.txt"
+     if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${{v}}:${{c}}"; fi
+     settings put secure enabled_accessibility_services "$n"
+     r="$(settings get secure enabled_accessibility_services)"
+     if [ "$r" != "$n" ]; then
+       [ -z "$v" ] || [ "$v" = null ] || settings put secure enabled_accessibility_services "$v"
+       echo "relecture inattendue ($r) : liste d'origine remise"; exit 1
+     fi ;;
+esac
+settings put secure accessibility_enabled 1
+appops set "$p" SYSTEM_ALERT_WINDOW allow
+[ -f "$d/reglages-origine.txt" ] || echo "prevent_press_home_accidentally=$(settings get system prevent_press_home_accidentally)" > "$d/reglages-origine.txt"
+settings put system prevent_press_home_accidentally 0
+echo "services : $(settings get secure enabled_accessibility_services)"
+break
+done"#
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exécute `retour_script` avec un `sh` local et des commandes Android simulées (réglages en fichiers).
+    fn retour_simule(services: &str, installes: &[&str]) -> (String, String, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("secure.enabled_accessibility_services"), services).unwrap();
+        std::fs::write(d.join("system.prevent_press_home_accidentally"), "1").unwrap();
+        let mocks = format!(
+            r#"R={r}
+settings() {{ if [ "$1" = get ]; then cat "$R/$2.$3" 2>/dev/null || echo null; else printf %s "$4" > "$R/$2.$3"; fi; }}
+pm() {{ case " {inst} " in *" $2 "*) return 0 ;; *) return 1 ;; esac; }}
+appops() {{ echo "$2 $3 $4" >> "$R/appops"; }}
+"#,
+            r = d.display(),
+            inst = installes.join(" ")
+        );
+        let script = format!("{mocks}{}", retour_script(&d.join("data").display().to_string()));
+        let out = Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let lire = |n: &str| std::fs::read_to_string(d.join(n)).unwrap_or_default();
+        let origine = std::fs::read_to_string(d.join("data/fr.srvdreamer.ludotheque/files/reglages-origine.txt")).unwrap_or_default();
+        (lire("secure.enabled_accessibility_services"), lire("system.prevent_press_home_accidentally"), lire("appops"), origine)
+    }
+
+    #[test]
+    fn retour_ajoute_le_service_sans_retirer_celui_d_ayn() {
+        let ayn = "com.odin.gameassistant/com.ro.gameassistant.service.ForegroundAppMonitorV4Service";
+        let (s, home, appops, origine) = retour_simule(ayn, &["fr.srvdreamer.ludotheque", "fr.srvdreamer.ludotheque.debug"]);
+        assert_eq!(s, format!("{ayn}:fr.srvdreamer.ludotheque/fr.srvdreamer.ludotheque.RetourService"));
+        assert_eq!(home, "0");
+        assert_eq!(appops.trim(), "fr.srvdreamer.ludotheque SYSTEM_ALERT_WINDOW allow");
+        assert_eq!(origine.trim(), "prevent_press_home_accidentally=1");
+    }
+
+    #[test]
+    fn retour_idempotent_et_liste_vide() {
+        let c = "fr.srvdreamer.ludotheque/fr.srvdreamer.ludotheque.RetourService";
+        let deja = format!("a/b.C:{c}");
+        assert_eq!(retour_simule(&deja, &["fr.srvdreamer.ludotheque"]).0, deja);
+        assert_eq!(retour_simule("null", &["fr.srvdreamer.ludotheque"]).0, c);
+        // Seule l'app d'essai installée : son propre composant.
+        assert_eq!(retour_simule("", &["fr.srvdreamer.ludotheque.debug"]).0, "fr.srvdreamer.ludotheque.debug/fr.srvdreamer.ludotheque.RetourService");
+        // Aucune app Ludothèque : rien ne change.
+        assert_eq!(retour_simule("x/y.Z", &[]).0, "x/y.Z");
+    }
+
+    #[test]
+    fn retour_n_ecrit_rien_si_la_lecture_est_illisible() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let script = format!(
+            "settings() {{ if [ \"$1\" = get ]; then echo 'Error: service settings not found'; else echo ECRIT >> {r}/ecrit; fi; }}\npm() {{ return 0; }}\nappops() {{ :; }}\n{s}",
+            r = d.display(),
+            s = retour_script(&d.join("data").display().to_string())
+        );
+        let out = Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(!out.status.success());
+        assert!(!d.join("ecrit").exists(), "aucune écriture attendue");
+    }
+
+    #[test]
+    fn acces_fichiers_des_apps_ludotheque() {
+        let s = grant_script();
+        assert_eq!(s.matches("appops set").count(), 2);
+        assert!(s.contains("if pm path fr.srvdreamer.ludotheque >/dev/null 2>&1; then appops set fr.srvdreamer.ludotheque MANAGE_EXTERNAL_STORAGE allow"));
+        assert!(s.contains("fr.srvdreamer.ludotheque.debug MANAGE_EXTERNAL_STORAGE allow"));
+        // Paquet absent : jamais de code de sortie en échec (sinon « non accordé » affiché à tort).
+        let out = std::process::Command::new("sh").arg("-c").arg(s.replace("pm path", "false")).output().unwrap();
+        assert!(out.status.success() && out.stdout.is_empty());
+    }
 
     /// Sortie de `rom_title_ids` : un bloc `od` par fichier, fichier illisible = bloc vide, `\r\n` toléré.
     #[test]

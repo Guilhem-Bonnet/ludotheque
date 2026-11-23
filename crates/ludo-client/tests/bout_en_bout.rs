@@ -311,6 +311,7 @@ fn profils_par_le_client() {
         accent_soft: "#12352c".into(),
         accent_ink: "#8ff0c8".into(),
         prefs: ProfilePrefs { sons: false, vibrations: true },
+        accent_auto: false,
     };
     let saved = client.put_profile(&p).unwrap();
     assert_eq!(saved.name, "Claire");

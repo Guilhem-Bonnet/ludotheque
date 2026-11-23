@@ -137,6 +137,14 @@ pub struct Profile {
     pub accent_ink: String,
     #[serde(default)]
     pub prefs: ProfilePrefs,
+    /// Couleur d'accent tirée de l'image (vrai, défaut) ou choisie à la main (faux) : un accent choisi
+    /// reste en place quand l'image change.
+    #[serde(default = "accent_auto_default")]
+    pub accent_auto: bool,
+}
+
+fn accent_auto_default() -> bool {
+    true
 }
 
 /// Consoles gérées : sous-dossiers du dossier des ROM du serveur, valeurs de `Console` dans l'interface.

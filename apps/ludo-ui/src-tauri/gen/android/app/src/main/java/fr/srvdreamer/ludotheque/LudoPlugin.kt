@@ -2,13 +2,16 @@ package fr.srvdreamer.ludotheque
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
-import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.DocumentsContract
-import androidx.activity.result.ActivityResult
-import app.tauri.annotation.ActivityCallback
+import android.view.InputDevice
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -22,9 +25,16 @@ import app.tauri.plugin.Plugin
 class StartArgs {
   lateinit var packageName: String
   lateinit var activity: String
+  /** Nom affiché dans les erreurs (« Azahar absent de l'appareil »). */
+  var nom: String? = null
   var action: String? = null
-  /** URI content de la ROM (donnée de l'intent, lecture accordée à l'app lancée). */
+  /** URI content de la ROM (donnée de l'intent). */
   var data: String? = null
+  /** Lecture de `data` transmise à l'app lancée ; faux si l'URI est dans un arbre qu'elle détient déjà. */
+  var grant: Boolean = true
+  /** Fichier (chemin absolu) transmis par le FileProvider de l'app : son URI devient `data` et les extras `fileExtras`. */
+  var file: String? = null
+  var fileExtras: List<String> = emptyList()
   var extras: Map<String, String> = emptyMap()
   var boolExtras: Map<String, Boolean> = emptyMap()
   /** Arbre des ROM à accorder à l'app lancée (lecture, préfixe) : jeux en dossier (Cemu, Wii U). */
@@ -43,6 +53,13 @@ class RpxArgs {
   lateinit var uri: String
 }
 
+/** Forme d'onde de vibration (rumble.rs `vibration_pattern`) : durées en ms, amplitudes 0..255. */
+@InvokeArg
+class VibrerArgs {
+  var timings: List<Long> = emptyList()
+  var amplitudes: List<Int> = emptyList()
+}
+
 /** Sous-dossiers de l'arbre des ROM à lister (« switch », « n3ds »…). */
 @InvokeArg
 class ListArgs {
@@ -50,8 +67,8 @@ class ListArgs {
 }
 
 /**
- * Pont Android de la Ludothèque : intents explicites, arbre SAF des ROM (choisi une fois, mémorisé
- * par takePersistableUriPermission), URI content des fichiers de ROM.
+ * Pont Android de la Ludothèque : intents explicites, accès aux ROM SANS jamais rien demander (accès
+ * « tous les fichiers » accordé par le PC, arbre SAF accordé autrefois en repli), vibration, état des écrans.
  */
 @TauriPlugin
 class LudoPlugin(private val activity: Activity) : Plugin(activity) {
@@ -66,7 +83,10 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
     super.load(webView)
     mainWebView = webView
     // Crée Android/data/<paquet>/files : le PC y dépose config.toml par adb.
-    activity.getExternalFilesDir(null)
+    val files = activity.getExternalFilesDir(null)
+    // Diagnostic sans recompiler : fichier drapeau `debug-webview` déposé par adb → inspection des
+    // WebView (chrome://inspect, `adb forward … localabstract:webview_devtools_remote_<pid>`).
+    if (files != null && java.io.File(files, "debug-webview").exists()) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
     webView.post { ecrans = DoubleEcran(activity, webView).also { it.install() } }
   }
 
@@ -79,6 +99,70 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
     val out = JSObject()
     out.put("actif", e?.active() == true)
     invoke.resolve(out)
+  }
+
+  /** Mode d'affichage courant (`mode`, taille de la vue en dp), lu par l'interface au démarrage. */
+  @Command
+  fun ecranEtat(invoke: Invoke) {
+    val etat = ecrans?.etat()
+    invoke.resolve(if (etat != null) JSObject(etat.toString()) else JSObject())
+  }
+
+  /** Accès aux ROM, sans rien demander : « tous les fichiers » accordé ? arbre SAF accordé autrefois ? */
+  @Command
+  fun accesFichiers(invoke: Invoke) {
+    val out = JSObject()
+    out.put("fichiers", Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager())
+    grantedTree()?.let { out.put("arbre", it.toString()) }
+    invoke.resolve(out)
+  }
+
+  /**
+   * Vibration du moteur de l'appareil (Thor : moteur intégré, réglé par « Vibrator strength » d'AYN) ;
+   * à défaut, celui d'une manette branchée. Appareil sans moteur : rien.
+   */
+  @Command
+  fun vibrer(invoke: Invoke) {
+    val args = invoke.parseArgs(VibrerArgs::class.java)
+    val v = vibreur()
+    if (v == null || args.timings.isEmpty() || args.timings.size != args.amplitudes.size) {
+      invoke.resolve()
+      return
+    }
+    val timings = args.timings.toLongArray()
+    try {
+      if (Build.VERSION.SDK_INT >= 26) {
+        val effect = if (v.hasAmplitudeControl()) {
+          VibrationEffect.createWaveform(timings, args.amplitudes.map { it.coerceIn(0, 255) }.toIntArray(), -1)
+        } else {
+          // Moteur tout-ou-rien : forme d'onde marche/arrêt, en commençant par une pause nulle si besoin.
+          val onOff = if (args.amplitudes.first() > 0) longArrayOf(0) + timings else timings
+          VibrationEffect.createWaveform(onOff, -1)
+        }
+        v.vibrate(effect)
+      } else {
+        @Suppress("DEPRECATION") v.vibrate(timings.sum())
+      }
+    } catch (e: Exception) {
+      // Vibration refusée (réglage système) : l'interface continue sans.
+    }
+    invoke.resolve()
+  }
+
+  private fun vibreur(): Vibrator? {
+    val own = if (Build.VERSION.SDK_INT >= 31) {
+      (activity.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
+    } else {
+      @Suppress("DEPRECATION") activity.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    }
+    if (own?.hasVibrator() == true) return own
+    for (id in InputDevice.getDeviceIds()) {
+      val d = InputDevice.getDevice(id) ?: continue
+      if (!d.supportsSource(InputDevice.SOURCE_GAMEPAD)) continue
+      @Suppress("DEPRECATION") val pad = d.vibrator
+      if (pad.hasVibrator()) return pad
+    }
+    return null
   }
 
   /** Version installée et version publiée (`android.json` des releases). */
@@ -165,17 +249,15 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun startActivity(invoke: Invoke) {
     val args = invoke.parseArgs(StartArgs::class.java)
-    val intent = Intent(args.action ?: Intent.ACTION_VIEW)
-    intent.setClassName(args.packageName, args.activity)
-    args.data?.let {
-      val uri = Uri.parse(it)
-      intent.data = uri
-      intent.clipData = ClipData.newRawUri("rom", uri)
-      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    val nom = args.nom ?: args.packageName
+    // Construction partagée avec la reprise du menu en jeu (EnCours.Lancement) : mêmes droits transmis.
+    val lancement = EnCours.Lancement(args.packageName, args.activity, args.action, args.data, args.extras, args.boolExtras, args.grant, args.file, args.fileExtras)
+    val intent = try {
+      lancement.intent(activity)
+    } catch (e: IllegalArgumentException) {
+      invoke.reject("Fichier hors du stockage partagé : ${args.file}")
+      return
     }
-    for ((k, v) in args.extras) intent.putExtra(k, v)
-    for ((k, v) in args.boolExtras) intent.putExtra(k, v)
-    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     try {
       // Comme Cocoon (« Granting tree URI permissions ») : l'émulateur lit les fichiers voisins de la ROM.
       args.grantTree?.let {
@@ -185,10 +267,10 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
       revokeTree(args)
-      invoke.reject("Application absente de l'appareil : ${args.packageName}")
+      invoke.reject("$nom absent de l'appareil : installer l'application, puis réessayer")
     } catch (e: SecurityException) {
       revokeTree(args)
-      invoke.reject("Lancement refusé par Android : ${e.message}")
+      invoke.reject("Lancement de $nom refusé par Android : ${e.message}")
     }
   }
 
@@ -246,29 +328,5 @@ class LudoPlugin(private val activity: Activity) : Plugin(activity) {
       }
     }
     return out
-  }
-
-  /** Demande l'accès au dossier des ROM (Documents/Roms proposé d'emblée), puis le mémorise. */
-  @Command
-  fun pickRomsTree(invoke: Invoke) {
-    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-    val initial = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents/Roms")
-    intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, initial)
-    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-    startActivityForResult(invoke, intent, "pickRomsTreeResult")
-  }
-
-  @ActivityCallback
-  fun pickRomsTreeResult(invoke: Invoke, result: ActivityResult) {
-    val uri = result.data?.data
-    if (result.resultCode != Activity.RESULT_OK || uri == null) {
-      invoke.reject("Accès au dossier des jeux refusé")
-      return
-    }
-    activity.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    prefs.edit().putString("roms_tree", uri.toString()).apply()
-    val out = JSObject()
-    out.put("uri", uri.toString())
-    invoke.resolve(out)
   }
 }
