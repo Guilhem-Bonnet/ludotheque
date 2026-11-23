@@ -927,6 +927,13 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
             WatchEv::FermerFlux(ligne) => {
                 // Jeu en flux fermé depuis l'appareil : l'appli Sunshine est terminée comme par « Quitter
                 // l'appli » ; `ludo run` laisse l'émulateur sauvegarder puis synchronise lui-même.
+                // Uid inconnu : app réinstallée depuis la connexion (nouvel uid) ? Relus une fois.
+                if ludo_client::flux::demande(&ligne, &ludo_uids).is_none() {
+                    if let Some(serial) = connected.clone() {
+                        let dev = ludo_client::adb::Adb { serial };
+                        ludo_uids = dev.shell(&ludo_client::flux::script_uids()).map(|s| ludo_client::flux::lire_uids(&s)).unwrap_or_default();
+                    }
+                }
                 match ludo_client::flux::demande(&ligne, &ludo_uids) {
                     Some(jeu) => {
                         println!("Fermer le jeu en flux ({jeu}) demandé par {}", ctx.cfg.appareil);

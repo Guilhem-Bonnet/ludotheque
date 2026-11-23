@@ -17,6 +17,8 @@
 # autre app) : ouvrir Shizuku une fois serveur démarré, puis Réglages › « Start on boot ». Shizuku se
 # relance alors seul après un redémarrage, en mode TCP (port 5555 persistant), sans le PC ; à la toute
 # première fois, Android demande d'autoriser le débogage pour la clé de Shizuku : « Toujours autoriser ».
+# Laisser le « Chien de garde » DÉSACTIVÉ : il relance le serveur que `ludo shizuku` remplace quand il
+# ajoute un accès, deux serveurs tournent et la liaison du service d'arrêt échoue (mesuré le 23/11).
 set -euo pipefail
 
 # Fork thedjchi (Apache-2.0) : « Start on boot » sans root, mode TCP, relance après plantage.

@@ -13,7 +13,9 @@
 //!   `BootCompleteReceiver`) n'est que CONSTATÉ : Android 13 refuse au shell de changer l'état d'un
 //!   composant d'une autre app (« Shell cannot change component state », mesuré le 23/11) ;
 //! - **serveur démarré** s'il ne tourne pas, ou redémarré si l'accès vient d'être ajouté (le serveur ne
-//!   relit pas son fichier en marche). Le démarreur de Shizuku remplace lui-même l'ancien serveur.
+//!   relit pas son fichier en marche). Le « chien de garde » de Shizuku doit rester DÉSACTIVÉ : il
+//!   relance le serveur arrêté ici en même temps que le démarreur, deux serveurs tournent et la liaison
+//!   du service d'arrêt échoue (mesuré sur la Thor le 23/11) ; le script le signale.
 //!
 //! Rien n'est supprimé : une sauvegarde `.bak` du fichier (qui primerait sur lui) est renommée en
 //! `.ludo-old-<horodatage>`.
@@ -149,9 +151,10 @@ echo "port adb persistant : $(getprop persist.adb.tcp.port)"
     let relancer = nouvelle.is_some() || !e.a_accorder.is_empty();
     let demarrer = match nouvelle {
         Some(cfg) => {
-            if let Some(pid) = e.pid {
-                // L'ancien serveur ne doit pas réécrire son fichier par-dessus le nouveau.
-                s += &format!("kill -9 {pid} 2>/dev/null\n");
+            if e.pid.is_some() {
+                // L'ancien serveur (tous, s'il y en avait plusieurs) ne doit pas réécrire son fichier
+                // par-dessus le nouveau.
+                s += &format!("kill -9 $(pidof {SERVEUR}) 2>/dev/null\n");
             }
             if e.bak {
                 s += &format!("mv {CONFIG}.bak {CONFIG}.bak.ludo-old-$(date +%Y%m%d-%H%M%S)\n");
@@ -168,6 +171,9 @@ echo "port adb persistant : $(getprop persist.adb.tcp.port)"
     } else {
         s += "echo \"serveur : déjà démarré, accès déjà accordé\"\n";
     }
+    // Deux serveurs : le « chien de garde » de Shizuku relance celui que le démarreur remplace, et la
+    // liaison du service d'arrêt échoue (mesuré sur la Thor le 23/11). Il doit rester désactivé.
+    s += &format!("[ \"$(pidof {SERVEUR} | wc -w)\" -le 1 ] || echo \"serveur : PLUSIEURS en marche ($(pidof {SERVEUR})) : désactiver le chien de garde dans Shizuku\"\n");
     Some(s)
 }
 
@@ -255,7 +261,7 @@ mod tests {
         assert!(g < d);
         // Accès ajouté, serveur en marche, sauvegarde .bak : arrêt, renommage (jamais supprimé), écriture, démarrage.
         let s = script_preparation(&Etat { bak: true, ..marche }, Some(r#"{"a":1}"#)).unwrap();
-        let (k, b, w, d) = (s.find("kill -9 77").unwrap(), s.find(".bak.ludo-old-").unwrap(), s.find("printf '%s' '{\"a\":1}'").unwrap(), s.find("libshizuku.so").unwrap());
+        let (k, b, w, d) = (s.find("kill -9 $(pidof shizuku_server)").unwrap(), s.find(".bak.ludo-old-").unwrap(), s.find("printf '%s' '{\"a\":1}'").unwrap(), s.find("libshizuku.so").unwrap());
         assert!(k < b && b < w && w < d);
         assert!(!s.contains("rm "));
     }
