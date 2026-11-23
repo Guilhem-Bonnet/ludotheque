@@ -29,6 +29,10 @@ pub const CONFIG: &str = "/data/user_de/0/com.android.shell/shizuku.json";
 pub const SERVEUR: &str = "shizuku_server";
 /// Composant activé par l'interrupteur « Start on boot » de Shizuku.
 pub const DEMARRAGE_AU_BOOT: &str = "moe.shizuku.manager.receiver.BootCompleteReceiver";
+/// Permission Android de Shizuku : une app qui la DEMANDE (provider de Shizuku-API) voit son accès
+/// recalculé d'après elle à chaque démarrage du serveur (`ShizukuConfigManager`, boucle sur les paquets
+/// qui la demandent : `FLAG_ALLOWED` posé ou effacé). Elle est donc accordée par adb (`pm grant`).
+pub const PERMISSION: &str = "moe.shizuku.manager.permission.API_V23";
 /// Port adb TCP rendu persistant (celui que le PC utilise déjà en Wi-Fi).
 pub const PORT_TCP: u16 = 5555;
 
@@ -48,6 +52,8 @@ pub struct Etat {
     pub config: String,
     /// Une sauvegarde `shizuku.json.bak` existe (elle primerait au prochain démarrage du serveur).
     pub bak: bool,
+    /// Apps Ludothèque qui demandent [`PERMISSION`] sans l'avoir (à accorder, puis serveur relancé).
+    pub a_accorder: Vec<String>,
 }
 
 /// Script de lecture : lignes `clé=valeur`, puis le fichier après le marqueur `--config--`.
@@ -56,7 +62,8 @@ pub fn script_etat() -> String {
     format!(
         r#"p="$(pm path {PAQUET} 2>/dev/null | head -n 1)"; echo "apk=${{p#package:}}"
 echo "pid=$(pidof {SERVEUR})"
-for a in {apps}; do cmd package list packages -U "$a" 2>/dev/null | grep -x "package:$a uid:[0-9]*"; done
+for a in {apps}; do cmd package list packages -U "$a" 2>/dev/null | grep -x "package:$a uid:[0-9]*"
+  g="$(dumpsys package "$a" 2>/dev/null | grep -m 1 "{PERMISSION}: granted=")"; case "$g" in *granted=false*) echo "accorder=$a" ;; esac; done
 [ -f {CONFIG}.bak ] && echo "bak=1"
 echo "--config--"
 cat {CONFIG} 2>/dev/null; true"#
@@ -72,6 +79,8 @@ pub fn lire_etat(sortie: &str) -> Etat {
             e.apk = Some(v.to_string()).filter(|v| v.ends_with(".apk"));
         } else if let Some(v) = l.strip_prefix("pid=") {
             e.pid = v.split_whitespace().next().and_then(|p| p.parse().ok());
+        } else if let Some(v) = l.strip_prefix("accorder=") {
+            e.a_accorder.push(v.to_string());
         } else if l == "bak=1" {
             e.bak = true;
         } else if let Some(v) = l.strip_prefix("package:") {
@@ -133,6 +142,11 @@ if dumpsys package {PAQUET} | sed -n '/^ *enabledComponents:/,/^ *disabledCompon
 echo "port adb persistant : $(getprop persist.adb.tcp.port)"
 "#
     );
+    for a in &e.a_accorder {
+        s += &format!("pm grant {a} {PERMISSION} && echo \"permission Shizuku accordée : {a}\"\n");
+    }
+    // Permission accordée après le démarrage : le serveur ne la relit qu'au démarrage suivant.
+    let relancer = nouvelle.is_some() || !e.a_accorder.is_empty();
     let demarrer = match nouvelle {
         Some(cfg) => {
             if let Some(pid) = e.pid {
@@ -145,7 +159,7 @@ echo "port adb persistant : $(getprop persist.adb.tcp.port)"
             s += &format!("printf '%s' {} > {CONFIG}.ludo-tmp && mv {CONFIG}.ludo-tmp {CONFIG} && echo \"accès accordé : {}\"\n", sq(cfg), e.apps.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join(", "));
             true
         }
-        None => e.pid.is_none(),
+        None => e.pid.is_none() || relancer,
     };
     if demarrer {
         // Le démarreur rend la main une fois le serveur lancé et donne son PID (`starter.cpp`).
@@ -214,6 +228,8 @@ mod tests {
         assert_eq!(e.apps, vec![("fr.srvdreamer.ludotheque".to_string(), 10154)]);
         assert!(e.bak);
         assert_eq!(e.config, "{\"version\":2,\"packages\":[]}");
+        let e2 = lire_etat("apk=/a/base.apk\naccorder=fr.srvdreamer.ludotheque\n--config--\n");
+        assert_eq!(e2.a_accorder, vec!["fr.srvdreamer.ludotheque".to_string()]);
         let absent = lire_etat("apk=\npid=\n--config--\n");
         assert_eq!(absent, Etat::default());
     }
@@ -232,6 +248,11 @@ mod tests {
         let marche = Etat { pid: Some(77), ..base.clone() };
         let s = script_preparation(&marche, None).unwrap();
         assert!(!s.contains("libshizuku.so") && s.contains("déjà démarré"));
+        // Permission Android manquante, fichier déjà bon, serveur en marche : accordée puis serveur relancé.
+        let perm = Etat { a_accorder: vec!["fr.srvdreamer.ludotheque".into()], ..marche.clone() };
+        let s = script_preparation(&perm, None).unwrap();
+        let (g, d) = (s.find("pm grant fr.srvdreamer.ludotheque moe.shizuku.manager.permission.API_V23").unwrap(), s.find("libshizuku.so").unwrap());
+        assert!(g < d);
         // Accès ajouté, serveur en marche, sauvegarde .bak : arrêt, renommage (jamais supprimé), écriture, démarrage.
         let s = script_preparation(&Etat { bak: true, ..marche }, Some(r#"{"a":1}"#)).unwrap();
         let (k, b, w, d) = (s.find("kill -9 77").unwrap(), s.find(".bak.ludo-old-").unwrap(), s.find("printf '%s' '{\"a\":1}'").unwrap(), s.find("libshizuku.so").unwrap());

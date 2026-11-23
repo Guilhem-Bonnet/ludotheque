@@ -9,9 +9,9 @@ export function raisonSansArretDirect(etat: string | undefined): string | null {
     case 'absent':
       return 'Arrêt direct indisponible : Shizuku n’est pas installé.';
     case 'arrete':
-      return 'Arrêt direct indisponible : Shizuku est arrêté. Brancher l’appareil au PC le relance.';
+      return 'Arrêt direct indisponible : Shizuku est arrêté. Brancher l’appareil au PC pour relancer Shizuku.';
     case 'refuse':
-      return 'Arrêt direct indisponible : accès à Shizuku non accordé. Brancher l’appareil au PC l’accorde.';
+      return 'Arrêt direct indisponible : accès à Shizuku non accordé. Brancher l’appareil au PC pour accorder l’accès.';
     case 'ancien':
       return 'Arrêt direct indisponible : version de Shizuku trop ancienne.';
     default:

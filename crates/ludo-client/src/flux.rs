@@ -65,16 +65,21 @@ pub fn demande_fraiche(sortie: &str) -> Option<String> {
     (-30..=FRAICHEUR_S).contains(&(maintenant - quand)).then_some(jeu)
 }
 
-/// Processus vu dans `/proc` : (pid, ppid, groupe, nom).
-pub type Proc = (i32, i32, i32, String);
+/// Processus vu dans `/proc` : (pid, ppid, groupe, nom, `SUNSHINE_CLIENT_NAME` de son environnement).
+pub type Proc = (i32, i32, i32, String, Option<String>);
 
 /// Cibles : groupes de processus des enfants directs de Sunshine (une appli lancée par Sunshine est
-/// chef de son groupe ; à défaut, le processus seul, signalé par un pid positif).
-pub fn cibles(procs: &[Proc]) -> Vec<(i32, String)> {
+/// chef de son groupe ; à défaut, le processus seul, signalé par un pid positif), et SEULEMENT ceux
+/// dont le client Sunshine est cet appareil (`SUNSHINE_CLIENT_NAME` qui contient `appareil`, ex.
+/// « AYN Thor » pour « thor ») : la partie d'un autre client (Deck, iPhone) n'est jamais touchée,
+/// pas plus qu'un processus sans ce nom.
+pub fn cibles(procs: &[Proc], appareil: &str) -> Vec<(i32, String)> {
     let sunshine: Vec<i32> = procs.iter().filter(|p| p.3 == "sunshine").map(|p| p.0).collect();
+    let appareil = appareil.to_lowercase();
     let mut out: Vec<(i32, String)> = procs
         .iter()
         .filter(|p| sunshine.contains(&p.1) && p.3 != "sunshine")
+        .filter(|p| !appareil.is_empty() && p.4.as_deref().is_some_and(|c| c.to_lowercase().contains(&appareil)))
         .map(|p| if p.2 == p.0 { (-p.2, p.3.clone()) } else { (p.0, p.3.clone()) })
         .collect();
     out.sort();
@@ -96,17 +101,31 @@ fn processus() -> Vec<Proc> {
             let _etat = champs.next()?;
             let ppid = champs.next()?.parse().ok()?;
             let pgrp = champs.next()?.parse().ok()?;
-            Some((pid, ppid, pgrp, nom))
+            Some((pid, ppid, pgrp, nom, None))
         })
         .collect()
 }
 
+/// `SUNSHINE_CLIENT_NAME` de l'environnement d'un processus (posé par Sunshine pour ses applis).
+fn client_sunshine(pid: i32) -> Option<String> {
+    let env = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+    env.split(|b| *b == 0)
+        .find_map(|v| v.strip_prefix(b"SUNSHINE_CLIENT_NAME=".as_slice()))
+        .map(|v| String::from_utf8_lossy(v).into_owned())
+}
+
 /// Termine l'appli que Sunshine fait tourner (SIGTERM, comme « Quitter l'appli »). Rend les lignes à
 /// afficher.
-pub fn fermer_appli_sunshine() -> Vec<String> {
-    let cibles = cibles(&processus());
+pub fn fermer_appli_sunshine(appareil: &str) -> Vec<String> {
+    let mut procs = processus();
+    let sunshine: Vec<i32> = procs.iter().filter(|p| p.3 == "sunshine").map(|p| p.0).collect();
+    // Environnement lu pour les seuls enfants de Sunshine (mêmes droits : processus de l'utilisateur).
+    for p in procs.iter_mut().filter(|p| sunshine.contains(&p.1)) {
+        p.4 = client_sunshine(p.0);
+    }
+    let cibles = cibles(&procs, appareil);
     if cibles.is_empty() {
-        return vec!["aucune appli Sunshine en cours : rien à fermer".into()];
+        return vec![format!("aucune appli Sunshine en cours pour {appareil} : rien à fermer")];
     }
     cibles
         .into_iter()
@@ -151,16 +170,21 @@ mod tests {
 
     #[test]
     fn cibles_enfants_de_sunshine_seulement() {
+        let thor = || Some("AYN Thor".to_string());
         let procs: Vec<Proc> = vec![
-            (1, 0, 1, "systemd".into()),
-            (100, 1, 100, "sunshine".into()),
-            (200, 100, 200, "ludo".into()),      // appli (chef de groupe)
-            (201, 200, 200, "Ryujinx".into()),   // petit-enfant : couvert par le groupe
-            (300, 100, 100, "sh".into()),        // enfant hors groupe propre
-            (400, 1, 400, "ludo".into()),        // partie locale, pas Sunshine
+            (1, 0, 1, "systemd".into(), None),
+            (100, 1, 100, "sunshine".into(), None),
+            (200, 100, 200, "ludo".into(), thor()),               // appli (chef de groupe)
+            (201, 200, 200, "Ryujinx".into(), thor()),            // petit-enfant : couvert par le groupe
+            (300, 100, 100, "sh".into(), thor()),                 // enfant hors groupe propre
+            (400, 1, 400, "ludo".into(), thor()),                 // pas un enfant de Sunshine
+            (500, 100, 500, "ryu-stream".into(), Some("Steam Deck".into())), // autre client
+            (600, 100, 600, "prep".into(), None),                 // sans nom de client
         ];
-        assert_eq!(cibles(&procs), vec![(-200, "ludo".to_string()), (300, "sh".to_string())]);
-        assert!(cibles(&procs[..1]).is_empty());
+        assert_eq!(cibles(&procs, "thor"), vec![(-200, "ludo".to_string()), (300, "sh".to_string())]);
+        assert_eq!(cibles(&procs, "deck"), vec![(-500, "ryu-stream".to_string())]);
+        assert!(cibles(&procs, "").is_empty());
+        assert!(cibles(&procs[..1], "thor").is_empty());
     }
 
     #[test]

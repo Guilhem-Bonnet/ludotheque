@@ -93,10 +93,12 @@ object ArretDirect {
   }
 
   /** Abonnement aux événements de Shizuku (une fois par processus). */
-  fun demarrer(ctx: Context) = synchronized(verrou) {
-    if (demarre) return
-    demarre = true
-    appli = ctx.applicationContext
+  fun demarrer(ctx: Context) {
+    synchronized(verrou) {
+      if (demarre) return
+      demarre = true
+      appli = ctx.applicationContext
+    }
     Shizuku.addBinderReceivedListenerSticky(recu, Handler(Looper.getMainLooper()))
     Shizuku.addBinderDeadListener(mort, Handler(Looper.getMainLooper()))
   }
@@ -175,6 +177,8 @@ object ArretDirect {
         if (reste <= 0) break
         verrou.wait(reste)
       }
+      // Pas lié à temps : une nouvelle liaison sera demandée au prochain arrêt (revue I2).
+      if (service == null) liaisonDemandee = false
       service
     } ?: return Issue(false, "liaison").also { Log.w(TAG, "service d'arrêt non lié après $DELAI_LIAISON_MS ms") }
     val data = Parcel.obtain()
@@ -235,11 +239,25 @@ class ArretService() : Binder() {
     return super.onTransact(code, data, reply, flags)
   }
 
-  /** `cmd activity force-stop` attendu jusqu'à sa fin (`waitFor` : fin du processus, pas de scrutation). */
+  /**
+   * `cmd activity force-stop` attendu jusqu'à sa fin, borné par un délai de garde unique (revue I1) :
+   * au-delà, le processus est tué et l'appelant passe au repli (page d'Android).
+   */
   private fun forceStop(paquet: String): Int = try {
-    val p = ProcessBuilder("cmd", "activity", "force-stop", paquet).redirectErrorStream(true).start()
+    val p = ProcessBuilder("/system/bin/cmd", "activity", "force-stop", paquet).redirectErrorStream(true).start()
+    // Délai de garde UNIQUE (10 s) : un `cmd` bloqué est tué, `waitFor` rend alors la main.
+    val garde = Thread {
+      try {
+        Thread.sleep(10_000)
+        p.destroy()
+      } catch (e: InterruptedException) {
+        // Fin normale avant le délai.
+      }
+    }.apply { isDaemon = true; start() }
     p.inputStream.use { it.readBytes() }
-    p.waitFor()
+    val rc = p.waitFor()
+    garde.interrupt()
+    rc
   } catch (e: Exception) {
     -1
   }

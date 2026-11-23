@@ -900,6 +900,10 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                                 watchers.push(c);
                             }
                         }
+                        // Demande de fin de flux déposée pendant une coupure : relue (elle n'agit que fraîche).
+                        for d in ludo_client::flux::dossiers() {
+                            let _ = tx.send(WatchEv::FermerFlux(d));
+                        }
                         due = Some(Instant::now());
                     } else {
                         println!("{} déconnecté", ctx.cfg.appareil);
@@ -933,7 +937,7 @@ fn adb_watch(ctx: &Ctx) -> Result<ExitCode, String> {
                     Ok(s) => match ludo_client::flux::demande_fraiche(&s) {
                         Some(jeu) => {
                             println!("Fermer le jeu en flux ({jeu}) demandé par {}", ctx.cfg.appareil);
-                            ludo_client::flux::fermer_appli_sunshine().iter().for_each(|l| println!("{l}"));
+                            ludo_client::flux::fermer_appli_sunshine(&ctx.cfg.appareil).iter().for_each(|l| println!("{l}"));
                         }
                         None if s.trim().is_empty() => {}
                         None => println!("Demande de fin de flux périmée ou illisible ({}) : ignorée", s.trim()),
