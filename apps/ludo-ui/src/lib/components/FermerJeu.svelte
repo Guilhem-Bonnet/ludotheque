@@ -81,7 +81,7 @@
     {#if demande.titreEnsuite}
       <h2 id="fermer-titre">{titre} est en cours</h2>
       <p id="fermer-texte">Fermer ce jeu pour lancer {demande.titreEnsuite} ? La progression non sauvegardée dans le jeu sera perdue.</p>
-      {#if isAndroid}<p class="etape">Android affiche d'abord la page de l'appli : « Forcer l'arrêt », puis retour ici pour lancer.</p>{/if}
+      {#if isAndroid}<p class="etape">Android affiche d'abord la page de l'appli : « Forcer l'arrêt » ferme le jeu, puis le suivant se lance.</p>{/if}
       <div class="acts">
         <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}><span class="touche" aria-hidden="true">A</span>{enCours.occupe ? 'Fermeture…' : 'Fermer et lancer'}</button>
         <button class="act focusable" disabled={enCours.occupe} onclick={() => void reprendre()}>Reprendre {titre}</button>
@@ -89,7 +89,7 @@
     {:else}
       <h2 id="fermer-titre">Fermer le jeu ?</h2>
       <p id="fermer-texte">{titre}. La progression non sauvegardée dans le jeu sera perdue ; la dernière sauvegarde part ensuite vers le serveur.</p>
-      {#if isAndroid}<p class="etape">Android affiche ensuite la page de l'appli : « Forcer l'arrêt » ferme le jeu.</p>{/if}
+      {#if isAndroid}<p class="etape">Android affiche ensuite la page de l'appli : « Forcer l'arrêt » ferme le jeu et ramène ici.</p>{/if}
       <div class="acts">
         <button class="act plein focusable" data-autofocus disabled={enCours.occupe} onclick={() => void fermer()}><span class="touche" aria-hidden="true">A</span>{enCours.occupe ? 'Fermeture…' : 'Fermer le jeu'}</button>
         <button class="act focusable" disabled={enCours.occupe} onclick={annuler}><span class="touche" aria-hidden="true">B</span>Annuler</button>

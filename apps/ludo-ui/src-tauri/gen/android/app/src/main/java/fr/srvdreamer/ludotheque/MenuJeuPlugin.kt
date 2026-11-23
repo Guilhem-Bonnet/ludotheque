@@ -109,6 +109,8 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
         val reste = if (quitte == 0L) GARDE_MS else quitte + GARDE_MS - SystemClock.uptimeMillis()
         if (reste > 0) Thread.sleep(reste)
         EnCours.oublier(activity)
+        // L'arrêt forcé confirmé ramène la Ludothèque sur l'accueil (RetourService, PACKAGE_RESTARTED).
+        RetourService.attendreFermeture(j.paquet)
         val infos = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", j.paquet, null))
           .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         activity.runOnUiThread {
