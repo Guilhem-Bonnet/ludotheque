@@ -12,6 +12,7 @@
   import type { DeviceInfo, Profile } from './lib/types';
   import Accueil from './screens/Accueil.svelte';
   import FermerJeu from './lib/components/FermerJeu.svelte';
+  import { enCours } from './lib/enCours.svelte';
   import Bibliotheque from './screens/Bibliotheque.svelte';
   import Conflit from './screens/Conflit.svelte';
   import FicheJeu from './screens/FicheJeu.svelte';
@@ -166,10 +167,11 @@
     window.addEventListener('ludo-ecran', onResize);
     // L'annonce de DoubleEcran.kt a pu partir avant cette page (démarrage à froid) : état relu une fois.
     if (isAndroid) void syncEcran();
-    // B : un menu ouvert se referme d'abord ; sinon, écran précédent.
+    // B : un menu ouvert se referme d'abord ; sinon, écran précédent ; à la racine sur Android, retour au
+    // lanceur (Cocoon), l'app restant ouverte (lot menu-jeu2).
     const onBack = () => {
       if (document.querySelector('[data-modal]')) window.dispatchEvent(new CustomEvent('ludo:modal-back'));
-      else router.back();
+      else if (!router.back() && isAndroid) void enCours.versLanceur();
     };
     window.addEventListener('ludo:back', onBack);
 

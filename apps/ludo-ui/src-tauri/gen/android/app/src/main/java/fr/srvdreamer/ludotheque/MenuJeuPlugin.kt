@@ -1,12 +1,9 @@
 package fr.srvdreamer.ludotheque
 
 import android.app.Activity
-import android.app.ActivityManager
 import android.content.ActivityNotFoundException
-import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
-import android.os.Bundle
+import android.net.Uri
 import android.os.SystemClock
 import android.provider.Settings
 import app.tauri.annotation.Command
@@ -24,8 +21,7 @@ class SuivreArgs {
 }
 
 /**
- * Menu en jeu (lot menu-jeu du 22/11) : état du jeu en cours, Reprendre, Fermer le jeu, et accès au
- * réglage d'accessibilité du bouton Mode en jeu ([MenuJeuService], facultatif).
+ * Menu en jeu (lot menu-jeu du 22/11) : état du jeu en cours, Reprendre, Fermer le jeu.
  */
 @TauriPlugin
 class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
@@ -46,8 +42,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun etat(invoke: Invoke) {
     val out = JSObject()
-    out.put("serviceActif", MenuJeuService.actif)
-    out.put("serviceRequis", true)
+    out.put("retourActif", RetourService.actif)
     EnCours.jeu?.let { j ->
       val jeu = JSObject()
       jeu.put("game", j.game)
@@ -64,16 +59,27 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     val a = args.intent
     val lancement = EnCours.Lancement(a.packageName, a.activity, a.action, a.data, a.extras, a.boolExtras, a.grant, a.file, a.fileExtras)
     EnCours.suivre(activity, EnCours.Jeu(args.game, lancement, System.currentTimeMillis()))
-    MenuJeuService.jeuLance()
+    RetourService.armer()
     invoke.resolve()
   }
 
-  /** Remet le jeu devant : même intent que le lancement, donc la tâche existante revient telle quelle. */
+  /**
+   * Remet le jeu devant comme une tuile de lanceur (Cocoon) : intent de lanceur de l'émulateur avec
+   * RESET_TASK_IF_NEEDED → la tâche existante revient telle quelle, sans nouvel intent.
+   *
+   * Mesuré sur la Thor le 22/11 (12:41) : renvoyer l'intent du LANCEMENT (VIEW + ROM) fait recevoir à
+   * Azahar (EmulationActivity) un nouveau jeu : il nettoie le jeu en cours (« Cleaning up process 11 »)
+   * et reste figé, écrans noirs, 0 % de CPU. L'intent du lancement ne sert plus qu'en repli (émulateur
+   * sans activité de lanceur, ou processus arrêté : le jeu est alors relancé).
+   */
   @Command
   fun reprendre(invoke: Invoke) {
     val j = EnCours.jeu ?: return invoke.reject("Aucun jeu en cours")
+    val lanceur = activity.packageManager.getLaunchIntentForPackage(j.paquet)
+      ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
     try {
-      activity.startActivity(j.lancement.intent(activity))
+      RetourService.armer()
+      activity.startActivity(lanceur ?: j.lancement.intent(activity))
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
       invoke.reject("Application absente de l'appareil : ${j.paquet}")
@@ -83,11 +89,16 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   /**
-   * Ferme l'émulateur, alors en arrière-plan derrière la Ludothèque : `killBackgroundProcesses`
-   * (permission normale KILL_BACKGROUND_PROCESSES ; Android 13 l'accepte pour un autre paquet, Android
-   * 14 la limitera à l'app elle-même). Comme « Fermer le logiciel » d'une console : ce qui n'a pas été
-   * sauvegardé dans le jeu est perdu, ce qui l'a été est déjà sur le stockage. La fin du processus
-   * (`am_proc_died`) déclenche ensuite la synchro du PC (`ludo-thor-watch`).
+   * Fermer le jeu, après le délai de garde (écriture d'une sauvegarde en cours) : la page « Infos de
+   * l'appli » de l'émulateur s'ouvre, où « Forcer l'arrêt » ferme le jeu (une confirmation d'Android).
+   *
+   * Pourquoi pas un arrêt direct : mesuré sur la Thor le 22/11 (12:43:14), `killBackgroundProcesses`
+   * est refusé pour un autre paquet (« ActivityManager: Invalid packageName: org.azahar_emu.azahar »,
+   * permission pourtant accordée), comme sur Android 14, et Android ne dit pas à l'app si l'arrêt a eu
+   * lieu. « Forcer l'arrêt » ferme le processus ET retire sa tâche (un simple arrêt laissait une tâche
+   * périmée qu'Azahar faisait planter au lancement suivant, 12:49:23). Ce qui n'a pas été sauvegardé
+   * dans le jeu est perdu, comme « Fermer le logiciel » d'une console ; l'arrêt (`am_kill`) déclenche
+   * la synchro du PC (`ludo-thor-watch`).
    */
   @Command
   fun fermer(invoke: Invoke) {
@@ -97,9 +108,16 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
       try {
         val reste = if (quitte == 0L) GARDE_MS else quitte + GARDE_MS - SystemClock.uptimeMillis()
         if (reste > 0) Thread.sleep(reste)
-        val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        am.killBackgroundProcesses(j.paquet)
         EnCours.oublier(activity)
+        val infos = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", j.paquet, null))
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.runOnUiThread {
+          try {
+            activity.startActivity(infos)
+          } catch (e: ActivityNotFoundException) {
+            // Réglages sans page d'appli : la carte disparaît quand même, l'émulateur se ferme depuis son menu.
+          }
+        }
         invoke.resolve()
       } catch (e: Exception) {
         invoke.reject("Fermeture impossible : ${e.message ?: e.javaClass.simpleName}")
@@ -107,26 +125,30 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
     }.start()
   }
 
+  /**
+   * B à la racine de l'interface : le lanceur HOME (Cocoon) passe devant, la Ludothèque reste ouverte
+   * derrière (retour instantané). Intent HOME plutôt que `moveTaskToBack`, qui révélerait la tâche
+   * suivante, parfois le jeu (revue I4). Aucune redirection : la Ludothèque était l'appli devant.
+   */
+  @Command
+  fun versLanceur(invoke: Invoke) {
+    val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+      activity.startActivity(home)
+      invoke.resolve()
+    } catch (e: ActivityNotFoundException) {
+      activity.runOnUiThread {
+        activity.moveTaskToBack(true)
+        invoke.resolve()
+      }
+    }
+  }
+
   /** Oublie le jeu sans rien fermer (il s'est terminé tout seul). */
   @Command
   fun oublier(invoke: Invoke) {
     EnCours.oublier(activity)
+    RetourService.desarmer()
     invoke.resolve()
-  }
-
-  /** Réglages d'accessibilité d'Android, le service de la Ludothèque mis en évidence. */
-  @Command
-  fun reglages(invoke: Invoke) {
-    val cible = ComponentName(activity, MenuJeuService::class.java).flattenToString()
-    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-      .putExtra(":settings:fragment_args_key", cible)
-      .putExtra(":settings:show_fragment_args", Bundle().apply { putString(":settings:fragment_args_key", cible) })
-      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    try {
-      activity.startActivity(intent)
-      invoke.resolve()
-    } catch (e: ActivityNotFoundException) {
-      invoke.reject("Réglages d'accessibilité introuvables")
-    }
   }
 }

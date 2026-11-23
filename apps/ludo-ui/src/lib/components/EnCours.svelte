@@ -1,7 +1,7 @@
 <script lang="ts">
   // Carte « En cours » de l'accueil (menu en jeu, lot menu-jeu du 22/11) : le jeu ouvert en tête,
-  // Reprendre (A) et Fermer le jeu (X, confirmation). Au retour depuis le jeu (bouton Mode, raccourci
-  // AYN, HOME puis Cocoon), « Reprendre » reçoit le focus : A rend la main au jeu, X propose de le fermer.
+  // Reprendre (A) et Fermer le jeu (X, confirmation). Au retour depuis le jeu (Thor : bouton Mode ou
+  // HOME en jeu, RetourService.kt), « Reprendre » reçoit le focus : A rend la main au jeu, X propose de le fermer.
   // Mouvement : entrée une seule fois (montée 12 px + fondu, 320 ms), repli à la fermeture (220 ms) ;
   // rien ne boucle.
   import { onMount, tick } from 'svelte';
@@ -23,7 +23,6 @@
     void enCours.retour;
     return jeu ? dureeSession(jeu.depuisMs) : '';
   });
-  const reglageManquant = $derived(enCours.etat.serviceRequis && !enCours.etat.serviceActif);
 
   let carte = $state<HTMLElement | null>(null);
   let reprendreEl = $state<HTMLButtonElement | null>(null);
@@ -105,13 +104,6 @@
         <span class="touche" aria-hidden="true">X</span>Fermer le jeu
       </button>
     </div>
-    {#if reglageManquant}
-      <p class="note">
-        Bouton Mode en jeu (facultatif) : à activer une fois dans l'accessibilité d'Android. Interrupteur
-        grisé : Infos de l'appli, menu ⋮, « Autoriser les paramètres restreints », puis revenir ici.
-        <button class="lien focusable" onclick={() => void enCours.reglages()}>Activer</button>
-      </p>
-    {/if}
     {#if erreur}<p class="note erreur" role="alert">{erreur}</p>{/if}
   </section>
 {/if}
@@ -138,15 +130,22 @@
     background: transparent; color: #f5f7fa; border: 2px solid rgba(255, 255, 255, 0.62);
   }
   .act.plein { background: var(--accent); color: #0e1116; border-color: transparent; font-weight: 800; }
-  .act:focus-visible, .act:focus, .lien:focus { outline: 3px solid #f5f7fa; outline-offset: 3px; }
+  .act:focus-visible, .act:focus { outline: 3px solid #f5f7fa; outline-offset: 3px; }
   .touche {
     width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
     font-size: 14px; font-weight: 800; border: 2px solid currentColor; box-sizing: border-box;
   }
   .note { grid-column: 1 / -1; margin: 0; font-size: 14px; color: #d6dbe4; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .lien { min-height: 44px; padding: 0 14px; border-radius: 12px; border: 2px solid rgba(255, 255, 255, 0.62); background: transparent; color: #f5f7fa; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
   .erreur { color: #ff8a94; }
-  /* Écran étroit (écran du bas de la Thor, portrait) : actions sous le titre, pleine largeur. */
+  /* Écran du bas de la Thor (≈ 723×630 px logiques, échelle du Deck) : une seule ligne pour garder la
+     rangée de jeux visible ; titre et session sans retour à la ligne, cibles de 56 px pour le pouce. */
+  :global(html[data-ecran='bas']) .carte { width: calc(100% - 32px); gap: 14px; padding: 10px 12px; }
+  :global(html[data-ecran='bas']) .jaquette { width: 52px; height: 70px; }
+  :global(html[data-ecran='bas']) h2 { -webkit-line-clamp: 1; line-clamp: 1; font-size: 21px; }
+  :global(html[data-ecran='bas']) .meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  :global(html[data-ecran='bas']) .act { min-height: 56px; font-size: 18px; padding: 0 16px; }
+  :global(html[data-ecran='bas']) .touche { width: 28px; height: 28px; font-size: 15px; }
+  /* Écran étroit (portrait) : actions sous le titre, pleine largeur. */
   @media (max-aspect-ratio: 1/1) {
     .carte { grid-template-columns: auto minmax(0, 1fr); }
     .acts { grid-column: 1 / -1; }

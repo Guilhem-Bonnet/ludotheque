@@ -106,6 +106,7 @@ class MainActivity : TauriActivity() {
     super.onResume()
     EnCours.restaurer(this)
     if (EnCours.jeu != null) EnCours.quitte()
+    RetourService.arrivee()
   }
 
   // Fenêtre qui perd le focus (jeu lancé, autre app, autre écran) : toute flèche tenue est relâchée.
