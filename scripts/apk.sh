@@ -89,15 +89,22 @@ deposer_config() {
 activer_retour() {
   local c="$package/fr.srvdreamer.ludotheque.RetourService" d="/sdcard/Android/data/$package/files"
   "${adb_dev[@]}" shell "c='$c'; p='$package'; d='$d'"'
-v="$(settings get secure enabled_accessibility_services)"
+mkdir -p "$d"
+v="$(settings get secure enabled_accessibility_services)" || { echo "services illisibles : rien écrit"; exit 1; }
+case "$v" in *" "*|*rror*|*xception*) echo "services illisibles ($v) : rien écrit"; exit 1 ;; esac
 case ":$v:" in
   *":$c:"*) ;;
-  *) if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${v}:${c}"; fi
-     settings put secure enabled_accessibility_services "$n" ;;
+  *) [ -f "$d/services-origine.txt" ] || echo "$v" > "$d/services-origine.txt"
+     if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${v}:${c}"; fi
+     settings put secure enabled_accessibility_services "$n"
+     r="$(settings get secure enabled_accessibility_services)"
+     if [ "$r" != "$n" ]; then
+       [ -z "$v" ] || [ "$v" = null ] || settings put secure enabled_accessibility_services "$v"
+       echo "relecture inattendue ($r) : liste d origine remise"; exit 1
+     fi ;;
 esac
 settings put secure accessibility_enabled 1
 appops set "$p" SYSTEM_ALERT_WINDOW allow
-mkdir -p "$d"
 [ -f "$d/reglages-origine.txt" ] || echo "prevent_press_home_accidentally=$(settings get system prevent_press_home_accidentally)" > "$d/reglages-origine.txt"
 settings put system prevent_press_home_accidentally 0
 echo "Retour après une partie : services = $(settings get secure enabled_accessibility_services)"'
@@ -111,7 +118,8 @@ retablir_retour() {
 o="$(sed -n "s/^prevent_press_home_accidentally=//p" "$d/reglages-origine.txt" 2>/dev/null)"
 case "$o" in ""|null) o=1 ;; esac
 settings put system prevent_press_home_accidentally "$o"
-v="$(settings get secure enabled_accessibility_services)"
+v="$(settings get secure enabled_accessibility_services)" || { echo "services illisibles : rien écrit"; exit 1; }
+case "$v" in *" "*|*rror*|*xception*) echo "services illisibles ($v) : rien écrit"; exit 1 ;; null) v="" ;; esac
 n="$(echo "$v" | tr ":" "\n" | grep -vxF "$c" | paste -sd: -)"
 if [ -n "$n" ]; then settings put secure enabled_accessibility_services "$n"; else settings delete secure enabled_accessibility_services; fi
 appops set "$p" SYSTEM_ALERT_WINDOW default

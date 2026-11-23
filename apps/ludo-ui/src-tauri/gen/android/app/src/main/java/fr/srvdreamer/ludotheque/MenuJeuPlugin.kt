@@ -126,14 +126,21 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   }
 
   /**
-   * B à la racine de l'interface : la Ludothèque passe derrière, le lanceur (Cocoon) revient. L'app
-   * reste ouverte (retour instantané) ; aucune redirection, la Ludothèque étant l'appli devant.
+   * B à la racine de l'interface : le lanceur HOME (Cocoon) passe devant, la Ludothèque reste ouverte
+   * derrière (retour instantané). Intent HOME plutôt que `moveTaskToBack`, qui révélerait la tâche
+   * suivante, parfois le jeu (revue I4). Aucune redirection : la Ludothèque était l'appli devant.
    */
   @Command
   fun versLanceur(invoke: Invoke) {
-    activity.runOnUiThread {
-      activity.moveTaskToBack(true)
+    val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+      activity.startActivity(home)
       invoke.resolve()
+    } catch (e: ActivityNotFoundException) {
+      activity.runOnUiThread {
+        activity.moveTaskToBack(true)
+        invoke.resolve()
+      }
     }
   }
 
@@ -141,6 +148,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun oublier(invoke: Invoke) {
     EnCours.oublier(activity)
+    RetourService.desarmer()
     invoke.resolve()
   }
 }

@@ -55,6 +55,17 @@ class RetourService : AccessibilityService() {
      */
     @Volatile private var attendu = false
 
+    /**
+     * Une activité de JEU (autre que la bibliothèque de l'émulateur) a été vue depuis l'armement : seule
+     * condition pour conclure « jeu quitté » quand la bibliothèque la remplace (revue I3 : après
+     * « Reprendre », un émulateur qui recréerait sa bibliothèque au-dessus du jeu ne doit pas faire oublier
+     * un jeu vivant).
+     */
+    private var jeuVu = false
+
+    /** Verrou des champs d'état : `armer` (fil du plugin) et les événements (fil principal). */
+    private val verrou = Any()
+
     /** Heure (horloge monotone) de la dernière demande de retour : délai mesuré à l'arrivée. */
     @Volatile var demandeA = 0L
 
@@ -67,8 +78,15 @@ class RetourService : AccessibilityService() {
     )
 
     /** Un jeu vient d'être lancé ou repris par la Ludothèque : il va passer devant. */
-    fun armer() {
+    fun armer() = synchronized(verrou) {
       attendu = true
+      jeuVu = false
+    }
+
+    /** Lancement refusé ou jeu oublié : plus rien à attendre. */
+    fun desarmer() = synchronized(verrou) {
+      attendu = false
+      arme = false
     }
 
     /** Délai entre la demande de retour et l'arrivée de la Ludothèque (journal seulement). */
@@ -80,8 +98,15 @@ class RetourService : AccessibilityService() {
     }
   }
 
-  /** Paquet du lanceur HOME (Cocoon sur la Thor), relu à la liaison du service. */
-  private var lanceur: String? = null
+  /**
+   * Paquet du lanceur HOME par défaut (Cocoon sur la Thor), relu à chaque fenêtre candidate : un
+   * changement de lanceur est suivi. Sans lanceur par défaut, Android rend le sélecteur (« android ») :
+   * la règle ne se déclenche pas et le journal le dit.
+   */
+  private fun lanceur(): String? = packageManager
+    .resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
+    ?.activityInfo?.packageName
+    ?.takeIf { it != "android" }
 
   /** Dernière appli au premier plan de l'écran principal (vraie activité, hors fenêtres ignorées). */
   private var devant: String? = null
@@ -89,11 +114,8 @@ class RetourService : AccessibilityService() {
   override fun onServiceConnected() {
     super.onServiceConnected()
     EnCours.restaurer(this)
-    lanceur = packageManager
-      .resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY)
-      ?.activityInfo?.packageName
     actif = true
-    Log.i(TAG, "service lié (lanceur : $lanceur)")
+    Log.i(TAG, "service lié (lanceur : ${lanceur() ?: "aucun lanceur par défaut : retour inactif"})")
   }
 
   override fun onUnbind(intent: Intent?): Boolean {
@@ -108,7 +130,9 @@ class RetourService : AccessibilityService() {
 
   override fun onInterrupt() {}
 
-  override fun onAccessibilityEvent(e: AccessibilityEvent) {
+  override fun onAccessibilityEvent(e: AccessibilityEvent) = synchronized(verrou) { surEvenement(e) }
+
+  private fun surEvenement(e: AccessibilityEvent) {
     if (e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
     // Écran du bas (Presentation, activité « externe » de Cocoon) : sans effet sur l'écran principal.
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && e.displayId != Display.DEFAULT_DISPLAY) return
@@ -126,7 +150,8 @@ class RetourService : AccessibilityService() {
     }
     if (jeu != null && pkg == jeu.paquet) {
       // Jeu quitté par le menu de l'émulateur : sa bibliothèque (activité de lanceur) remplace le jeu.
-      if (arme && avant == pkg && cls != null && cls != jeu.lancement.activite && cls == activiteLanceur(pkg)) {
+      val bibliotheque = cls != null && cls != jeu.lancement.activite && cls == activiteLanceur(pkg)
+      if (arme && jeuVu && avant == pkg && bibliotheque) {
         Log.i(TAG, "jeu quitté dans $pkg ($cls) : retour à l'accueil")
         retour(ferme = true)
         return
@@ -135,6 +160,7 @@ class RetourService : AccessibilityService() {
         attendu = false
         arme = true
       }
+      if (cls != null && !bibliotheque && estActivite(pkg, cls)) jeuVu = true
       devant = pkg
       return
     }
@@ -142,7 +168,7 @@ class RetourService : AccessibilityService() {
     // bulle, un toast ou une boîte de dialogue système).
     if (!estActivite(pkg, cls)) return
     devant = pkg
-    if (pkg == lanceur && arme && jeu != null && avant == jeu.paquet) {
+    if (arme && jeu != null && avant == jeu.paquet && pkg == lanceur()) {
       Log.i(TAG, "lanceur $pkg devant après ${jeu.paquet} : retour à « En cours »")
       retour(ferme = false)
       return

@@ -290,16 +290,23 @@ pub fn retour_script(data: &str) -> String {
     format!(
         r#"for p in {pkgs}; do pm path "$p" >/dev/null 2>&1 || continue
 c="$p/{RETOUR_SERVICE}"
-v="$(settings get secure enabled_accessibility_services)"
+d="{data}/$p/files"
+mkdir -p "$d"
+v="$(settings get secure enabled_accessibility_services)" || {{ echo "services illisibles : rien écrit"; exit 1; }}
+case "$v" in *" "*|*rror*|*xception*) echo "services illisibles ($v) : rien écrit"; exit 1 ;; esac
 case ":$v:" in
   *":$c:"*) ;;
-  *) if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${{v}}:${{c}}"; fi
-     settings put secure enabled_accessibility_services "$n" ;;
+  *) [ -f "$d/services-origine.txt" ] || echo "$v" > "$d/services-origine.txt"
+     if [ -z "$v" ] || [ "$v" = null ]; then n="$c"; else n="${{v}}:${{c}}"; fi
+     settings put secure enabled_accessibility_services "$n"
+     r="$(settings get secure enabled_accessibility_services)"
+     if [ "$r" != "$n" ]; then
+       [ -z "$v" ] || [ "$v" = null ] || settings put secure enabled_accessibility_services "$v"
+       echo "relecture inattendue ($r) : liste d'origine remise"; exit 1
+     fi ;;
 esac
 settings put secure accessibility_enabled 1
 appops set "$p" SYSTEM_ALERT_WINDOW allow
-d="{data}/$p/files"
-mkdir -p "$d"
 [ -f "$d/reglages-origine.txt" ] || echo "prevent_press_home_accidentally=$(settings get system prevent_press_home_accidentally)" > "$d/reglages-origine.txt"
 settings put system prevent_press_home_accidentally 0
 echo "services : $(settings get secure enabled_accessibility_services)"
@@ -355,6 +362,20 @@ appops() {{ echo "$2 $3 $4" >> "$R/appops"; }}
         assert_eq!(retour_simule("", &["fr.srvdreamer.ludotheque.debug"]).0, "fr.srvdreamer.ludotheque.debug/fr.srvdreamer.ludotheque.RetourService");
         // Aucune app Ludothèque : rien ne change.
         assert_eq!(retour_simule("x/y.Z", &[]).0, "x/y.Z");
+    }
+
+    #[test]
+    fn retour_n_ecrit_rien_si_la_lecture_est_illisible() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let script = format!(
+            "settings() {{ if [ \"$1\" = get ]; then echo 'Error: service settings not found'; else echo ECRIT >> {r}/ecrit; fi; }}\npm() {{ return 0; }}\nappops() {{ :; }}\n{s}",
+            r = d.display(),
+            s = retour_script(&d.join("data").display().to_string())
+        );
+        let out = Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(!out.status.success());
+        assert!(!d.join("ecrit").exists(), "aucune écriture attendue");
     }
 
     #[test]
