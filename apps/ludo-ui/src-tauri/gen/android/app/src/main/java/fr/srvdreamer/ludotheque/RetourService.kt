@@ -225,14 +225,16 @@ class RetourService : AccessibilityService() {
     // bulle, un toast ou une boîte de dialogue système).
     if (!estActivite(pkg, cls)) return
     devant = pkg
+    // Une autre appli (lanceur compris : HOME, jeu arrêté ou planté) prend la place du jeu sur l'écran
+    // principal : le visuel « En cours » de l'écran du bas s'efface (lot ecran-bas). Retour à la
+    // Ludothèque ensuite : elle reprend elle-même l'écran du bas.
+    if (jeu != null && avant == jeu.paquet) EcranBas.retirer("$pkg devant à la place du jeu")
     if (arme && jeu != null && avant == jeu.paquet && pkg == lanceur()) {
       Log.i(TAG, "lanceur $pkg devant après ${jeu.paquet} : retour à « En cours »")
       retour(ferme = false)
       return
     }
     // Toute autre appli (ou le lanceur sans jeu de la Ludothèque juste avant) : la règle se désarme.
-    // Le jeu n'est plus devant ni suivi : le visuel de l'écran du bas s'efface (lot ecran-bas).
-    if (jeu != null && avant == jeu.paquet && pkg != lanceur()) EcranBas.retirer("$pkg devant à la place du jeu")
     arme = false
     attendu = false
   }

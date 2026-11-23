@@ -64,6 +64,9 @@ object EcranBas {
   /** Activité affichée (fil principal) : retirée par [retirer]. */
   @Volatile internal var affichee: EcranBasActivity? = null
 
+  /** Un visuel vient d'être demandé : le lancement de jeu qui suit impose l'écran principal ([principal]). */
+  @Volatile private var demande = false
+
   /** Écran de présentation allumé, autre que l'écran principal (même règle que DoubleEcran). */
   private fun ecranDuBas(ctx: Context): Display? {
     val displays = ctx.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -79,18 +82,21 @@ object EcranBas {
     // Lancement sur un écran choisi : Android 8 et plus (la Thor est en Android 13).
     if (android.os.Build.VERSION.SDK_INT < 26) return
     val display = ecranDuBas(activity) ?: return Log.i(TAG, "pas d'écran du bas allumé : rien à afficher")
+    // CLEAR_TASK : toujours une instance neuve (« Fermer et lancer » enchaîne pendant que l'ancienne se
+    // retire ; une instance réutilisée garderait le titre et l'heure du jeu précédent, revue I2).
     val intent = Intent(activity, EcranBasActivity::class.java)
       .putExtra(EcranBasActivity.EXTRA_INFO, info)
-      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
     val options = ActivityOptions.makeBasic().setLaunchDisplayId(display.displayId)
-    activity.runOnUiThread {
-      try {
-        activity.startActivity(intent, options.toBundle())
-        Log.i(TAG, "visuel demandé sur l'écran ${display.displayId}")
-      } catch (e: Exception) {
-        // Écran refusé par Android (lancement sur un autre écran interdit) : le jeu part quand même.
-        Log.w(TAG, "visuel refusé par Android : $e")
-      }
+    // Appel direct, sur le fil de la commande (startActivity est permis depuis tout fil) : la demande
+    // part AVANT l'intent du jeu, sans dépendre de la charge du fil principal (revue I1).
+    try {
+      activity.startActivity(intent, options.toBundle())
+      demande = true
+      Log.i(TAG, "visuel demandé sur l'écran ${display.displayId}")
+    } catch (e: Exception) {
+      // Écran refusé par Android (lancement sur un autre écran interdit) : le jeu part quand même.
+      Log.w(TAG, "visuel refusé par Android : $e")
     }
   }
 
@@ -98,8 +104,12 @@ object EcranBas {
    * Options d'un lancement de jeu : écran principal imposé. Le visuel vient d'être lancé sur l'écran du
    * bas ; sans cette précision, Android pourrait choisir l'écran qui a reçu la dernière activité.
    */
-  fun principal(): Bundle? =
-    if (android.os.Build.VERSION.SDK_INT >= 26) ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle() else null
+  fun principal(): Bundle? {
+    // Sans visuel demandé (jeu 3DS/DS, autre intent) : lancement inchangé (revue I6).
+    if (!demande || android.os.Build.VERSION.SDK_INT < 26) return null
+    demande = false
+    return ActivityOptions.makeBasic().setLaunchDisplayId(Display.DEFAULT_DISPLAY).toBundle()
+  }
 
   /** Retire le visuel s'il est affiché (n'importe quel fil). */
   fun retirer(raison: String) {
@@ -166,6 +176,14 @@ class EcranBasActivity : Activity() {
       JSONObject()
     }
     depuisMs = info.optLong("depuisMs", System.currentTimeMillis())
+    // Garde-fous (revue I3, I4) : posée sur l'écran principal (écran du bas refusé, repli d'Android), ou
+    // recréée par Android après l'arrêt du processus alors qu'aucun jeu n'est plus suivi : rien à montrer.
+    EnCours.restaurer(this)
+    if (ecran().displayId == Display.DEFAULT_DISPLAY || EnCours.jeu == null) {
+      Log.i(EcranBas.TAG, "visuel abandonné (écran ${ecran().displayId}, jeu suivi : ${EnCours.jeu?.game})")
+      finishAndRemoveTask()
+      return
+    }
     setContentView(construire(info))
     EcranBas.affichee = this
     Log.i(EcranBas.TAG, "visuel affiché sur l'écran ${ecran().displayId} (${info.optString("titre")})")
@@ -346,7 +364,19 @@ class EcranBasActivity : Activity() {
         c.connectTimeout = 4000
         c.readTimeout = 6000
         try {
-          val octets = c.inputStream.use { it.readBytes() }
+          // Plafond de 8 Mo : une réponse anormale ne doit pas épuiser la mémoire pendant la partie.
+          if (c.contentLengthLong > 8_000_000) throw java.io.IOException("jaquette trop grande (${c.contentLengthLong} octets)")
+          val octets = c.inputStream.use { flux ->
+            val tampon = java.io.ByteArrayOutputStream()
+            val bloc = ByteArray(64 * 1024)
+            while (true) {
+              val n = flux.read(bloc)
+              if (n < 0) break
+              tampon.write(bloc, 0, n)
+              if (tampon.size() > 8_000_000) throw java.io.IOException("jaquette trop grande")
+            }
+            tampon.toByteArray()
+          }
           val bornes = BitmapFactory.Options().apply { inJustDecodeBounds = true }
           BitmapFactory.decodeByteArray(octets, 0, octets.size, bornes)
           var reduction = 1
