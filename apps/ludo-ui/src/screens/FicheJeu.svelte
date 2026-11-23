@@ -359,4 +359,7 @@
   :global(html[data-ecran='bas']) .when { width: auto; }
   :global(html[data-ecran='bas']) .content .role,
   :global(html[data-ecran='bas']) .csize { display: none; }
+  /* Colonne étroite : jamais de défilement horizontal (barre parasite sous l'historique, capture 723×630). */
+  :global(html[data-ecran='bas']) section { overflow-x: hidden; }
+  :global(html[data-ecran='bas']) .tabs { max-width: 100%; box-sizing: border-box; }
 </style>

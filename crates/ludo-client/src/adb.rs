@@ -71,6 +71,13 @@ impl Adb {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
+    /// Accès « tous les fichiers » accordé aux apps Ludothèque installées (release et essai) : elles
+    /// lancent les jeux par le chemin de l'inventaire, sans jamais demander l'accès à un dossier. Rend les
+    /// paquets traités. Sans effet sur une version qui ne déclare pas la permission (avant 0.8.1).
+    pub fn grant_ludo_files(&self) -> Result<Vec<String>, AdbError> {
+        Ok(self.shell(&grant_script())?.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+    }
+
     /// Le paquet a-t-il un processus en cours ?
     pub fn running(&self, package: &str) -> bool {
         self.shell(&format!("pidof {} >/dev/null && echo oui || echo non", sq(package))).is_ok_and(|s| s.trim() == "oui")
@@ -248,9 +255,29 @@ pub fn prepare_mirrored_rom(cfg: &Config, conf: &GameConf, profile: &str, mirror
     Ok((prepared, pairs))
 }
 
+/// Paquets de l'app Ludothèque sur un appareil Android (release, puis version d'essai).
+pub const LUDO_PACKAGES: &[&str] = &["fr.srvdreamer.ludotheque", "fr.srvdreamer.ludotheque.debug"];
+
+/// Script shell : `appops set … MANAGE_EXTERNAL_STORAGE allow` pour chaque app Ludothèque installée.
+pub fn grant_script() -> String {
+    LUDO_PACKAGES
+        .iter()
+        .map(|p| format!("pm path {p} >/dev/null 2>&1 && appops set {p} MANAGE_EXTERNAL_STORAGE allow && echo {p}"))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acces_fichiers_des_apps_ludotheque() {
+        let s = grant_script();
+        assert_eq!(s.matches("appops set").count(), 2);
+        assert!(s.contains("pm path fr.srvdreamer.ludotheque >/dev/null 2>&1 && appops set fr.srvdreamer.ludotheque MANAGE_EXTERNAL_STORAGE allow"));
+        assert!(s.contains("fr.srvdreamer.ludotheque.debug MANAGE_EXTERNAL_STORAGE allow"));
+    }
 
     /// Sortie de `rom_title_ids` : un bloc `od` par fichier, fichier illisible = bloc vide, `\r\n` toléré.
     #[test]
