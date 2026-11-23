@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.Settings
+import androidx.core.content.FileProvider
 import org.json.JSONObject
 
 /**
@@ -29,18 +30,30 @@ object EnCours {
     val data: String?,
     val extras: Map<String, String>,
     val boolExtras: Map<String, Boolean>,
+    /** Lecture de `data` transmise ; faux pour une URI d'un arbre que l'app lancée détient déjà (sinon refus d'Android). */
+    val grant: Boolean = true,
+    /** Fichier confié par le FileProvider de la Ludothèque (son URI devient `data` et les extras `fileExtras`). */
+    val file: String? = null,
+    val fileExtras: List<String> = emptyList(),
   ) {
-    /** Même construction que `LudoPlugin.startActivity` : la reprise renvoie exactement cet intent. */
-    fun intent(): Intent {
+    /**
+     * Intent du lancement, construit ICI pour le lancement (LudoPlugin.startActivity) comme pour la reprise :
+     * la reprise renvoie exactement le même intent, mêmes droits.
+     * @throws IllegalArgumentException fichier hors des chemins du FileProvider.
+     */
+    fun intent(ctx: Context): Intent {
       val intent = Intent(action ?: Intent.ACTION_VIEW)
       intent.setClassName(paquet, activite)
-      data?.let {
-        val uri = Uri.parse(it)
+      val fileUri = file?.let { FileProvider.getUriForFile(ctx, ctx.packageName + ".fileprovider", java.io.File(it)) }
+      (fileUri ?: data?.let { Uri.parse(it) })?.let { uri ->
         intent.data = uri
-        intent.clipData = ClipData.newRawUri("rom", uri)
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (grant || fileUri != null) {
+          intent.clipData = ClipData.newRawUri("rom", uri)
+          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
       }
       for ((k, v) in extras) intent.putExtra(k, v)
+      if (fileUri != null) for (k in fileExtras) intent.putExtra(k, fileUri.toString())
       for ((k, v) in boolExtras) intent.putExtra(k, v)
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       return intent
@@ -49,6 +62,7 @@ object EnCours {
     fun json(): String = JSONObject()
       .put("paquet", paquet).put("activite", activite).put("action", action).put("data", data)
       .put("extras", JSONObject(extras as Map<*, *>)).put("boolExtras", JSONObject(boolExtras as Map<*, *>))
+      .put("grant", grant).put("file", file).put("fileExtras", org.json.JSONArray(fileExtras))
       .toString()
 
     companion object {
@@ -56,6 +70,7 @@ object EnCours {
         val o = JSONObject(texte)
         val ex = o.optJSONObject("extras")
         val bx = o.optJSONObject("boolExtras")
+        val fx = o.optJSONArray("fileExtras")
         Lancement(
           o.getString("paquet"),
           o.getString("activite"),
@@ -63,6 +78,10 @@ object EnCours {
           o.optString("data").takeIf { o.has("data") && !o.isNull("data") },
           ex?.keys()?.asSequence()?.associateWith { ex.getString(it) } ?: emptyMap(),
           bx?.keys()?.asSequence()?.associateWith { bx.getBoolean(it) } ?: emptyMap(),
+          // Lancement enregistré par une version antérieure : lecture toujours transmise (comportement d'alors).
+          o.optBoolean("grant", true),
+          o.optString("file").takeIf { o.has("file") && !o.isNull("file") },
+          fx?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
         )
       } catch (e: Exception) {
         null

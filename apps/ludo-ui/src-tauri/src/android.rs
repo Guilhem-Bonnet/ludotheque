@@ -41,6 +41,9 @@ pub const ROMS: &str = "Documents/Roms";
 /// Fournisseur de documents du stockage partagé (arbres SAF).
 const EXTERNAL_DOCS: &str = "com.android.externalstorage.documents";
 
+/// Jeu Wii U sans accès aux fichiers : le `.rpx` du dossier `code/` ne peut pas être trouvé.
+pub const NO_ACCESS_WIIU: &str = "Jeu Wii U : l'accès à tous les fichiers est nécessaire pour trouver son fichier .rpx. Brancher l'appareil au PC (ludo l'accorde), ou Réglages Android › Applications › Ludothèque › Accès à tous les fichiers";
+
 /// Message commun : l'app n'a ni accès aux fichiers ni arbre utilisable pour ce jeu.
 pub const NO_ACCESS: &str = "Accès aux fichiers non accordé : brancher l'appareil au PC (ludo l'accorde), ou Réglages Android › Applications › Ludothèque › Accès à tous les fichiers";
 
@@ -657,7 +660,7 @@ mod bridge {
             return rom_intent(emu, conf, &format!("{path}/code/{rpx}"), acces);
         }
         // Repli : arbre SAF accordé autrefois à l'app.
-        let folder = acces.arbre.as_deref().and_then(tree_dir).and_then(|d| tree_document_uri(&d, &path, false)).ok_or(NO_ACCESS)?;
+        let folder = acces.arbre.as_deref().and_then(tree_dir).and_then(|d| tree_document_uri(&d, &path, false)).ok_or(NO_ACCESS_WIIU)?;
         let found: Found = bridge(app)?.0.run_mobile_plugin("findRpx", UriArgs { uri: &folder }).map_err(|e| e.to_string())?;
         let rpx = found.uri.ok_or_else(|| format!("Fichier .rpx introuvable dans {path}/code"))?;
         folder_game_intent(emu, &rpx).ok_or_else(|| format!("Adresse du jeu inattendue : {rpx}"))

@@ -262,9 +262,11 @@ pub const LUDO_PACKAGES: &[&str] = &["fr.srvdreamer.ludotheque", "fr.srvdreamer.
 pub fn grant_script() -> String {
     LUDO_PACKAGES
         .iter()
-        .map(|p| format!("pm path {p} >/dev/null 2>&1 && appops set {p} MANAGE_EXTERNAL_STORAGE allow && echo {p}"))
+        // `if` : un paquet absent (cas normal du `.debug`) ne rend pas le script en échec.
+        .map(|p| format!("if pm path {p} >/dev/null 2>&1; then appops set {p} MANAGE_EXTERNAL_STORAGE allow && echo {p}; fi"))
         .collect::<Vec<_>>()
         .join("; ")
+        + "; true"
 }
 
 #[cfg(test)]
@@ -275,8 +277,11 @@ mod tests {
     fn acces_fichiers_des_apps_ludotheque() {
         let s = grant_script();
         assert_eq!(s.matches("appops set").count(), 2);
-        assert!(s.contains("pm path fr.srvdreamer.ludotheque >/dev/null 2>&1 && appops set fr.srvdreamer.ludotheque MANAGE_EXTERNAL_STORAGE allow"));
+        assert!(s.contains("if pm path fr.srvdreamer.ludotheque >/dev/null 2>&1; then appops set fr.srvdreamer.ludotheque MANAGE_EXTERNAL_STORAGE allow"));
         assert!(s.contains("fr.srvdreamer.ludotheque.debug MANAGE_EXTERNAL_STORAGE allow"));
+        // Paquet absent : jamais de code de sortie en échec (sinon « non accordé » affiché à tort).
+        let out = std::process::Command::new("sh").arg("-c").arg(s.replace("pm path", "false")).output().unwrap();
+        assert!(out.status.success() && out.stdout.is_empty());
     }
 
     /// Sortie de `rom_title_ids` : un bloc `od` par fichier, fichier illisible = bloc vide, `\r\n` toléré.

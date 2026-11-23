@@ -62,7 +62,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   fun suivre(invoke: Invoke) {
     val args = invoke.parseArgs(SuivreArgs::class.java)
     val a = args.intent
-    val lancement = EnCours.Lancement(a.packageName, a.activity, a.action, a.data, a.extras, a.boolExtras)
+    val lancement = EnCours.Lancement(a.packageName, a.activity, a.action, a.data, a.extras, a.boolExtras, a.grant, a.file, a.fileExtras)
     EnCours.suivre(activity, EnCours.Jeu(args.game, lancement, System.currentTimeMillis()))
     MenuJeuService.jeuLance()
     invoke.resolve()
@@ -73,7 +73,7 @@ class MenuJeuPlugin(private val activity: Activity) : Plugin(activity) {
   fun reprendre(invoke: Invoke) {
     val j = EnCours.jeu ?: return invoke.reject("Aucun jeu en cours")
     try {
-      activity.startActivity(j.lancement.intent())
+      activity.startActivity(j.lancement.intent(activity))
       invoke.resolve()
     } catch (e: ActivityNotFoundException) {
       invoke.reject("Application absente de l'appareil : ${j.paquet}")
