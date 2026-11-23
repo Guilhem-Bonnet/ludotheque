@@ -354,7 +354,7 @@ class EcranBasActivity : Activity() {
     }
 
     // Jaquette : carte neutre arrondie ; l'image arrive par un seul téléchargement (délai de garde unique).
-    val cote = if (paysage) (hauteur * 0.56f).toInt() else (minOf(largeur, hauteur) * 0.42f).toInt()
+    val cote = if (paysage) (hauteur * 0.44f).toInt() else (minOf(largeur, hauteur) * 0.42f).toInt()
     val jaquette = ImageView(this).apply {
       scaleType = ImageView.ScaleType.CENTER_CROP
       background = GradientDrawable().apply { setColor(CARTE); cornerRadius = dp(18).toFloat() }
