@@ -19,3 +19,6 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Arrêt direct (ArretDirect.kt) : Shizuku instancie ArretService par réflexion dans son processus.
+-keep class fr.srvdreamer.ludotheque.ArretService { <init>(...); }

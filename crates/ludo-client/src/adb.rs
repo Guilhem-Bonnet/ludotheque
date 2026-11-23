@@ -27,7 +27,7 @@ pub enum AdbError {
 }
 
 /// Échappe un argument pour le shell de l'appareil (guillemets simples).
-fn sq(s: &str) -> String {
+pub(crate) fn sq(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 

@@ -33,6 +33,21 @@ pub struct EtatMenu {
     /// Android : service de retour après une partie lié (`RetourService.kt`, activé par le PC).
     #[serde(default)]
     pub retour_actif: bool,
+    /// Android : arrêt d'un jeu sans page d'Android (`ArretDirect.kt`) : `pret`, ou la raison de son
+    /// absence (`absent`, `arrete`, `refuse`, `ancien` : état de Shizuku).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arret_direct: Option<String>,
+}
+
+/// Issue de « Fermer le jeu » (`Fermeture` de `enCours.svelte.ts`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fermeture {
+    /// Jeu arrêté sans aucune page (Shizuku, ou bureau) : la suite (« Fermer et lancer ») part aussitôt.
+    /// Faux : la page « Infos de l'appli » d'Android s'est ouverte, la suite attend le retour ici.
+    pub direct: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raison: Option<String>,
 }
 
 #[cfg(target_os = "android")]
@@ -89,6 +104,10 @@ mod pont {
     pub fn action(app: &tauri::AppHandle, cmd: &str) -> Result<(), String> {
         appel::<serde_json::Value>(app, cmd, ()).map(|_| ())
     }
+
+    pub fn fermer(app: &tauri::AppHandle) -> Result<Fermeture, String> {
+        appel(app, "fermer", ())
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -103,7 +122,7 @@ pub async fn jeu_en_cours(app: tauri::AppHandle) -> Result<EtatMenu, String> {
     {
         let _ = app;
         // Bureau : l'écran « En jeu » (Passage) porte déjà la partie en cours.
-        Ok(EtatMenu { jeu: None, retour_actif: false })
+        Ok(EtatMenu { jeu: None, retour_actif: false, arret_direct: None })
     }
 }
 
@@ -123,18 +142,19 @@ pub async fn reprendre_jeu(app: tauri::AppHandle, window: tauri::Window) -> Resu
     }
 }
 
-/// Ferme le jeu ouvert. Android : après un court délai de garde, la page « Infos de l'appli » de
-/// l'émulateur s'ouvre (« Forcer l'arrêt ») ; l'arrêt (`am_kill`) déclenche la synchro du PC. Bureau : SIGTERM à l'émulateur, la sauvegarde part
-/// ensuite comme après toute partie (écran « En jeu »).
+/// Ferme le jeu ouvert. Android : après un court délai de garde, arrêt forcé de l'émulateur par
+/// Shizuku sans aucune page (`direct`), sinon la page « Infos de l'appli » de l'émulateur s'ouvre
+/// (« Forcer l'arrêt ») ; l'arrêt (`am_kill`) déclenche la synchro du PC. Bureau : SIGTERM à
+/// l'émulateur, la sauvegarde part ensuite comme après toute partie (écran « En jeu »).
 #[tauri::command(rename = "fermerJeu")]
-pub async fn fermer_jeu(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn fermer_jeu(app: tauri::AppHandle) -> Result<Fermeture, String> {
     #[cfg(target_os = "android")]
-    return crate::blocking(move || pont::action(&app, "fermer")).await;
+    return crate::blocking(move || pont::fermer(&app)).await;
     #[cfg(not(target_os = "android"))]
     {
         let _ = app;
         ludo_client::launch::terminate_running();
-        Ok(())
+        Ok(Fermeture { direct: true, raison: None })
     }
 }
 
@@ -160,16 +180,31 @@ mod tests {
         let e = EtatMenu {
             jeu: Some(JeuEnCours { game: "mm3d".into(), paquet: Some("io.github.lime3ds.android".into()), depuis_ms: 1_795_000_000_000 }),
             retour_actif: true,
+            arret_direct: Some("pret".into()),
         };
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["jeu"]["game"], "mm3d");
         assert_eq!(v["jeu"]["depuisMs"], 1_795_000_000_000u64);
         assert_eq!(v["retourActif"], true);
+        assert_eq!(v["arretDirect"], "pret");
         // Réponse du plugin Kotlin (champs camelCase, `jeu` absent quand rien n'est ouvert).
         let k: EtatMenu = serde_json::from_str("{}").unwrap();
         assert_eq!(k.jeu, None);
         assert!(!k.retour_actif);
         let k: EtatMenu = serde_json::from_str(r#"{"retourActif":true}"#).unwrap();
         assert!(k.retour_actif);
+        assert_eq!(k.arret_direct, None);
+        let k: EtatMenu = serde_json::from_str(r#"{"arretDirect":"refuse"}"#).unwrap();
+        assert_eq!(k.arret_direct.as_deref(), Some("refuse"));
+    }
+
+    #[test]
+    fn fermeture_pour_l_interface() {
+        // Réponses du plugin Kotlin (`MenuJeuPlugin.fermeture`).
+        let f: Fermeture = serde_json::from_str(r#"{"direct":true}"#).unwrap();
+        assert_eq!(f, Fermeture { direct: true, raison: None });
+        let f: Fermeture = serde_json::from_str(r#"{"direct":false,"raison":"arrete"}"#).unwrap();
+        assert_eq!(f.raison.as_deref(), Some("arrete"));
+        assert_eq!(serde_json::to_value(Fermeture { direct: true, raison: None }).unwrap(), serde_json::json!({"direct": true}));
     }
 }

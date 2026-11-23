@@ -108,6 +108,10 @@ enum Cmd {
     /// Jeux du catalogue et leurs fichiers trouvés sur cet appareil (dossier de la Ludothèque ou
     /// collection existante). Lecture seule.
     Jeux,
+    /// Prépare Shizuku sur l'appareil adb (fait aussi par `adb-sync`) : accès des apps Ludothèque,
+    /// démarrage au boot, serveur démarré. « Fermer le jeu » arrête alors l'émulateur sans aucune page
+    /// d'Android. Idempotent.
+    Shizuku,
 }
 
 struct Ctx {
@@ -287,6 +291,11 @@ fn adb_sync(ctx: &Ctx, profil: Option<String>, only: Option<String>, resoudre: O
         match dev.activer_retour() {
             Ok(l) => l.iter().for_each(|x| println!("Retour après une partie : {x}")),
             Err(e) => println!("Retour après une partie non activé : {e}"),
+        }
+        // « Fermer le jeu » sans page d'Android (Shizuku : accès, démarrage au boot, serveur) ; idempotent.
+        match ludo_client::shizuku::preparer(&dev) {
+            Ok(l) => l.iter().for_each(|x| println!("Arrêt direct : {x}")),
+            Err(e) => println!("Arrêt direct non préparé : {e}"),
         }
     }
     let profile = profil.or_else(|| ctx.cfg.profil_defaut.clone()).ok_or("préciser --profil")?;
@@ -1032,6 +1041,16 @@ fn main() -> ExitCode {
             Cmd::Run { jeu, rom, jouer_ici, via, lanceur } => run(&mut ctx, &jeu, &rom, jouer_ici, via.as_deref(), lanceur.as_deref()),
             Cmd::AdbSync { profil, jeu, resoudre, a_blanc } => adb_sync(&ctx, profil, jeu, resoudre, a_blanc),
             Cmd::AdbWatch => adb_watch(&ctx),
+            Cmd::Shizuku => {
+                let conf = ctx.cfg.adb.as_ref().ok_or("section [adb] absente de la configuration")?;
+                let Some(dev) = ludo_client::adb::Adb::find(&conf.series) else {
+                    println!("{} non connecté (adb) : rien à faire", ctx.cfg.appareil);
+                    return Ok(ExitCode::SUCCESS);
+                };
+                let lignes = ludo_client::shizuku::preparer(&dev).map_err(|e| e.to_string())?;
+                lignes.iter().for_each(|x| println!("Arrêt direct : {x}"));
+                Ok(ExitCode::SUCCESS)
+            }
             Cmd::Watch => local_watch(&mut ctx),
             Cmd::Jeux => {
                 let local = ludo_client::local::LocalIndex::scan(&ctx.cfg, &ludo_client::detect::Host::current());

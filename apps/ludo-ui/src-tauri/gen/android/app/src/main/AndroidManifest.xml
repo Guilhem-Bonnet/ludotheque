@@ -25,6 +25,8 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
+        <!-- Arrêt direct d'un jeu (ArretDirect.kt) : savoir si Shizuku est installé. -->
+        <package android:name="moe.shizuku.privileged.api" />
     </queries>
     <!-- Retour après une partie (RetourService.kt) : second filet pour remettre la Ludothèque devant
          depuis l'arrière-plan. Accordé par le PC (adb `appops set <paquet> SYSTEM_ALERT_WINDOW allow`,
@@ -68,6 +70,17 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/retour_service" />
         </service>
+
+        <!-- Arrêt direct d'un jeu sans page d'Android (ArretDirect.kt) : Shizuku remet son binder par ce
+             fournisseur. Réservé au système (INTERACT_ACROSS_USERS_FULL) : aucune app ordinaire n'y accède.
+             L'accès à Shizuku est accordé par le PC (adb), jamais demandé par l'app. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <provider
           android:name="androidx.core.content.FileProvider"
